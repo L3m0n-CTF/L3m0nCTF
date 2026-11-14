@@ -5,6 +5,7 @@ matches nobody, so every real request counts as coming from outside, and restore
 """
 from __future__ import annotations
 
+import http.client
 import ipaddress
 import json
 import os
@@ -21,6 +22,8 @@ pytestmark = pytest.mark.integration
 NGINX_ERROR_PAGE = b"<center>nginx</center>"
 FIXTURE = t.ROOT / "tests" / "integration" / "fixtures" / "admin-nets-nobody.conf"
 SNIPPETS = t.ROOT / "deploy" / "nginx" / "snippets"
+# the crew's host name: "crew." and the platform's domain (play.l3m0nctf.xyz -> crew.l3m0nctf.xyz)
+CREW_HOST = "crew." + (t.HOST.split(".", 1)[1] if t.HOST.count(".") >= 2 else t.HOST)
 
 
 def refused_by_nginx(status: int, body: bytes, code: int) -> bool:
@@ -41,8 +44,9 @@ def routes(filename: str) -> list[tuple[str, str]]:
 
 @pytest.fixture(scope="module")
 def outside():
-    """nginx restarted so that nobody counts as an organiser: every request below comes 'from outside'."""
-    t.compose("up", "-d", "--wait", "--force-recreate", "--no-deps", "nginx", env={"ADMIN_NETS_FILE": str(FIXTURE)})
+    """nginx restarted so that nobody counts as an organiser: every request below comes 'from outside'. It also serves the crew's host
+    name (as production does), so every "refused from outside" test below proves that the crew host rule does not weaken the platform host."""
+    t.compose("up", "-d", "--wait", "--force-recreate", "--no-deps", "nginx", env={"ADMIN_NETS_FILE": str(FIXTURE), "EXTRA_HOST": CREW_HOST})
     t.wait_healthy("nginx", 60)
     yield
     t.compose("up", "-d", "--wait", "--force-recreate", "--no-deps", "nginx")
@@ -147,6 +151,52 @@ def test_the_crews_release_and_scoring_pages_are_refused_outside_the_list(outsid
 def test_a_players_own_writes_under_the_l3mon_prefix_still_reach_ctfd_from_anywhere(outside):
     status, _, body = t.request("/api/v1/l3mon/board/attempt", method="POST", headers={"Content-Type": "application/json"}, body=b"{}")
     assert NGINX_ERROR_PAGE not in body, status  # CTFd answers (there is no such route yet), nginx does not refuse it
+
+
+# ------------------------------------------------ the crew host name (2026-11-14: no list of addresses, the crew host is the way in)
+
+MULTIPART = b"--b\r\nContent-Disposition: form-data; name=\"nonce\"\r\n\r\nx\r\n--b--\r\n"
+
+
+def test_the_crew_host_name_reaches_the_administrator_surface_from_any_address(outside):
+    """The crew host sits behind Cloudflare Access in production; nginx lets the administrator surface through on it, and CTFd's own login decides."""
+    status, _, body = t.request("/admin", host=CREW_HOST)
+    assert NGINX_ERROR_PAGE not in body, ("/admin", status)
+    token = t.secret("PRESET_ADMIN_TOKEN")
+    for path in ("/api/v1/users/me", "/api/v1/challenges", "/"):
+        status, _, body = t.request(path, host=CREW_HOST, headers={"Authorization": f"Token {token}", "Content-Type": "application/json"})
+        assert NGINX_ERROR_PAGE not in body, (path, status)  # an Authorization header is refused by nginx on the platform host, not here
+    for method, path in (("POST", "/api/v1/brand-new-thing"), ("PUT", "/api/v1/configs"), ("DELETE", "/api/v1/anything/1")):
+        status, _, body = t.request(path, method=method, host=CREW_HOST, headers={"Content-Type": "application/json"}, body=b"{}")
+        assert NGINX_ERROR_PAGE not in body, (method, path, status)
+    for method, path in CREW_CALLS:
+        status, _, body = t.request(path, method=method, host=CREW_HOST, headers={"Content-Type": "application/json"}, body=b"{}" if method != "GET" else None)
+        assert NGINX_ERROR_PAGE not in body, (method, path, status)
+    status, _, body = t.request("/api/v1/files", method="POST", host=CREW_HOST, headers={"Content-Type": "multipart/form-data; boundary=b"}, body=MULTIPART)
+    assert NGINX_ERROR_PAGE not in body, ("/api/v1/files", status)  # uploads of challenge files come through the crew host
+
+
+def test_the_platform_host_name_still_never_gets_the_administrator_surface(outside):
+    """The same requests on the platform host name, from the same address, are refused by nginx exactly as before."""
+    for path in ("/admin", "/admin/config", "/admin/challenges"):
+        status, _, body = t.request(path)
+        assert refused_by_nginx(status, body, 403), (path, status)
+    token = t.secret("PRESET_ADMIN_TOKEN")
+    status, _, body = t.request("/api/v1/users/me", headers={"Authorization": f"Token {token}", "Content-Type": "application/json"})
+    assert refused_by_nginx(status, body, 403), status
+    status, _, body = t.request("/api/v1/brand-new-thing", method="POST", headers={"Content-Type": "application/json"}, body=b"{}")
+    assert refused_by_nginx(status, body, 403), status
+    status, _, body = t.request("/api/v1/l3mon/admin/release")
+    assert refused_by_nginx(status, body, 403), status
+    status, _, body = t.request("/login", method="POST", headers={"Content-Type": "multipart/form-data; boundary=b"}, body=MULTIPART)
+    assert refused_by_nginx(status, body, 415), status
+
+
+def test_a_host_name_that_only_looks_like_the_crew_host_gets_nothing(outside):
+    """Only the two configured host names reach the server block; anything else is closed without an answer, so the word "crew" in a made-up name opens nothing."""
+    for host in (f"{CREW_HOST}.evil.test", f"evil-{CREW_HOST}", f"crew{t.HOST}", f"xcrew.{CREW_HOST.split('.', 1)[1]}"):
+        with pytest.raises((http.client.RemoteDisconnected, ConnectionError)):
+            t.request("/admin", host=host)
 
 
 # ------------------------------------------------ multipart bodies (audit H2)

@@ -7,7 +7,7 @@ Gracefully gate player traffic using static maintenance slates (`maintenance.htm
 - Maintenance mode is toggled by creating or removing `/etc/l3mon/maintenance`.
 - Managed via `tools/ops/maintenance.sh`.
 - **Exemptions (traffic that continues to pass through)**:
-  1. **Organiser IP Addresses** (`$admin_net = 1`): Organisers can view, test, and edit the platform normally.
+  1. **Organiser addresses and the crew host name** (`$admin_net = 1`: an address on the list in `admin-nets.conf`, or a request for `crew.<domain>`, which is behind Cloudflare Access): Organisers can view, test, and edit the platform normally.
   2. **Health Endpoints**: `/healthcheck`, `/l3mon/healthz`, and `/readyz` continue to answer monitoring probes.
   3. **CTFtime Feeds**: `/ctftime/standings.json` continues serving external score collectors.
 
