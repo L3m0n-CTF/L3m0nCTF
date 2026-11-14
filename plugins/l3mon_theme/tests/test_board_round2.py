@@ -122,8 +122,8 @@ def test_the_board_module_is_imported_before_the_alias_module():
 
 
 def test_board_is_answered_by_the_board_module_not_by_the_alias(play):
-    rules = [rule for rule in play.app.url_map.iter_rules() if rule.rule == "/board"]
-    assert [rule.endpoint for rule in rules] == ["l3mon_theme_board"], "one rule for /board, and it is ours"
+    rules = [rule for rule in play.app.url_map.iter_rules() if rule.rule == "/board" and "GET" in rule.methods]  # (a POST rule on /board sends a flag form back to the page: pages/fallbacks.py)
+    assert [rule.endpoint for rule in rules] == ["l3mon_theme_board"], "one rule that answers a visit to /board, and it is ours"
     assert not [rule for rule in play.app.url_map.iter_rules() if rule.endpoint.startswith("l3mon_theme_alias_") and "board" in rule.endpoint]
     with clock(T_LIVE):
         for client in (play.alice, play.admin):
