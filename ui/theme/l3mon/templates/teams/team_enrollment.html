@@ -1,8 +1,9 @@
 {# Studio enrollment (Create or Join), for the CTFd theme (SP6 stream B). Hand-written:
    sets the values the generated register-studio page reads, then includes it. #}
 {% set l3 = l3mon %}
-{% set errs = errors|default([]) %}
-{% set infs = infos|default([]) %}
+{# the stock sentences say "team"; the platform says studio #}
+{% set errs = (errors|default([]))|map('replace', 'You are already in a team. You cannot join another.', 'You are already in a studio. You cannot join another.')|map('replace', ' has already reached the team size limit of ', ' is full. The limit for a studio is ')|list %}
+{% set infs = (infos|default([]))|map('replace', 'Teams are limited to ', 'Studios are limited to ')|list %}
 {% set event_name = l3.event_name or 'CTF' %}
 {% set asset = {
   'css': l3.assets['css.app'],

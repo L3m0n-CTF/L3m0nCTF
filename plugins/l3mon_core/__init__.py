@@ -34,7 +34,16 @@ def load(app):
 
     upgrade(plugin_name="l3mon_core")  # MariaDB: the migration; SQLite: create_all, like CTFd's own plugins
 
+    from CTFd.plugins.l3mon_core.attempt_input import install as install_attempt_input
+    from CTFd.plugins.l3mon_core.hidden_admins import install as install_hidden_admins
+    from CTFd.plugins.l3mon_core.log_redaction import install as install_log_redaction
+    from CTFd.plugins.l3mon_core.player_locks import install as install_player_locks
+
     install_tick(app)  # every committed change a player can see moves the tick once
+    install_hidden_admins()  # the crew's accounts are never listed to players
+    install_attempt_input(app)  # a flag attempt that is not text, or is far too long, is answered 400 (it was a server error)
+    install_log_redaction()  # a submitted flag is not written to the application log
+    install_player_locks(app)  # joining a studio and unlocking a hint wait for each other (the studio's row is locked first)
     app.register_blueprint(l3mon)
 
     # Production runs behind HTTPS only. The __Host- prefix makes browsers refuse the cookie unless it is Secure, has

@@ -6,20 +6,24 @@ Sign out: the theme's button is a form that POSTs the page's nonce to /logout, s
 The flag form of the board: its script sends the flag to the API; sent without the script (not loaded yet, blocked, failed) the browser posts the form to /board,
 which answered "not found". The form cannot carry a flag to the right programme without its script, so the player goes back to the board page.
 
+A visitor who is already signed in and opens /login (a bookmark, the back button) is sent to the board: the sign-in form told a signed-in
+player nothing and looked as if the session had been lost. Only a person whose account still exists is sent on: a session whose account was deleted keeps
+the form, so that nobody is shut out of the way to sign in again.
+
 Both POSTs pass CTFd's own CSRF check (the nonce of the session) before these views run.
 
 Addresses the platform has no page for but people and programs ask for (found by the end-to-end test of 14-15 November): /privacy and /rules (the
 registration form links to /privacy; both pages live on the website) go to the website's pages; /favicon.ico (browsers ask for it by themselves) goes
 to the icon the platform has.
 """
-from flask import redirect
+from flask import redirect, request
 
 from CTFd.plugins.l3mon_theme import values
 
 
 def install(app):
     from CTFd.utils.security.auth import logout_user
-    from CTFd.utils.user import authed
+    from CTFd.utils.user import authed, get_current_user
 
     def sign_out():
         if authed():
@@ -35,6 +39,18 @@ def install(app):
 
         return go
 
+    def signed_in_visitors_skip_the_sign_in_form():
+        if request.method != "GET" or request.path != "/login":
+            return None
+        try:
+            user = get_current_user()
+        except Exception:  # a session that cannot be read: show the form
+            return None
+        if user is None or user.banned:
+            return None
+        return redirect("/board", code=302)
+
+    app.before_request(signed_in_visitors_skip_the_sign_in_form)
     app.add_url_rule("/rules", endpoint="l3mon_theme_rules_on_the_website", view_func=to_website("/rules/"), methods=["GET", "HEAD"])
     # CTFd has its own /privacy (it answers "not found" until a privacy text is set in its settings): the rule of the same address
     # would never be reached, so its view is replaced

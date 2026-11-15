@@ -94,3 +94,58 @@ def test_a_bad_invite_link_is_explained_and_not_called_crew_only(app):
         assert 'href="/teams/join"' in text, "the page must lead on to the join step"
         admin_page = client.get("/admin")  # an ordinary player on a crew page still gets the crew wording
         assert "for the crew only" in admin_page.get_data(as_text=True) or admin_page.status_code in (302, 403)
+
+
+def test_a_signed_in_player_who_opens_the_sign_in_page_is_sent_to_the_board_and_a_visitor_still_sees_the_form(app):
+    register_user(app)
+    with app.test_client() as visitor:
+        assert visitor.get("/login").status_code == 200
+    with login_as_user(app) as client:
+        answer = client.get("/login")
+        assert answer.status_code == 302 and answer.headers["Location"].endswith("/board")
+        # after Sign out the form is there again (the redirect is only for a person who is signed in)
+        client.get("/logout")
+        assert client.get("/login").status_code == 200
+
+
+def test_a_session_whose_account_was_deleted_still_gets_the_sign_in_form(app):
+    from CTFd.models import Users, db
+
+    register_user(app)
+    with login_as_user(app) as client:
+        with app.app_context():
+            db.session.delete(Users.query.filter_by(name="user").first())
+            db.session.commit()
+        assert client.get("/login").status_code == 200
+
+
+def test_the_join_refusals_say_studio_not_team(app):
+    from CTFd.models import Teams
+    from CTFd.utils import set_config
+
+    with app.app_context():
+        set_config("team_size", 1)
+    register_user(app, name="captain", email="captain@example.com")
+    register_user(app, name="late", email="late@example.com")
+    with login_as_user(app, "captain") as captain:
+        captain.get("/team")
+        with captain.session_transaction() as sess:
+            nonce = sess["nonce"]
+        assert captain.post("/teams/new", data={"name": "Full Studio", "password": "password", "nonce": nonce}).status_code == 302
+        # a second try while already in a studio
+        again = captain.post("/teams/join", data={"name": "Full Studio", "password": "password", "nonce": nonce})
+        page = again.get_data(as_text=True)
+        assert again.status_code == 403 and "already in a studio" in page and "already in a team" not in page
+    with login_as_user(app, "late") as late:
+        late.get("/team")
+        with late.session_transaction() as sess:
+            nonce = sess["nonce"]
+        info = late.get("/teams/join").get_data(as_text=True)
+        assert "Studios are limited to 1 member" in info and "Teams are limited" not in info
+        full = late.post("/teams/join", data={"name": "Full Studio", "password": "password", "nonce": nonce}).get_data(as_text=True)
+        assert "is full. The limit for a studio is 1" in full and "team size limit" not in full
+        with app.app_context():
+            code = Teams.query.filter_by(name="Full Studio").first().get_invite_code()
+        invited = late.post(f"/teams/invite?code={code}", data={"nonce": nonce})
+        text = invited.get_data(as_text=True)
+        assert invited.status_code == 403 and "is full. The limit for a studio is 1" in text and "team size limit" not in text

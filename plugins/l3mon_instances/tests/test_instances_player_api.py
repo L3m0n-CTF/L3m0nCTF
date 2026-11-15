@@ -385,6 +385,8 @@ def test_one_challenge_that_cannot_start_does_not_take_the_other_challenges_down
                 fake_client.fail_start = InstancerClientError(500, "internal_error", "docker: pull access denied for registry.internal/secret-image on host 10.200.1.10")
                 broken = alice.post("/api/v1/l3mon/instances", json={"challenge_id": c1})
                 assert broken.status_code == 503
+                # its own code: the page turns `busy` into "Instances are not available", which would tell a player the whole service is gone
+                assert broken.get_json()["error"] == "start_failed" and "could not be started" in broken.get_json()["message"]
                 text = broken.get_data(as_text=True)
                 assert "docker" not in text and "registry" not in text and "10.200" not in text, text
                 fake_client.fail_start = None

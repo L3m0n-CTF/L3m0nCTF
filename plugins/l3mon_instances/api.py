@@ -202,7 +202,7 @@ def start_instance():
             # start the same container again. The player gets a plain message (the instancer's own text names images and addresses).
             if e.error_code in ("internal_error", "invalid_request"):
                 _log.error("Start instance failed inside the instancer on host %s for challenge %s: %s", chosen_host["name"], challenge_id, e)
-                return envelope.fail("busy", 503, "This challenge could not be started just now. Try again in a minute; if it keeps failing, tell the crew.")
+                return envelope.fail("start_failed", 503, "This challenge could not be started just now. Try again in a minute; if it keeps failing, tell the crew.")
 
             # Host failure (connection error, 5xx server error, or capacity issue)
             _log.warning("Start instance failed on host %s: %s (attempt %d)", chosen_host["name"], e, attempt + 1)
