@@ -108,8 +108,8 @@ def test_the_studios_score_place_and_solves(play):
     give("studio-a", play.ids.lantern, 0, "alice")
     give("studio-b", play.ids.hush, 1, "bob")
     a, b = team(play.alice), team(play.bob)
-    assert (a["score"], a["place"], a["of"], a["solves"], a["hints_used"], a["instances_live"]) == (100, 2, 3, 1, 0, 0)
-    assert (b["score"], b["place"], b["of"], b["solves"]) == (300, 1, 3, 1)
+    assert (a["score"], a["place"], a["of"], a["solves"], a["hints_used"], a["instances_live"]) == (100, 2, 2, 1, 0, 0)
+    assert (b["score"], b["place"], b["of"], b["solves"]) == (300, 1, 2, 1)  # `of` counts the ranked studios (two have scored), as on the scoreboard
 
 
 def test_a_studio_with_nothing_yet_has_zero_and_no_place(play):
@@ -123,7 +123,7 @@ def test_a_studio_whose_net_score_is_zero_or_below_has_no_place_as_on_the_scoreb
     assert team(play.alice)["place"] == 2
     bonus(play, "studio-a", -50, "A correction")
     t = team(play.alice)
-    assert t["score"] == 0 and t["place"] is None and t["of"] == 3
+    assert t["score"] == 0 and t["place"] is None and t["of"] == 1
     bonus(play, "studio-a", -30, "Another correction")
     assert team(play.alice)["score"] == -30 and team(play.alice)["place"] is None
 

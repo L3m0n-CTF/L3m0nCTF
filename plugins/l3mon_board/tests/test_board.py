@@ -159,7 +159,7 @@ def test_the_dynamic_value_on_the_board_is_what_the_programme_is_worth_now(play)
 
 def test_the_studios_own_numbers_score_place_and_how_many_studios_count(play):
     data = board(play.alice)
-    assert data["team"] == {"id": Teams.query.filter_by(name="studio-a").first().id, "name": "studio-a", "score": 0, "place": None, "of": 2}
+    assert data["team"] == {"id": Teams.query.filter_by(name="studio-a").first().id, "name": "studio-a", "score": 0, "place": None, "of": 0}  # `of` counts the studios that are ranked, as the scoreboard does: none has scored yet
     assert attempt(play.alice, play.ids.lantern, "lantern-answer") == "correct"
     assert attempt(play.bob, play.ids.coffee, "coffee-answer") == "correct"
     alice, bob = board(play.alice)["team"], board(play.bob)["team"]
@@ -171,11 +171,25 @@ def test_the_studios_own_numbers_score_place_and_how_many_studios_count(play):
     assert board(play.abe)["team"]["score"] == 90, "the same studio, the same numbers for every member"
 
 
-def test_a_banned_studio_is_not_counted_in_how_many_studios_there_are(play):
+def test_a_banned_studio_is_not_counted_in_how_many_studios_are_ranked(play):
+    assert attempt(play.alice, play.ids.lantern, "lantern-answer") == "correct"
+    assert attempt(play.bob, play.ids.coffee, "coffee-answer") == "correct"
     assert board(play.bob)["team"]["of"] == 2
     team_id = Teams.query.filter_by(name="studio-a").first().id
     assert play.admin.patch(f"/api/v1/teams/{team_id}", json={"banned": True}).status_code == 200
     assert board(play.bob)["team"]["of"] == 1
+
+
+def test_of_counts_only_the_studios_that_are_ranked_the_same_number_the_scoreboard_gives(play):
+    """A studio with no TRP has no place, so it is not one of the studios a place is "of": the board, the Guide and the scoreboard say the same number."""
+    assert attempt(play.alice, play.ids.lantern, "lantern-answer") == "correct"  # one studio has scored; the others (two or more studios exist) have not
+    on_board = board(play.alice)["team"]
+    on_guide = play.alice.get("/api/v1/l3mon/guide").get_json()["data"]["team"]
+    on_scoreboard = play.alice.get("/api/v1/l3mon/scoreboard").get_json()["data"]["me"]
+    assert on_board["place"] == 1 and on_board["of"] == 1
+    assert (on_guide["place"], on_guide["of"]) == (on_board["place"], on_board["of"])
+    assert (on_scoreboard["pos"], on_scoreboard["of"]) == (on_board["place"], on_board["of"])
+    assert board(play.bob)["team"]["of"] == 1 and board(play.bob)["team"]["place"] is None, "a studio with nothing yet is not ranked, and `of` is the same for it"
 
 
 def test_pulling_a_solved_programme_back_removes_its_tile_and_its_clear_but_keeps_the_points(play):

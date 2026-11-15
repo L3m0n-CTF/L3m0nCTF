@@ -90,3 +90,18 @@ def test_an_invitation_that_is_not_a_discord_address_is_ignored(app, monkeypatch
         html = client.get("/login").get_data(as_text=True)
     assert "Discord" not in footer_line(html)
     assert "onmouseover" not in html and "javascript:alert" not in html
+
+
+def test_the_stamp_of_every_footer_says_the_platform_and_its_version_and_names_no_build(app):
+    register_user(app)
+    pages = {}
+    with app.test_client() as client:
+        for path in PUBLIC_PAGES + ("/this-page-does-not-exist",):
+            pages[path] = client.get(path).get_data(as_text=True)
+    with login_as_user(app) as client:
+        for path in ("/settings", "/teams/new", "/board", "/guide", "/scoreboard"):
+            pages[path] = client.get(path, follow_redirects=True).get_data(as_text=True)
+    for path, html in pages.items():
+        stamps = re.findall(r'<span class="stamp">(.*?)</span>', html, re.S)
+        assert stamps == ["L3m0nCTF Platform v1"] or (path == "/this-page-does-not-exist" and stamps == []), (path, stamps)  # the not-found slate has no footer
+        assert "build dev" not in html and "· build" not in html, path

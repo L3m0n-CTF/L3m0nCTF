@@ -18,13 +18,15 @@ import base64
 import hashlib
 import json
 
-from CTFd.models import Challenges, Teams, db
+from CTFd.models import Challenges, db
 from CTFd.plugins.l3mon_board import counts as solve_counts, hooks, news
 from CTFd.plugins.l3mon_core.clock import current_phase
 from CTFd.plugins.l3mon_core.models import LIVE_DELIVERIES, Channel, Programme
 from CTFd.plugins.l3mon_core.settings import show_coming_count
+from CTFd.plugins.l3mon_core.standings import ranked
 from CTFd.plugins.l3mon_core.tick import signature
 from CTFd.plugins.l3mon_core.visibility import visible_challenge_ids
+from CTFd.utils.scores import get_standings
 
 
 def _signal(solved, total) -> float:
@@ -34,10 +36,13 @@ def _signal(solved, total) -> float:
 def numbers(team, phase):
     """-> (score, place, of) for a studio. The score is always live (admin=True ignores the freeze, which CTFd would apply even to its owner).
     The place is CTFd's own, and the scoreboard's: none while the scoreboard is frozen, and none for a studio with no TRP above zero (it has
-    no row in the list: "Not ranked yet"). `of` is how many studios count (not banned, not hidden)."""
+    no row in the list: "Not ranked yet"). `of` is how many studios are ranked, the number the scoreboard gives for the same moment (the rows with TRP
+    above zero, never a hidden or a banned studio, the freeze applied; none before the start). It used to count every studio, so a place read "3 of 30" on
+    the board and "3 of 15" on the scoreboard (found by the independent test of 15 November; the owner chose the ranked count)."""
     score = int(team.get_score(admin=True) or 0)
     place = None if (phase.frozen or score <= 0) else team.get_place(numeric=True)
-    return score, place, Teams.query.filter_by(hidden=False, banned=False).count()
+    ranked_studios = [] if phase.state == "before" else ranked(get_standings(admin=False))
+    return score, place, len(ranked_studios)
 
 
 def _team_block(viewer, phase):

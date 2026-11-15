@@ -9,6 +9,10 @@ The public ranking is the one difference of the freeze that is not compared (the
 the ranking as a picture taken at the freeze, the platform computes it from the data (CTFd's way), so a Revoke, a ban or a hide during the
 freeze takes a studio's pre-freeze points off the public list at once, which is what a moderator needs (test_freeze_board.py pins it).
 
+One difference was chosen by the owner after the demo was approved: `of`, the number a place is "out of". The demo counted every studio; since 15 November
+2026 it counts the studios that are ranked, the number the scoreboard gives (pinned in test_board.py, test_guide.py and test_scoreboard.py), so it is not
+compared here.
+
 The only differences allowed are the ones the design chose, and they are not in the compared form at all: the channel ids, the tick
 (`ver`), the news numbers, the art, the instance details, the picture key, the channel number and the sponsor's logo. Where the demo and
 CTFd say the same thing in different words (CTFd's own `ratelimited` where the demo said `incorrect`), the compared form is the reason.
@@ -224,7 +228,7 @@ class Round:
         team = data["team"]
         return {
             "phase": data["phase"],
-            "team": {"name": team["name"], "score": team["score"], "place": team["place"], "of": team["of"]} if team else None,
+            "team": {"name": team["name"], "score": team["score"], "place": team["place"]} if team else None,
             "channels": [
                 {"slug": c["slug"], "name": c["name"], "synopsis": c["synopsis"], "accent": c["accent"], "total": c["total"], "solved": c["solved"],
                  "signal": c["signal"], "on_air": c["on_air"], "coming": c["coming"], "sponsor": c["sponsor"]["name"] if c["sponsor"] else None}
@@ -251,7 +255,7 @@ class Round:
             "phase": d["phase"], "banner": d["banner"], "has_grid": d["epg_sig"] != "none",
             "team": {
                 "name": self.team_of(who),
-                "score": t["score"], "place": t["place"], "of": t["of"], "solves": t["solves"], "hints_used": t["hints_used"], "instances_live": t["instances_live"],
+                "score": t["score"], "place": t["place"], "solves": t["solves"], "hints_used": t["hints_used"], "instances_live": t["instances_live"],
                 "members": [{k: m[k] for k in ("name", "captain", "you", "solves", "trp", "pct")} for m in t["members"]],
                 "bonus": t["bonus"], "notes": [self.line(n) for n in t["notes"]],
                 "by_channel": [{"slug": self.channel_slug[c["channel"]], "name": c["name"], "sponsor": c["sponsor"]["name"] if c["sponsor"] else None, "solved": c["solved"], "total": c["total"]}
@@ -342,6 +346,15 @@ def play():
     destroy_ctfd(app)
 
 
+def without_of(value):
+    """The demo's answer without `of` (see the note at the top: the owner chose a different count after the demo was approved)."""
+    if isinstance(value, dict):
+        return {k: without_of(v) for k, v in value.items() if not (k == "of" and isinstance(v, int))}
+    if isinstance(value, list):
+        return [without_of(v) for v in value]
+    return value
+
+
 def test_the_real_platform_tells_every_studio_what_the_approved_demo_told_it_at_every_step(play):
     golden = load("golden.json")
     assert golden["scenario"] == "v1" and len(golden["steps"]) == len(play.scenario["steps"])
@@ -353,7 +366,7 @@ def test_the_real_platform_tells_every_studio_what_the_approved_demo_told_it_at_
             got = play.do(key, action[key] if isinstance(action[key], list) else [action[key]])
             if key in ("attempt", "hint"):
                 expected = want["results"].pop(0)
-                if got != expected["value"]:
+                if without_of(got) != without_of(expected["value"]):
                     problems.append((step["label"], action, expected["value"], got))
         assert len(want["results"]) == len(step["ask"]), (step["label"], "answers recorded", len(want["results"]), "asked", len(step["ask"]))
         for ask, expected in zip(step["ask"], want["results"]):
@@ -361,6 +374,6 @@ def test_the_real_platform_tells_every_studio_what_the_approved_demo_told_it_at_
             key = next(iter(ask))
             if key in ("board", "panel", "guide", "scoreboard", "epg", "bell", "attempt", "hint"):
                 got = play.ask(ask) if key in ("board", "panel", "guide", "scoreboard", "epg", "bell") else play.do(key, ask[key])
-                if got != expected["value"]:
+                if without_of(got) != without_of(expected["value"]):
                     problems.append((step["label"], ask, expected["value"], got))
     assert not problems, "\n\n".join(f"{label}\n  asked {ask}\n  demo {want}\n  real {got}" for label, ask, want, got in problems[:6]) + f"\n\n({len(problems)} differences)"
