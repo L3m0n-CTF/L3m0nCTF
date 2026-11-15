@@ -50,6 +50,10 @@ services:
       # secret CTFtime gives (a Docker secret added by the production override, never an environment variable). docs/ctftime-endpoints.md
       CTFTIME_CLIENT_ID: "${CTFTIME_CLIENT_ID:-}"
       CTFTIME_CLIENT_SECRET_FILE: /run/secrets/CTFTIME_CLIENT_SECRET
+      # The contact address and the Discord invitation that the footer of every page shows ([contact] in event.toml; neither is a secret). Empty: the footer says
+      # "Contact: announced soon" and has no Discord link.
+      L3MON_CONTACT_EMAIL: "${L3MON_CONTACT_EMAIL:-}"
+      L3MON_DISCORD_URL: "${L3MON_DISCORD_URL:-}"
       UPDATE_CHECK: "false"
       SWAGGER_UI: "false"
       SERVER_SENT_EVENTS: "true"

@@ -74,6 +74,24 @@ def site_url():
     return raw
 
 
+CONTACT_SETTING = "L3MON_CONTACT_EMAIL"  # [contact] email in event.toml, through the compose environment
+DISCORD_SETTING = "L3MON_DISCORD_URL"  # [contact] discord in event.toml
+_EMAIL = re.compile(r"[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?\.[A-Za-z]{2,24}")
+_DISCORD = re.compile(r"https://discord\.(gg/|com/invite/)[A-Za-z0-9-]{2,40}")
+
+
+def contact_email():
+    """The address the footer of every page shows, or None while none is set (or the setting is not a plain address: it goes into a mailto link)."""
+    raw = os.environ.get(CONTACT_SETTING, "").strip()
+    return raw if raw and _EMAIL.fullmatch(raw) else None
+
+
+def discord_url():
+    """The Discord invitation the footer links to, or None while none is set (or it is not a discord.gg or discord.com/invite address)."""
+    raw = os.environ.get(DISCORD_SETTING, "").strip()
+    return raw if raw and _DISCORD.fullmatch(raw) else None
+
+
 def captcha_state():
     from flask import request
 
@@ -174,6 +192,16 @@ class Values:
     def site_url(self):
         """The event website's address (no trailing slash), for the footer's links and the pages that lead back to it."""
         return _quiet("site_url", SITE_URL, site_url)
+
+    @property
+    def contact(self):
+        """The organisers' address for the footer ("Contact: ..."), or None: the footer then says "announced soon"."""
+        return _quiet("contact", None, contact_email)
+
+    @property
+    def discord(self):
+        """The Discord invitation for the footer, or None: no link."""
+        return _quiet("discord", None, discord_url)
 
     @property
     def captcha(self):

@@ -14,7 +14,7 @@
 {% set csrf = l3.csrf %}
 {% set nav = {'board': false, 'guide': false, 'scoreboard': false} %}
 {% set build = {'sha': l3.build_sha} %}
-{% set event = {'name': event_name, 'contact': none, 'site': l3.site_url} %}
+{% set event = {'name': event_name, 'contact': l3.contact, 'discord': l3.discord, 'site': l3.site_url} %}
 {% set captcha = {'sitekey': none} %}
 {% set news = [] %}
 {% set dev = none %}

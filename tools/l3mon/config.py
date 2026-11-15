@@ -18,6 +18,8 @@ UTC_TIME = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z\Z")
 SECTIONS = ("event", "teams", "visibility", "accounts", "admin")
 EMAIL = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]{2,}\Z")
 ADMIN_NAME = re.compile(r"^[A-Za-z0-9_.-]{3,32}\Z")
+CONTACT_KEYS = ("email", "discord")
+DISCORD = re.compile(r"^https://discord\.(gg/|com/invite/)[A-Za-z0-9-]{2,40}\Z")
 
 
 def load(path: Path) -> dict:
@@ -91,6 +93,21 @@ def validate(data: dict) -> list[str]:
     elif "client_id" in ct and not (isinstance(ct["client_id"], str) and (ct["client_id"] == "" or re.fullmatch(r"[0-9]{1,9}", ct["client_id"]))):
         errors.append("ctftime.client_id must be the CTFtime event number in quotes (digits only), or empty")
     errors += _validate_mail(data.get("mail"))
+    errors += _validate_contact(data.get("contact"))
+    return errors
+
+
+def _validate_contact(contact) -> list[str]:
+    """The optional [contact] section: the address and the Discord invitation that the footer of every page shows. Neither is a secret."""
+    if contact is None:
+        return []
+    if not isinstance(contact, dict):
+        return ["the section [contact] must be a table"]
+    errors = [f"contact.{key} is not a known setting (known: {', '.join(CONTACT_KEYS)})" for key in contact if key not in CONTACT_KEYS]
+    if "email" in contact and not (isinstance(contact["email"], str) and (contact["email"] == "" or (len(contact["email"]) <= 254 and EMAIL.match(contact["email"])))):
+        errors.append("contact.email must be an email address (or empty)")
+    if "discord" in contact and not (isinstance(contact["discord"], str) and (contact["discord"] == "" or DISCORD.match(contact["discord"]))):
+        errors.append("contact.discord must be a Discord invitation such as https://discord.gg/abc123 (or empty)")
     return errors
 
 
@@ -183,6 +200,8 @@ def render(data: dict, out_dir: Path) -> dict[str, Path]:
         f"PRESET_ADMIN_NAME={data['admin']['name']}",
         f"PRESET_ADMIN_EMAIL={data['admin']['email']}",
         f"CTFTIME_CLIENT_ID={data.get('ctftime', {}).get('client_id', '')}",
+        f"L3MON_CONTACT_EMAIL={(data.get('contact') or {}).get('email', '')}",
+        f"L3MON_DISCORD_URL={(data.get('contact') or {}).get('discord', '')}",
     ]
     mail = data.get("mail")
     if mail:  # the password is the Docker secret MAIL_PASSWORD (.secrets/), never a line in this file

@@ -8,7 +8,7 @@
 {% set event_name = l3.event_name or 'CTF' %}
 {% set me = l3.me %}
 {% set csrf = l3.csrf %}
-{% set event = {'name': event_name, 'contact': none, 'site': l3.site_url} %}
+{% set event = {'name': event_name, 'contact': l3.contact, 'discord': l3.discord, 'site': l3.site_url} %}
 {% set build = {'sha': l3.build_sha} %}
 {% set news = [] %}
 {% set dev = none %}

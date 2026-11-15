@@ -128,6 +128,8 @@ def test_render_writes_the_compose_environment_without_any_secret(tmp_path):
         "PRESET_ADMIN_NAME": "organiser",
         "PRESET_ADMIN_EMAIL": "organiser@l3m0nctf.xyz",
         "CTFTIME_CLIENT_ID": "",
+        "L3MON_CONTACT_EMAIL": "",
+        "L3MON_DISCORD_URL": "",
     }
     assert "PASSWORD" not in env and "TOKEN" not in env and "SECRET" not in env
 
@@ -219,3 +221,33 @@ def test_implicit_tls_and_no_login_are_written_as_ctfd_expects(tmp_path):
 def test_without_a_mail_section_no_mail_line_is_written(tmp_path):
     out = config.render(example(), tmp_path)["compose.env"].read_text(encoding="utf-8")
     assert "MAIL_" not in out and "MAILFROM" not in out
+
+
+# ---- the optional [contact] section: the address and the Discord invitation the footer of every page shows -----------------------------------
+
+def test_the_contact_section_is_optional_checked_and_goes_to_the_compose_environment(tmp_path):
+    data = copy.deepcopy(example())
+    assert "contact" not in data and config.validate(data) == [], "the public example names no address: the section may be left out"
+    env = config.render(data, tmp_path)["compose.env"].read_text(encoding="utf-8").splitlines()
+    assert "L3MON_CONTACT_EMAIL=" in env and "L3MON_DISCORD_URL=" in env, "left out: both settings are there and empty (no contact, no word about Discord)"
+    data["contact"] = {"email": "crew@example.org", "discord": "https://discord.gg/AbC123"}
+    assert config.validate(data) == []
+    env = config.render(data, tmp_path)["compose.env"].read_text(encoding="utf-8").splitlines()
+    assert "L3MON_CONTACT_EMAIL=crew@example.org" in env and "L3MON_DISCORD_URL=https://discord.gg/AbC123" in env
+    for bad in ("not an address", "a@b", "two@example.org three@example.org", "x@example.org\nINJECT=1", 5, None):
+        broken = copy.deepcopy(data)
+        broken["contact"]["email"] = bad
+        assert any("contact.email" in e for e in config.validate(broken)), bad
+    for bad in ("http://discord.gg/abc", "https://example.org/abc", "https://discord.gg/", "https://discord.gg/a b", "https://discord.gg/abc\nINJECT=1", "discord.gg/abc", 5, None):
+        broken = copy.deepcopy(data)
+        broken["contact"]["discord"] = bad
+        assert any("contact.discord" in e for e in config.validate(broken)), bad
+    for good in ("https://discord.gg/AbC123", "https://discord.com/invite/AbC123"):
+        ok = copy.deepcopy(data)
+        ok["contact"]["discord"] = good
+        assert config.validate(ok) == [], good
+    broken = copy.deepcopy(data)
+    broken["contact"] = "yes"
+    assert any("[contact]" in e for e in config.validate(broken))
+    broken["contact"] = {"email": "crew@example.org", "phone": "1"}
+    assert any("contact.phone" in e for e in config.validate(broken)), "an unknown setting is refused, not ignored"

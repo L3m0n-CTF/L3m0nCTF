@@ -7,7 +7,7 @@
 {% set nav = {'board': false, 'guide': true, 'scoreboard': false} %}
 {% set me = l3.me %}
 {% set csrf = l3.csrf %}
-{% set event = {'name': event_name, 'contact': none, 'site': l3.site_url} %}
+{% set event = {'name': event_name, 'contact': l3.contact, 'discord': l3.discord, 'site': l3.site_url} %}
 {% set build = {'sha': l3.build_sha} %}
 {% set dev = none %}
 {% include "_guide.html" %}
