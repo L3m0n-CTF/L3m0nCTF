@@ -743,7 +743,7 @@ const headers={Accept:opts.html?'text/html':'application/json'};
 if(method!=='GET')headers['CSRF-Token']=apiCsrf();
 if(opts.etag)headers['If-None-Match']=opts.etag;
 let body;
-if(opts.body!==undefined){headers['Content-Type']='application/json';body=JSON.stringify(opts.body);}
+if(opts.body!==undefined||method!=='GET'){headers['Content-Type']='application/json';body=JSON.stringify(opts.body===undefined?{}:opts.body);}
 const ctl=typeof AbortController==='function'?new AbortController():null;
 const timer=ctl?setTimeout(()=>ctl.abort(),API_TIMEOUT_MS):0;
 try{
@@ -1942,7 +1942,7 @@ if(r.ok){inS.pollSince=Date.now();inRender({...inS.view,state:'stopping'});}
 else if(r.error&&r.error.code==='conflict')inFetch();
 else inProblem(r,{button:inEl.stop});
 }
-const PN_PATH=/^\/board\/([a-z0-9_]{3,41})$/;
+const PN_PATH=/^\/board\/([a-z0-9][a-z0-9_-]{2,40})$/;
 const PN_CATS={crypto:['Crypto','i-crypto'],misc:['Misc','i-misc'],web:['Web','i-web'],forensics:['Forensics','i-forensics'],osint:['OSINT','i-osint'],hardware:['Hardware','i-hardware'],rf:['RF','i-rf'],reverse:['Reverse','i-reverse'],web3:['Web3','i-web3'],ai:['AI','i-ai'],pwn:['Pwn','i-pwn']};
 const PN_DIFF={warmup:[1,'Warm-up'],easy:[2,'Easy'],medium:[3,'Medium'],hard:[4,'Hard'],insane:[5,'Insane']};
 const PN_EVENT=' | L3m0nCTF 2026';
@@ -1994,7 +1994,7 @@ const m=PN_PATH.exec(location.pathname);
 if(m)openPanel(m[1]);
 }
 function openPanel(slug,{opener=null,push=false}={}){
-if(!pnS||typeof slug!=='string'||!/^[a-z0-9_]{3,41}$/.test(slug))return false;
+if(!pnS||typeof slug!=='string'||!/^[a-z0-9][a-z0-9_-]{2,40}$/.test(slug))return false;
 const dlg=pnEl.dlg;
 if(pnS.closing){pnS.closing=false;dlg.classList.remove('closing');}
 if(dlg.open&&pnS.slug===slug){pnFocusTitle();return true;}

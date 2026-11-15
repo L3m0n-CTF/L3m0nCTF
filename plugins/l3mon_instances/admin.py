@@ -73,7 +73,14 @@ def list_instances():
 @admin_bp.route("/kill", methods=["POST"])
 @admins_only
 def kill_instances():
-    data = request.get_json(silent=True) or {}
+    # "Stop everything" must be asked for: an empty object {}. A body that is missing, cut off, not an object, or that names a field we do not know (a wrong key
+    # such as {"team": 13}) used to be read as {} and stopped every instance of every studio (found by the end-to-end test, 2026-11-15).
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return envelope.fail("invalid_body", 400, 'Send a JSON object: {} stops every instance, {"team_id": 3} one studio, {"challenge_id": 7} one challenge.')
+    unknown = sorted(str(key) for key in data if key not in ("team_id", "challenge_id"))
+    if unknown:
+        return envelope.fail("invalid_param", 400, f"Unknown field(s): {', '.join(unknown)}. Nothing was stopped. Use team_id and/or challenge_id, or {{}} for everything.")
     raw_team = data.get("team_id")
     raw_chal = data.get("challenge_id")
 

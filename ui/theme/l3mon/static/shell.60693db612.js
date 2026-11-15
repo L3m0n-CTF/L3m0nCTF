@@ -743,7 +743,7 @@ const headers={Accept:opts.html?'text/html':'application/json'};
 if(method!=='GET')headers['CSRF-Token']=apiCsrf();
 if(opts.etag)headers['If-None-Match']=opts.etag;
 let body;
-if(opts.body!==undefined){headers['Content-Type']='application/json';body=JSON.stringify(opts.body);}
+if(opts.body!==undefined||method!=='GET'){headers['Content-Type']='application/json';body=JSON.stringify(opts.body===undefined?{}:opts.body);}
 const ctl=typeof AbortController==='function'?new AbortController():null;
 const timer=ctl?setTimeout(()=>ctl.abort(),API_TIMEOUT_MS):0;
 try{
@@ -1055,69 +1055,6 @@ let ended=false;
 on('net',(r)=>{if(!ended&&r.error&&r.error.code==='auth_required'){ended=true;sessionEnded();}});
 document.addEventListener('visibilitychange',()=>audioVisibility(document.hidden));
 }
-function initShow(form){
-const btn=$('[data-show]',form);
-const input=$('#f-password',form);
-if(!btn||!input)return;
-btn.addEventListener('click',()=>{
-const show=input.type==='password';
-input.type=show?'text':'password';
-btn.setAttribute('aria-pressed',String(show));
-});
-form.addEventListener('submit',()=>{input.type='password';btn.setAttribute('aria-pressed','false');});
-}
-function initRetry(form){
-const s=Number(form.dataset.retryAfter);
-if(!(s>0))return;
-const btn=$('[data-submit]',form);
-const wait=$('[data-wait]',form);
-btn.disabled=true;
-wait.hidden=false;
-countdown(s,(left)=>{
-const m=Math.ceil(left/60);
-wait.textContent=left>90?`You can try again in about ${m} minutes.`:`You can try again in ${left} s.`;
-},()=>{
-btn.disabled=false;
-wait.textContent='You can try again now.';
-});
-}
-function initLogin(){
-const form=$('[data-login]');
-if(!form)return;
-const name=$('#f-name',form);
-const pass=$('#f-password',form);
-const btn=$('[data-submit]',form);
-const host=form.parentElement;
-initShow(form);
-initRetry(form);
-for(const input of[name,pass])input.addEventListener('input',()=>{if(input.value)clearFieldError(input);});
-let sent=false;
-form.addEventListener('submit',(e)=>{
-if(sent||btn.getAttribute('aria-disabled')==='true'||btn.disabled){e.preventDefault();return;}
-const problems=[];
-for(const[input,msg]of[[name,'Enter your username or email.'],[pass,'Enter your password.']]){
-if(!input.value.trim()){fieldError(input,msg);problems.push({id:input.id,text:msg});}else clearFieldError(input);
-}
-if(problems.length){
-e.preventDefault();
-showSummary(host,problems);
-sfx('bonk');
-return;
-}
-sent=true;
-setPending(btn,'Tuning in…');
-sfx('click');
-const card=$('[data-card]');
-if(card&&!reduced())card.classList.add('flick');
-});
-addEventListener('pageshow',(e)=>{
-if(!e.persisted)return;
-sent=false;
-clearPending(btn);
-const card=$('[data-card]');
-if(card)card.classList.remove('flick');
-});
-}
 function run(name,fn){
 try{fn();}catch(err){console.error(`[l3m0n] ${name} failed`,err);}
 }
@@ -1125,5 +1062,4 @@ run('dialog',initDialog);
 run('prefs',initPrefs);
 run('shell',initShell);
 run('keys',initKeys);
-run('login',initLogin);
 })();

@@ -112,3 +112,25 @@ def test_admin_instances_list_and_kill():
         set_client_override(None)
 
     destroy_ctfd(app)
+
+
+def test_the_kill_request_stops_everything_only_when_asked_with_an_empty_object():
+    """A wrong key ({"team": 13}) or a cut-off body used to be read as {} and stopped every instance of every studio."""
+    app = create_ctfd(user_mode="teams", enable_plugins=True)
+    mock_client = MockAdminInstancerClient()
+    set_client_override(mock_client)
+    with app.app_context():
+        admin = login_as_user(app, "admin")
+        for body in ({"team": 13}, {"team_id": 1, "teams": [1]}, [], "text"):
+            answer = admin.post("/api/v1/l3mon/admin/instances/kill", json=body)
+            assert answer.status_code == 400, (body, answer.status_code, answer.get_data(as_text=True)[:120])
+        cut_off = admin.post("/api/v1/l3mon/admin/instances/kill", data='{"team_id": 1', content_type="application/json")
+        assert cut_off.status_code in (400, 403)  # refused by the handler or by CTFd before it; nothing is stopped either way (checked below)
+        nothing = admin.post("/api/v1/l3mon/admin/instances/kill")  # no body at all: refused (by CTFd's CSRF check or by the handler), never read as "everything"
+        assert nothing.status_code in (400, 403)
+        assert mock_client.killed == [], "nothing may reach the instancer for a request that was not understood"
+        everything = admin.post("/api/v1/l3mon/admin/instances/kill", json={})
+        assert everything.status_code == 200
+        assert mock_client.killed == [{}] or len(mock_client.killed) == 1
+    set_client_override(None)
+    destroy_ctfd(app)
