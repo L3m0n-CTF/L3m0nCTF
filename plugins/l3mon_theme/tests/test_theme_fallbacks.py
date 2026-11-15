@@ -69,3 +69,28 @@ def test_the_flag_form_sent_without_its_script_goes_back_to_the_board_and_not_to
         assert answer.status_code == 303, answer.status_code
         assert answer.headers["Location"].endswith("/board")
         assert client.post("/board", data={"submission": "L3m0n{x}"}).status_code == 403  # no nonce: refused as everywhere
+
+
+def test_privacy_and_rules_lead_to_the_websites_pages_and_the_icon_address_to_the_icon(app):
+    """The registration form links to /privacy (a 404 before 2026-11-15); the pages live on the website."""
+    with app.test_client() as client:
+        for page in ("privacy", "rules"):
+            answer = client.get(f"/{page}")
+            assert answer.status_code == 302 and answer.headers["Location"] == f"https://l3m0nctf.xyz/{page}/", (page, answer.status_code, answer.headers.get("Location"))
+        icon = client.get("/favicon.ico")
+        assert icon.status_code == 302 and icon.headers["Location"].endswith("/favicon.svg")
+        assert client.get("/favicon.svg").status_code == 200
+
+
+def test_a_bad_invite_link_is_explained_and_not_called_crew_only(app):
+    """CTFd answers a mistyped or expired invite with 403; the theme said 'This area is for the crew only' and offered no way forward (found 2026-11-15)."""
+    register_user(app)
+    with login_as_user(app) as client:
+        answer = client.get("/teams/invite?code=not-a-real-code")
+        text = answer.get_data(as_text=True)
+        assert answer.status_code == 403
+        assert "That invite link did not work" in text and "Ask your captain for a fresh one" in text
+        assert "for the crew only" not in text
+        assert 'href="/teams/join"' in text, "the page must lead on to the join step"
+        admin_page = client.get("/admin")  # an ordinary player on a crew page still gets the crew wording
+        assert "for the crew only" in admin_page.get_data(as_text=True) or admin_page.status_code in (302, 403)

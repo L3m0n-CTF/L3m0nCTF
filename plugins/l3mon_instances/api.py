@@ -81,6 +81,17 @@ def get_instances():
     })
 
 
+def _free_if_expired(row, now_dt):
+    """An instance whose time is up (the instancer's reaper removes the container) keeps its unique key until somebody clears it: clear it."""
+    if row is not None and row.active_key is not None and row.expires_at <= now_dt:
+        if row.state in ("running", "starting"):
+            row.state = "expired"
+        row.active_key = None
+        db.session.commit()
+        return True
+    return False
+
+
 @bp.route("/instances", methods=["POST"])
 @viewer.player
 def start_instance():
@@ -119,6 +130,9 @@ def start_instance():
             if tracker.is_host_down(existing.host_name, now_ts=now_dt.timestamp()):
                 d["state"] = "error"
             return envelope.ok(d, status=200)
+        # It ran out its time (or ended) and nobody pressed Stop: free its key, or the new row below would collide with it, the new container
+        # would be stopped as an orphan and the studio could never start this challenge again
+        _free_if_expired(existing, now_dt)
 
     # 2. Quota check: at most 3 live instances per team
     active_count = L3monInstance.query.filter(
@@ -183,6 +197,13 @@ def start_instance():
                 elif e.error_code == "not_found":
                     return envelope.fail("not_found", 404, e.message)
 
+            # A start that failed INSIDE the instancer (an image that cannot be pulled, a container that dies) is this challenge's failure, not the host's:
+            # marking the host down would refuse every other studio's starts and show 'error' on their running instances for 30 s. Retrying would only
+            # start the same container again. The player gets a plain message (the instancer's own text names images and addresses).
+            if e.error_code in ("internal_error", "invalid_request"):
+                _log.error("Start instance failed inside the instancer on host %s for challenge %s: %s", chosen_host["name"], challenge_id, e)
+                return envelope.fail("busy", 503, "This challenge could not be started just now. Try again in a minute; if it keeps failing, tell the crew.")
+
             # Host failure (connection error, 5xx server error, or capacity issue)
             _log.warning("Start instance failed on host %s: %s (attempt %d)", chosen_host["name"], e, attempt + 1)
             tracker.mark_host_down(chosen_host["name"], now_ts=now_ts)
@@ -191,7 +212,7 @@ def start_instance():
             else:
                 if e.error_code == "no_capacity":
                     return envelope.fail("no_capacity", 503, e.message, retry_after=e.retry_after or 30)
-                return envelope.fail("busy", 503, e.message)
+                return envelope.fail("busy", 503, "The challenge servers are busy. Try again in a minute; if it keeps failing, tell the crew.")
 
     # 6. Record in DB
     created_ts = inst_data.get("created_at") or int(now_dt.timestamp())
@@ -283,6 +304,8 @@ def renew_instance(challenge_id_param):
 
     active_key = f"{team.id}:{challenge_id}"
     instance_row = L3monInstance.query.filter_by(active_key=active_key).first()
+    if instance_row is not None and _free_if_expired(instance_row, _now_dt()):
+        instance_row = None  # its time was up: there is nothing left to renew
     if not instance_row:
         return envelope.fail("not_found", 404, "Instance not found.")
 

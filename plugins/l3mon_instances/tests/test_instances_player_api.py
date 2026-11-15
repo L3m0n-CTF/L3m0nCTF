@@ -1,6 +1,7 @@
 """Tests for l3mon_instances player API (/api/v1/l3mon/instances)."""
 import calendar
 import datetime
+import time
 from unittest import mock
 
 import pytest
@@ -25,12 +26,15 @@ class FakeInstancerClient:
         self.instances = {}
         self.next_id = 1
         self.stopped = []
+        self.fail_start = None  # an InstancerClientError to raise on the next starts (a challenge whose container cannot start)
 
     def request(self, method, path, body=None):
         if method == "POST" and path == "/v1/instances":
+            if self.fail_start is not None:
+                raise self.fail_start
             inst_id = f"mockinst{self.next_id:024d}"
             self.next_id += 1
-            now_ts = T_LIVE
+            now_ts = int(time.time())  # the frozen time of the test
             exp_ts = now_ts + (body.get("ttl_seconds") or 2700)
             inst = {
                 "id": inst_id,
@@ -338,5 +342,63 @@ def test_the_ttl_override_exists_only_when_the_test_switch_is_on(monkeypatch):
             with mock.patch("CTFd.plugins.l3mon_instances.api.get_flag_secret", return_value="test-secret"):
                 assert alice.post("/api/v1/l3mon/instances", json={"challenge_id": c1, "ttl_seconds": 120}).status_code == 201
         assert seen and seen[0].get("ttl_seconds") == 120
+    set_client_override(None)
+    destroy_ctfd(app)
+
+
+def test_a_studio_can_start_again_after_its_instance_ran_out_its_time(monkeypatch):
+    """Nothing cleared the unique key of an instance that simply expired: the next Start collided with it, stopped the new container and handed back the expired row,
+    so the studio could never start that challenge again (found by the end-to-end test, 2026-11-15)."""
+    app = create_ctfd(user_mode="teams", enable_plugins=True)
+    with app.app_context():
+        c1, c2, c3, c4, cs, alice = _setup_world(app)
+        fake_client = FakeInstancerClient()
+        set_client_override(fake_client)
+        with mock.patch("CTFd.plugins.l3mon_instances.api.get_flag_secret", return_value="test-secret"):
+            with freeze_time(datetime.datetime.utcfromtimestamp(T_LIVE)):
+                first = alice.post("/api/v1/l3mon/instances", json={"challenge_id": c1})
+                assert first.status_code == 201
+            with freeze_time(datetime.datetime.utcfromtimestamp(T_LIVE + 46 * 60)):  # the 45-minute lifetime is over; nobody pressed Stop
+                assert alice.get("/api/v1/l3mon/instances").get_json()["data"]["instances"] == []
+                assert alice.post(f"/api/v1/l3mon/instances/{c1}/renew", json={}).status_code == 404, "an expired instance cannot be renewed"
+                again = alice.post("/api/v1/l3mon/instances", json={"challenge_id": c1})
+                assert again.status_code == 201, again.get_json()
+                rows = L3monInstance.query.filter_by(challenge_id=c1).order_by(L3monInstance.id).all()
+                assert [row.state for row in rows] == ["expired", "running"], [(r.state, r.active_key) for r in rows]
+                assert [bool(row.active_key) for row in rows] == [False, True]
+                assert fake_client.stopped == [], "the new instance must not be stopped as an orphan"
+                assert again.get_json()["data"]["state"] == "running"
+    set_client_override(None)
+    destroy_ctfd(app)
+
+
+def test_one_challenge_that_cannot_start_does_not_take_the_other_challenges_down_and_hides_the_internals():
+    """A start that fails inside the instancer (a missing image, a container that dies) is that challenge's failure. It used to mark the whole host down for 30 s
+    (every instance of every studio showed 'error', every start was refused) and the player was shown the instancer's own error text."""
+    app = create_ctfd(user_mode="teams", enable_plugins=True)
+    with app.app_context():
+        c1, c2, c3, c4, cs, alice = _setup_world(app)
+        fake_client = FakeInstancerClient()
+        set_client_override(fake_client)
+        with mock.patch("CTFd.plugins.l3mon_instances.api.get_flag_secret", return_value="test-secret"):
+            with freeze_time(datetime.datetime.utcfromtimestamp(T_LIVE)):
+                fake_client.fail_start = InstancerClientError(500, "internal_error", "docker: pull access denied for registry.internal/secret-image on host 10.200.1.10")
+                broken = alice.post("/api/v1/l3mon/instances", json={"challenge_id": c1})
+                assert broken.status_code == 503
+                text = broken.get_data(as_text=True)
+                assert "docker" not in text and "registry" not in text and "10.200" not in text, text
+                fake_client.fail_start = None
+                other = alice.post("/api/v1/l3mon/instances", json={"challenge_id": c2})
+                assert other.status_code == 201, "the host was marked down by one challenge's failed start: " + other.get_data(as_text=True)
+                assert other.get_json()["data"]["state"] == "running"
+                listing = alice.get("/api/v1/l3mon/instances").get_json()["data"]["instances"]
+                assert [i["state"] for i in listing] == ["running"], listing
+        # an unreachable host is still the host's failure (it is marked down and the player gets a plain message)
+        with mock.patch("CTFd.plugins.l3mon_instances.api.get_flag_secret", return_value="test-secret"):
+            with freeze_time(datetime.datetime.utcfromtimestamp(T_LIVE + 10)):
+                fake_client.fail_start = InstancerClientError(503, "upstream_unavailable", "Could not reach challenge instancer: <urlopen error [Errno 111] Connection refused http://10.200.1.10:8300>")
+                down = alice.post("/api/v1/l3mon/instances", json={"challenge_id": c3})
+                assert down.status_code == 503
+                assert "10.200" not in down.get_data(as_text=True) and "urlopen" not in down.get_data(as_text=True)
     set_client_override(None)
     destroy_ctfd(app)
