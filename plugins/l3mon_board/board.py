@@ -61,7 +61,10 @@ def build(viewer):
     fetch again until the next change. Read first, the worst case is one fetch more (found by the audit of 3.7)."""
     ver = signature()
     phase = current_phase()
-    before = phase.state == "before"
+    # Before the start players see no programme at all. The crew, who set the board up days before, are shown what players will see once it starts (the
+    # programmes that are on air, never the withheld ones), drawn as the live board and marked `preview`: they have no studio, so they cannot send a flag.
+    preview = phase.state == "before" and viewer.admin
+    before = phase.state == "before" and not preview
     channels = Channel.query.order_by(Channel.position, Channel.id).all()
     programmes, per_channel = [], {channel.id: [] for channel in channels}
     if not before:
@@ -113,9 +116,11 @@ def build(viewer):
 
     notif_id, notif_ver = news.state_for(viewer)
     data = {
-        "ver": ver, "phase": {"state": phase.state, "frozen": phase.frozen}, "team": _team_block(viewer, phase),
+        "ver": ver, "phase": {"state": "live" if preview else phase.state, "frozen": phase.frozen}, "team": _team_block(viewer, phase),
         "channels": channel_rows, "programmes": programmes, "notif_id": notif_id, "notif_ver": notif_ver, "show_coming": show_coming_count(),
     }
+    if preview:
+        data["preview"] = True
     return data, etag_of(data, ends)
 
 

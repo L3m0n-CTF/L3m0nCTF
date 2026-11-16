@@ -220,6 +220,21 @@ def test_before_the_start_there_are_no_programmes_and_every_total_is_zero(play):
     assert len(data["channels"]) == 3 and data["team"]["score"] == 0
 
 
+def test_before_the_start_the_crew_still_sees_what_players_will_see_so_that_the_board_can_be_set_up_and_looked_at(play):
+    """Players see nothing until the start; the crew, who set the board up days before, see the programmes that are on air (never the withheld ones), the
+    channels' totals and a mark that this is a preview. Nobody else's view changes, and the crew cannot send a flag in any case (no studio)."""
+    with clock(T_START - 3600):
+        crew = board(play.admin)
+        player = board(play.alice)
+    assert crew["phase"] == {"state": "live", "frozen": False} and crew["preview"] is True, "drawn as the live board, marked as a preview"
+    assert {"lantern_walk", "moth_cipher"} <= set(by_slug(crew)), "the programmes that are on air show"
+    assert "dumpling_gate" not in by_slug(crew), "a withheld programme is still nothing here"
+    assert sum(c["on_air"] for c in crew["channels"]) == len(crew["programmes"]) > 0 and crew["team"] is None
+    assert player["phase"] == {"state": "before", "frozen": False} and player["programmes"] == [] and "preview" not in player, "a player's board is exactly as before"
+    with clock(T_START + 60):
+        assert "preview" not in board(play.admin), "once the broadcast is on there is nothing to preview"
+
+
 def test_while_paused_the_board_still_lists_the_programmes(play):
     set_config("paused", True)
     data = board(play.alice)

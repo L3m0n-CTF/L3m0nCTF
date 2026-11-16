@@ -13,7 +13,7 @@ The board draws **channels**, and each channel holds **programmes**. A programme
 | 3 | The channel and the programme are **on air** | the same page: the *Release now* buttons |
 | 4 | **The broadcast window is open** (the platform's clock is between the start and the end of the event) | the settings (`start` and `end`), see section 3 |
 
-Until number 4, **nobody sees any programme on the board, not even the crew**: before the start the board is empty for everyone. Until number 2 the board has no row to draw the challenge in. CTFd's own "visible" setting on a challenge is not number 3: the platform keeps CTFd's state in step with the plan, and CTFd refuses to show a challenge that is not on air.
+Until number 4, **players see nothing on the board** (it says "Not on air yet"). **The crew see what is on air as a preview**, so a board can be set up and looked at days before the start; the crew have no studio, so they cannot send a flag. To play a challenge through as a player (flag, hints, TRP), the window has to be open: that is the rehearsal of section 3. Until number 2 the board has no row to draw the challenge in. CTFd's own "visible" setting on a challenge is not number 3: the platform keeps CTFd's state in step with the plan, and CTFd refuses to show a challenge that is not on air.
 
 **Setting up with the forms** (no code): open `/admin/l3mon/release`.
 

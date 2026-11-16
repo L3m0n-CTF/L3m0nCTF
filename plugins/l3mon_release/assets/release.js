@@ -166,7 +166,7 @@
         node('td', { 'data-label': 'Slug', text: p.slug }),
         node('td', { 'data-label': 'Challenge', text: p.name }),
         node('td', { 'data-label': 'Setting' }, [chip(p)]),
-        node('td', { 'data-label': 'Players', 'class': cls, text: p.visible ? 'players see it' : p.on_air ? 'on air (CTFd is catching up)' : 'off air' }),
+        node('td', { 'data-label': 'Players', 'class': cls, text: p.visible ? (plan.phase.state === 'before' ? 'on air, waiting for the broadcast to start' : 'players see it') : p.on_air ? 'on air (CTFd is catching up)' : 'off air' }),
         node('td', { 'data-label': 'Change' }, [actions('programme', p)])
       ]);
     });
@@ -412,14 +412,17 @@
       change(plan.channels.map(function (ch) { return { kind: 'channel', id: ch.id, mode: 'withhold' }; }));
     });
     var summary = node('p', { 'class': 'rc-summary' });
+    var banner = node('p', { 'class': 'alert alert-info rc-banner', role: 'status' });
+    banner.hidden = true;
     var body = node('div', {});
     while (app.firstChild) app.removeChild(app.firstChild);
     app.appendChild(statusLine);
     app.appendChild(node('div', { 'class': 'rc-bar' }, [summary, reasonBox, refresh, panic]));
+    app.appendChild(banner);
     if (!setup) setup = buildSetup();
     app.appendChild(setup.details);
     app.appendChild(body);
-    shell = { summary: summary, reasonBox: reasonBox, body: body };
+    shell = { summary: summary, reasonBox: reasonBox, banner: banner, body: body };
   }
 
   function render() {
@@ -430,6 +433,11 @@
     shell.summary.textContent = 'Now ' + istText(plan.now) + ' · broadcast ' + plan.phase.state + ' · ' + counts.on_air +
       (counts.on_air === 1 ? ' programme' : ' programmes') + ' on air, ' + counts.coming + ' coming up' +
       (plan.phase.state === 'before' ? ' · players see nothing on the board until the broadcast starts (' + istText(plan.start) + ')' : '');
+    var before = plan.phase.state === 'before';
+    shell.banner.hidden = !before;
+    shell.banner.textContent = before
+      ? 'The broadcast has not started (it starts ' + istText(plan.start) + '). Players see nothing on the board until then. You see what is on air as a preview on the board page, but you have no studio, so you cannot send a flag. To play it through as a player, ask for a rehearsal (docs/runbooks/15-rehearsal.md).'
+      : '';
     var loose = plan.loose.length ? node('section', { 'class': 'rc-loose' }, [
       node('h2', { 'class': 'h5', text: 'Not on any channel (so not on air)' }),
       node('ul', {}, plan.loose.map(function (c) { return node('li', { text: c.name }); }))
