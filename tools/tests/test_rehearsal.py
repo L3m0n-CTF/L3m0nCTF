@@ -168,3 +168,76 @@ def test_the_command_line_closes_and_opens_the_pages_and_the_toggle_script_only_
     assert "nginx -s reload" in script and "close-gate" in script and "open-gate" in script
     assert "force-recreate" not in script and "config render" not in script, "no restart of the platform and no new settings: only nginx's file and a reload"
     assert "set -euo pipefail" in script
+
+
+# ---- live: the event as on the day, from now, with no date gate -----------------------------------------------------------------------------------------
+
+def test_live_opens_the_window_from_now_keeps_the_real_end_opens_the_pages_and_keeps_the_original(files):
+    event, gate = files
+    original = event.read_text(encoding="utf-8")
+    gate.write_text("default 1;\n", encoding="utf-8")  # the pages were being kept for the crew: "without any restrictions" opens them
+    summary = rehearsal.go_live(event, gate, now=NOW)
+    assert (summary["start"], summary["end"], summary["real_start"], summary["gate"]) == ("2026-11-20T08:57:00Z", "2026-11-28T16:30:00Z", "2026-11-28T04:30:00Z", "open")
+    text = event.read_text(encoding="utf-8")
+    assert text.replace("2026-11-20T08:57:00Z", "2026-11-28T04:30:00Z") == original, "only the start moved: the end, the comments and every other line are as they were"
+    assert gate.read_text(encoding="utf-8") == rehearsal.GATE_OFF
+    assert event.with_name(event.name + rehearsal.BACKUP_SUFFIX).read_text(encoding="utf-8") == original
+    assert config.validate(config.load(event)) == [], "the file is still a valid settings file"
+    assert rehearsal.status(event, gate)["rehearsing"] is True and rehearsal.status(event, gate)["gate"] == "open"
+
+
+def test_off_after_live_puts_the_real_start_back(files):
+    event, gate = files
+    original = event.read_text(encoding="utf-8")
+    rehearsal.go_live(event, gate, now=NOW)
+    summary = rehearsal.turn_off(event, gate)
+    assert event.read_text(encoding="utf-8") == original and not event.with_name(event.name + rehearsal.BACKUP_SUFFIX).exists()
+    assert (summary["start"], summary["end"]) == ("2026-11-28T04:30:00Z", "2026-11-28T16:30:00Z")
+
+
+def test_live_is_refused_when_a_window_has_been_moved_already_and_changes_nothing(files):
+    event, gate = files
+    rehearsal.turn_on(event, gate, hours=6, now=NOW)
+    during, gate_now = event.read_text(encoding="utf-8"), gate.read_text(encoding="utf-8")
+    with pytest.raises(rehearsal.RehearsalError, match="moved already"):
+        rehearsal.go_live(event, gate, now=NOW)
+    assert event.read_text(encoding="utf-8") == during and gate.read_text(encoding="utf-8") == gate_now
+
+
+def test_live_is_refused_once_the_real_start_has_passed_or_when_less_than_an_hour_is_left(files):
+    event, gate = files
+    original = event.read_text(encoding="utf-8")
+    after_start = datetime(2026, 11, 28, 4, 45, 0, tzinfo=timezone.utc)
+    with pytest.raises(rehearsal.RehearsalError, match="already passed"):
+        rehearsal.go_live(event, gate, now=after_start)
+    # a settings file whose start is still ahead but whose end is close: nothing sensible to open
+    event.write_text(original.replace("2026-11-28T16:30:00Z", "2026-11-20T09:30:00Z"), encoding="utf-8")
+    with pytest.raises(rehearsal.RehearsalError, match="less than an hour"):
+        rehearsal.go_live(event, gate, now=NOW)
+    assert gate.read_text(encoding="utf-8") == "default 0;\n" and not event.with_name(event.name + rehearsal.BACKUP_SUFFIX).exists(), "refused: nothing was touched"
+
+
+def test_live_refuses_times_it_cannot_read_before_anything_is_written(files):
+    event, gate = files
+    event.write_text(event.read_text(encoding="utf-8").replace("2026-11-28T04:30:00Z", "28 November 10:00"), encoding="utf-8")
+    with pytest.raises(rehearsal.RehearsalError, match="written like"):
+        rehearsal.go_live(event, gate, now=NOW)
+    assert not event.with_name(event.name + rehearsal.BACKUP_SUFFIX).exists() and gate.read_text(encoding="utf-8") == "default 0;\n"
+
+
+def test_the_command_line_and_the_script_have_live(files, capsys):
+    from l3mon import cli
+
+    event, gate = files
+    assert cli.main(["rehearsal", "live", "--event", str(event), "--gate", str(gate)]) == 0
+    out = capsys.readouterr().out
+    assert "Live now" in out and "the real end kept" in out and "open" in out
+    assert cli.main(["rehearsal", "live", "--event", str(event), "--gate", str(gate)]) == 1, "a second `live` is refused"
+    assert "moved already" in capsys.readouterr().out
+    assert cli.main(["rehearsal", "status", "--event", str(event), "--gate", str(gate)]) == 0
+    assert "has been moved" in capsys.readouterr().out
+    assert cli.main(["rehearsal", "off", "--event", str(event), "--gate", str(gate)]) == 0
+    script = (ROOT / "tools" / "ops" / "rehearsal.sh").read_text(encoding="utf-8")
+    live_part = script[script.index("\n  live)"):script.index("\n  off)")]
+    assert "run_tool live" in live_part and live_part.index("restart_platform") < live_part.index("reload_nginx"), "live: the platform opens the window, then nginx is told the pages are open"
+    assert "close" not in live_part.split("echo \"To go back")[0], "live never closes the pages"

@@ -82,6 +82,32 @@ def turn_on(event: Path, gate: Path, hours, now: datetime | None = None) -> dict
     return {"start": start, "end": end, "hours": hours, "gate": "crew only"}
 
 
+def go_live(event: Path, gate: Path, now: datetime | None = None) -> dict:
+    """The event as it will be on the day, from now, with no date gate: the broadcast window starts ten minutes ago and ends where the real window ends, and the
+    player pages are opened to everybody. Nothing else changes. The file as it was is kept, exactly as `on` keeps it, so that `off` puts the real start back.
+    Refused when a window has been moved already, when the real start has already passed (the event is on, there is nothing to open) and when less than an
+    hour is left before the real end (use `on` with a number of hours for that)."""
+    if _backup(event).exists():
+        raise RehearsalError("the window has been moved already (the copy of the real settings is kept next to the settings file); turn it off first")
+    original = event.read_text(encoding="utf-8")
+    real_start, real_end = _window(original)  # refuses a file without the two times, before anything is written
+    now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc).replace(second=0, microsecond=0)
+    try:
+        started_at = datetime.strptime(real_start, FORMAT).replace(tzinfo=timezone.utc)
+        ends_at = datetime.strptime(real_end, FORMAT).replace(tzinfo=timezone.utc)
+    except ValueError as exc:
+        raise RehearsalError(f"the times in the settings file are not written like 2026-11-28T04:30:00Z: {exc}") from exc
+    if started_at <= now - LEAD:
+        raise RehearsalError(f"the real start ({real_start}) has already passed: the broadcast window is open, there is nothing to open")
+    if ends_at < now + timedelta(hours=1):
+        raise RehearsalError(f"the real end ({real_end}) is less than an hour away or past: use `on` with a number of hours instead")
+    start = (now - LEAD).strftime(FORMAT)
+    _backup(event).write_bytes(event.read_bytes())
+    event.write_text(_with_window(original, start, real_end), encoding="utf-8", newline="")
+    gate.write_text(GATE_OFF, encoding="utf-8")
+    return {"start": start, "end": real_end, "real_start": real_start, "gate": "open"}
+
+
 def turn_off(event: Path, gate: Path, keep_gate: bool = False) -> dict:
     """Put the real window back. With `keep_gate` the player pages stay closed: tools/ops/rehearsal.sh opens them (`open_gate`) only after the platform has been
     restarted with the real window, so that for no moment a player can reach the rehearsal's programmes while the rehearsal's window is still open."""

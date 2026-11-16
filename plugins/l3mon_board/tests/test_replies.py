@@ -158,6 +158,39 @@ def test_the_crews_preview_is_left_alone(play):
     assert r.status_code == 200 and data(r)["status"] == "correct" and "l3mon" not in data(r)
 
 
+def test_a_flag_from_a_crew_account_with_no_studio_is_told_why_and_nothing_is_recorded(play):
+    """The main admin has no studio. CTFd answered a right and a wrong flag alike with a bare 403 ("You don't have the permission to access the requested
+    resource"); now the reply says what happened and what to do, in the contract's error shape."""
+    from CTFd.plugins.l3mon_board.replies import CREW_NO_STUDIO
+
+    for flag in ("lantern-answer", "nope"):
+        r = send(play.admin, play.ids.lantern, flag)
+        body = r.get_json()
+        assert r.status_code == 403 and body["success"] is False and body["error"] == "forbidden", body
+        assert body["message"] == CREW_NO_STUDIO and "studio" in body["message"] and "Preview" in body["message"]
+        assert "request_id" in body and r.headers["X-Request-Id"] == body["request_id"]
+    assert Solves.query.filter_by(challenge_id=play.ids.lantern).count() == 0, "nothing was recorded"
+    assert [k for k in body if k == "data"] == [], "the reply has no solve data a page could draw as a solve"
+
+
+def test_a_crew_account_that_has_a_studio_is_answered_by_ctfd_and_its_flag_is_recorded_for_the_studio(play):
+    """What the superior did on 16 November: a verified player made crew afterwards. It keeps working as before (and its solve counts for its studio)."""
+    Users.query.filter_by(name="alice").first().type = "admin"
+    db.session.commit()
+    r = send(play.alice, play.ids.lantern, "lantern-answer")
+    assert r.status_code == 200 and data(r)["status"] == "correct", r.get_json()
+    assert Solves.query.filter_by(challenge_id=play.ids.lantern).count() == 1
+
+
+def test_a_visitor_and_a_player_are_not_given_the_crews_sentence(play):
+    from CTFd.plugins.l3mon_board.replies import CREW_NO_STUDIO
+
+    assert send(play.alice, play.ids.lantern, "nope").get_json()["data"]["status"] == "incorrect"
+    visitor = play.app.test_client()
+    r = visitor.post(ATTEMPT, json={"challenge_id": play.ids.lantern, "submission": "nope"})
+    assert CREW_NO_STUDIO not in r.get_data(as_text=True)
+
+
 # ---- a wrong flag -----------------------------------------------------------------------------------------------------------
 
 def test_a_wrong_flag_has_no_extras_when_tries_are_not_limited_and_the_tries_left_when_they_are(play):

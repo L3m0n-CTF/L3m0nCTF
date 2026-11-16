@@ -19,6 +19,9 @@ In front of CTFd, for a studio only (the crew passes):
 - after the end a flag is answered `403 paused` with `reason: ended`, the same for a right and a wrong flag. CTFd would say "correct"
   to a right one and record nothing;
 - a hint cannot be bought before the start, while paused or after the end: the contract's `phase_closed`, and no TRP is spent.
+
+A flag from a crew account that has no studio gets a plain `403 forbidden` that says why and what to do (CTFd's own 403 says nothing useful); the crew's preview
+(`?preview=true`) and a crew account that has a studio are CTFd's, as they always were.
 """
 import json
 import math
@@ -33,7 +36,8 @@ from CTFd.plugins.l3mon_core.models import Programme
 from CTFd.plugins.l3mon_core.visibility import visible_challenge_ids
 from CTFd.utils.dates import unix_time_to_utc
 from CTFd.utils.challenges import get_solve_counts_for_challenges
-from CTFd.utils.user import is_admin
+from CTFd.utils.config import is_teams_mode
+from CTFd.utils.user import get_current_user, is_admin
 
 ON = {"extras": True, "ended": True, "hints": True}
 ATTEMPT = "api.challenges_challenge_attempt"
@@ -187,9 +191,28 @@ def _hints_by_phase():
     return envelope.fail("phase_closed", 403, HINT_REFUSALS[state], phase=state)
 
 
+CREW_NO_STUDIO = (
+    "A flag is recorded for a studio, and crew accounts have none, so it was not checked. To play a programme through, sign in with a player account that has a studio. "
+    "To only check a flag, use Preview on the challenge's page in the admin area: it says correct or incorrect and records nothing."
+)
+
+
+def _crew_without_a_studio():
+    """A flag sent from a crew account that has no studio. CTFd answers it with a bare 403 ("You don't have the permission to access the requested resource"),
+    which tells the crew nothing; the page showed that sentence as it was (found by the first crew test on the real platform, 16 November). A crew account
+    that also has a studio is CTFd's to answer, as it always was (its flag is recorded for its studio), and so is CTFd's own preview (`?preview=true`), which
+    checks a flag and records nothing."""
+    if request.method != "POST" or request.endpoint != ATTEMPT or not is_teams_mode() or not is_admin() or request.args.get("preview"):
+        return None
+    user = get_current_user()
+    if user is None or user.team_id is not None:
+        return None
+    return envelope.fail("forbidden", 403, CREW_NO_STUDIO)
+
+
 def guard():
-    """Before CTFd's view: the answer for a flag after the end, or for a hint outside the live hours; None to carry on."""
-    return _after_the_end() or _hints_by_phase()
+    """Before CTFd's view: the answer for a flag after the end, for a flag from a crew account that has no studio, or for a hint outside the live hours; None to carry on."""
+    return _after_the_end() or _crew_without_a_studio() or _hints_by_phase()
 
 
 def install(app):

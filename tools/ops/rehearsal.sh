@@ -3,14 +3,16 @@
 #
 #   tools/ops/rehearsal.sh status
 #   tools/ops/rehearsal.sh on [HOURS]     open the broadcast window for HOURS hours (default 6) and shut players out of the programme pages
+#   tools/ops/rehearsal.sh live           the event as on the day, from now: the window opens now and ends where the real one ends, and the pages are open to everybody
 #   tools/ops/rehearsal.sh off            put the real window back and open the pages again
 #
-# `on` and `off` change two files (python -m l3mon rehearsal does that and refuses anything odd), then make the machine notice: they render the settings,
+# `on`, `live` and `off` change two files (python -m l3mon rehearsal does that and refuses anything odd), then make the machine notice: they render the settings,
 # reload nginx (no break for anybody) and restart the platform container (about ten seconds). Run it on the machine, as the person who deploys.
 #
 # The ORDER matters, so that for no moment a player can reach the programmes while the rehearsal's window is open:
 #   on:   nginx closes the pages first, then the platform opens the window.
 #   off:  the platform goes back to the real window first (the board is empty again), then nginx opens the pages.
+#   live: the platform opens the window, then nginx is told the pages are open (players are meant to reach the programmes: that is what `live` is for).
 # If a step fails the script stops with the pages still closed; running `off` again (or `on`) is safe.
 set -euo pipefail
 
@@ -43,6 +45,15 @@ case "$ACTION" in
     echo "Done. The pages are closed to players and the window is open."
     run_tool status
     ;;
+  live)
+    run_tool live
+    render
+    restart_platform
+    reload_nginx
+    echo "Done. The event is on now: the window is open until its real end and the pages are open to everybody."
+    run_tool status
+    echo "To go back to the real start date: bash tools/ops/rehearsal.sh off. To keep the channel pages for the crew meanwhile: bash tools/ops/crew-gate.sh close."
+    ;;
   off)
     run_tool off --keep-gate
     render
@@ -54,7 +65,7 @@ case "$ACTION" in
     echo "Now clear what the rehearsal left behind (docs/runbooks/15-rehearsal.md, 'Afterwards')."
     ;;
   *)
-    echo "usage: $0 status | on [HOURS] | off" >&2
+    echo "usage: $0 status | on [HOURS] | live | off" >&2
     exit 2
     ;;
 esac

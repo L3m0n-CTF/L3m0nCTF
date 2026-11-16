@@ -50,7 +50,7 @@ def build_parser() -> argparse.ArgumentParser:
     dc.add_argument("--admin-nets", help="the organisers' addresses file (default: $ADMIN_NETS_FILE)")
 
     r = sub.add_parser("rehearsal", help="open the broadcast window for a rehearsal and close the player pages to everybody but the crew (docs/runbooks/15-rehearsal.md)")
-    r.add_argument("action", choices=["status", "on", "off", "open-gate", "close-gate"], help="`off --keep-gate` then `open-gate` is the safe order that tools/ops/rehearsal.sh uses")
+    r.add_argument("action", choices=["status", "on", "live", "off", "open-gate", "close-gate"], help="`live` opens the window from now to the real end with the pages open to everybody; `off --keep-gate` then `open-gate` is the safe order that tools/ops/rehearsal.sh uses")
     r.add_argument("--keep-gate", action="store_true", help="with `off`: put the real window back but leave the player pages closed until `open-gate`")
     r.add_argument("--hours", type=int, default=6, help="how long the rehearsal window stays open (1 to 48; default 6)")
     r.add_argument("--event", help="the event settings file (default: config/event.toml)")
@@ -86,7 +86,11 @@ def main(argv: list[str] | None = None) -> int:
         try:
             if args.action == "status":
                 s = rehearsal.status(event, gate)
-                print(("A rehearsal is on" if s["rehearsing"] else "No rehearsal is on (not on)") + f": the window is {s['start']} to {s['end']}; the player pages are {s['gate']}.")
+                print(("The window has been moved (a rehearsal, or `live`; `off` puts the real one back)" if s["rehearsing"] else "No rehearsal is on (not on)") + f": the window is {s['start']} to {s['end']}; the player pages are {s['gate']}.")
+            elif args.action == "live":
+                s = rehearsal.go_live(event, gate)
+                print(f"Live now: the window is {s['start']} to {s['end']} (UTC), the real end kept; the player pages are {s['gate']}. The real start ({s['real_start']}) is kept; `off` puts it back.")
+                print("Render the settings, restart the platform and reload nginx to apply it (tools/ops/rehearsal.sh live does all of it).")
             elif args.action == "on":
                 s = rehearsal.turn_on(event, gate, args.hours)
                 print(f"Rehearsal on for {s['hours']} hours: the window is {s['start']} to {s['end']} (UTC); the player pages are {s['gate']}.")

@@ -25,7 +25,9 @@ Until number 4, **players see nothing on the board** (it says "Not on air yet").
 
 The third box takes a whole plan at once (the file the author kit makes). The same can be sent as a call: `PUT /api/v1/l3mon/admin/programmes` (see `docs/deploy/local.md`).
 
-**Try as a player.** Crew accounts have no studio, so they cannot send a flag. To play, register an ordinary account, set up a studio, and sign in with that. Name test accounts `test-` and something (`test-anna`), so that they can be found and removed.
+**Try as a player.** Crew accounts have no studio, so they cannot send a flag: a flag is recorded for a studio. The page now says so in plain words (before 16 November it showed CTFd's bare "You don't have the permission"). To play, register an ordinary account, set up a studio, and sign in with that. Name test accounts `test-` and something (`test-anna`), so that they can be found and removed. To only **check** that a flag is right, open the challenge in the admin area (`/admin/challenges`, the challenge, *Preview*): it says correct or incorrect and records nothing.
+
+**A crew account that also has a studio** (a player made crew afterwards) can send flags, and its solves **count for its studio** like anybody's: they show on the scoreboard and in the CTFtime feed while the window is open. Use plain `test-` players for tests, and remove them afterwards (section 4).
 
 ## 2. Trying a challenge on your own computer (nothing online is touched)
 
@@ -85,3 +87,21 @@ bash tools/ops/crew-gate.sh open      # open them to everybody
 3. Check: open `https://play.l3m0nctf.xyz/board` in a private window. Before 10:00 IST on the day it shows the board's own "Not on air yet" card; from the start it shows the channels.
 
 To close it again, the same with `close`. Opening it earlier than the start is harmless: before the start players still see "Not on air yet".
+
+## 6. The event on now, with no date gate (`live`)
+
+When the crew want the platform exactly as it will be on the day, without waiting for the start date: players can see what is on air, send flags, buy hints and score; the pages are open to everybody. The only difference from the day is that the clock already says "started".
+
+```bash
+bash tools/ops/rehearsal.sh live      # window open from ten minutes ago until the REAL end (28 November, 22:00 IST); pages open to everybody
+bash tools/ops/rehearsal.sh status
+bash tools/ops/rehearsal.sh off       # the real start (10:00 IST on 28 November) is put back; players see "Not on air yet" again
+```
+
+What `live` does, and nothing else: moves only the **start** in `config/event.toml` (the end stays where the plan has it; the real file is kept next to it and `off` puts it back), writes `default 0;` into nginx's crew-only file (the channel pages open to everybody), renders the settings and restarts the platform (about ten seconds). It refuses when a window has been moved already, when the real start has already passed, and when less than an hour is left before the real end.
+
+**What goes on the board is still the crew's choice, programme by programme** (section 1): nothing a player can see exists until a channel and a programme are *Release now*'d on `/admin/l3mon/release`.
+
+**Toggling a channel or a programme on and off, while live:** `/admin/l3mon/release`. *Release now* puts a channel or a programme on air; *Withhold* takes it off air at once (players stop seeing it, and a flag sent for it records nothing); *Schedule…* drops it at a chosen second (India time); *Withhold every channel* at the top of the page takes everything off air in one press. To hide **all** the channel pages from players for a while instead (for example while setting things up), `bash tools/ops/crew-gate.sh close`, and `bash tools/ops/crew-gate.sh open` to bring them back (section 5).
+
+**Careful, it is the real platform:** the 29 registered players can see and solve whatever is on air, their solves count, and the public scoreboard and the CTFtime feed show real numbers while the window is open. Put a test programme on air only when that is wanted; clean up with section 4 before the event. `bash tools/ops/rehearsal.sh status` says whether the window has been moved. Leaving it moved through the real event does no harm (the real start has then passed; `off` after that puts the same window back); if the platform must show "Not on air yet" again before the start, run `off`.
