@@ -56,7 +56,7 @@ What `on` does, and nothing else:
 - turns on nginx's crew-only switch: the board, the Guide, the scoreboard, the challenges, flags, hints, instances and files answer **only on the crew host name** (`crew.l3m0nctf.xyz`, behind Cloudflare Access) and to the organisers' addresses; everybody else gets "not on air yet". Registration, sign-in and the health routes still work; the public CTFtime feed reads an empty list, so the rehearsal's scores never reach CTFtime;
 - restarts the platform container (about ten seconds).
 
-**The crew's way in:** open `https://crew.l3m0nctf.xyz`, pass Cloudflare Access (the one-time code), register or sign in with a `test-` account **on that address** (a session on the crew address is separate from one on `play.l3m0nctf.xyz`) and play there.
+**The crew's way in:** open `https://crew.l3m0nctf.xyz`, pass Cloudflare Access (the one-time code), and sign in **on that address** with a `test-` account (a session on the crew address is separate from one on `play.l3m0nctf.xyz`). The quickest way to get test accounts with no e-mail involved: in the crew pages open Users, press the plus button, give a name such as `test-anna`, an address such as `test-anna@example.com`, a password, tick *Verified*, and save. Sign in with it on the crew address, set up a studio, and play there. Several people can each use their own `test-` account, and a studio can hold up to four of them, so team play can be tried too.
 
 While a rehearsal is on, `python -m l3mon deploy check` lists it as a thing to do, so it cannot be forgotten. **Turn it off before the real event.**
 
