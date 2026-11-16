@@ -75,3 +75,18 @@ def test_preflight_production_guard_flags_preset_admin_token(tmp_path):
     # In dev repo, PRESET_ADMIN_TOKEN exists, so in production mode it must FAIL
     assert res.returncode != 0
     assert "[FAIL] admin_token_guard" in res.stdout or "[FAIL] deploy_check" in res.stdout
+
+
+def test_preflight_fails_while_the_channel_pages_are_closed_to_players_and_passes_when_they_are_open():
+    """The crew-only switch must be open when the event starts; the pre-flight audit of the hour before is where it is caught."""
+    switch = t.ROOT / "deploy" / "nginx" / "snippets" / "crew-only.conf"
+    original = switch.read_bytes()
+    try:
+        switch.write_bytes(("default 1;" + chr(10)).encode())  # written in place: nginx's container sees the same file
+        res = subprocess.run([t.BASH, str(PREFLIGHT_SCRIPT), "--env=dev"], capture_output=True, text=True, timeout=180, cwd=str(t.ROOT))
+        assert "[FAIL] crew_only_switch" in res.stdout and "crew-gate.sh open" in res.stdout, res.stdout[-1500:]
+        switch.write_bytes(original)
+        res = subprocess.run([t.BASH, str(PREFLIGHT_SCRIPT), "--env=dev"], capture_output=True, text=True, timeout=180, cwd=str(t.ROOT))
+        assert "[PASS] crew_only_switch" in res.stdout, res.stdout[-1500:]
+    finally:
+        switch.write_bytes(original)

@@ -65,3 +65,23 @@ While a rehearsal is on, `python -m l3mon deploy check` lists it as a thing to d
 `tools/ops/rehearsal.sh off` puts the real window back and opens the pages. What the rehearsal made stays until it is removed: test challenges (their solves, hints and files go with them), the rehearsal's channels, `test-` accounts and their studios, "New on air" notices, the audit lines. The challenges and the plan of the real event are loaded **after** the rehearsal is cleaned, never before, so that nothing real is removed with it.
 
 On the Release control page: *Take off the board* on every test programme, then *Remove this empty channel* on every test channel. In CTFd (`/admin`): delete the test challenges (Challenges, select, delete: their solves, hints, flags and files go with them) and the `test-` users and studios (Users, Teams). The audit lines and the "New on air" notices can stay; they are history.
+
+## 5. Keeping the channel pages for the crew, and opening them to the play address
+
+Before the event the channel pages (the board, the Guide, the scoreboard, the challenges, flags, hints and files) can be kept for the crew: on the crew address (`crew.l3m0nctf.xyz`) they work, and on the play address (`play.l3m0nctf.xyz`) players are told "Not on air yet". This is the same switch the rehearsal uses, on its own, with no change to the event window and no restart.
+
+```bash
+tools/ops/crew-gate.sh status
+tools/ops/crew-gate.sh close     # keep the channel pages for the crew
+tools/ops/crew-gate.sh open      # open them to everybody
+```
+
+**It must be opened before the event starts.** With the pages closed, real players cannot play. The pre-flight audit of the hour before (`tools/ops/preflight.sh --env production`) fails with `crew_only_switch` while the pages are closed, and `python -m l3mon deploy check` lists it as a thing to do.
+
+**How to open it (the person who deploys, from any computer):**
+
+1. In the Google Cloud console open Compute Engine, then VM instances, find the machine `l3mon-app` and press **SSH** (a terminal opens in the browser).
+2. Type: `cd ~/L3m0nCTF && tools/ops/crew-gate.sh open` and press Enter. It prints "Done. The channel pages answer everybody."
+3. Check: open `https://play.l3m0nctf.xyz/board` in a private window. Before 10:00 IST on the day it shows the board's own "Not on air yet" card; from the start it shows the channels.
+
+To close it again, the same with `close`. Opening it earlier than the start is harmless: before the start players still see "Not on air yet".

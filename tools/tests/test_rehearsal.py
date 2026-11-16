@@ -143,3 +143,28 @@ def test_the_command_line_has_the_two_steps_and_the_script_runs_them_in_the_safe
     on_part = script[script.index("\n  on)"):script.index("\n  off)")]
     assert on_part.index("reload_nginx") < on_part.index("restart_platform"), "on: the pages close first, then the window opens"
     assert "up -d --wait --force-recreate --no-deps ctfd" in script and "nginx -s reload" in script
+
+
+def test_the_player_pages_can_be_closed_and_opened_on_their_own_without_touching_the_window(files):
+    """The channel pages can be kept for the crew (`close_gate`) before the event and opened for everybody (`open_gate`) when it starts, with no change to the
+    event window and no restart of the platform: the switch is only nginx's file."""
+    event, gate = files
+    original = event.read_text(encoding="utf-8")
+    assert rehearsal.close_gate(gate)["gate"] == "crew only" and gate.read_text(encoding="utf-8") == rehearsal.GATE_ON
+    assert rehearsal.status(event, gate)["gate"] == "crew only" and rehearsal.status(event, gate)["rehearsing"] is False
+    assert rehearsal.open_gate(gate)["gate"] == "open" and gate.read_text(encoding="utf-8") == rehearsal.GATE_OFF
+    assert event.read_text(encoding="utf-8") == original, "the event window was never touched"
+
+
+def test_the_command_line_closes_and_opens_the_pages_and_the_toggle_script_only_reloads_nginx(files, capsys):
+    from l3mon import cli
+
+    event, gate = files
+    assert cli.main(["rehearsal", "close-gate", "--event", str(event), "--gate", str(gate)]) == 0
+    assert "crew only" in capsys.readouterr().out and gate.read_text(encoding="utf-8") == rehearsal.GATE_ON
+    assert cli.main(["rehearsal", "open-gate", "--event", str(event), "--gate", str(gate)]) == 0
+    assert gate.read_text(encoding="utf-8") == rehearsal.GATE_OFF
+    script = (ROOT / "tools" / "ops" / "crew-gate.sh").read_text(encoding="utf-8")
+    assert "nginx -s reload" in script and "close-gate" in script and "open-gate" in script
+    assert "force-recreate" not in script and "config render" not in script, "no restart of the platform and no new settings: only nginx's file and a reload"
+    assert "set -euo pipefail" in script

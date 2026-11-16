@@ -323,6 +323,20 @@ check_maintenance_mode() {
   fi
 }
 
+# 9b. The crew-only switch is open: with it closed the real players cannot reach the channel pages
+check_crew_only_switch() {
+  local nginx_cid state=""
+  nginx_cid="$(MSYS_NO_PATHCONV=1 docker ps -q --filter "name=nginx" 2>/dev/null | head -n 1 || true)"
+  if [ -n "$nginx_cid" ]; then
+    state="$(MSYS_NO_PATHCONV=1 docker exec "$nginx_cid" sh -c "grep -v '^#' /etc/nginx/snippets/crew-only.conf | tr -d ' ;' | grep -m1 '^default'" 2>/dev/null || true)"
+  fi
+  case "$state" in
+    default1) record "FAIL" "crew_only_switch" "The channel pages are closed to players (crew only)" "Open them: tools/ops/crew-gate.sh open" ;;
+    default0) record "PASS" "crew_only_switch" "The channel pages are open to everybody" "" ;;
+    *) record "SKIP" "crew_only_switch" "Could not read nginx's crew-only switch file" "" ;;
+  esac
+}
+
 # 10. python -m l3mon deploy check
 check_deploy_tool() {
   local deploy_out=""
@@ -357,6 +371,7 @@ check_compose_services
 check_backup_freshness
 check_mail_queue
 check_maintenance_mode
+check_crew_only_switch
 check_deploy_tool
 
 if [ "$JSON_OUTPUT" = true ]; then

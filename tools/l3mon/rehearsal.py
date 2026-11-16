@@ -99,3 +99,9 @@ def turn_off(event: Path, gate: Path, keep_gate: bool = False) -> dict:
 def open_gate(gate: Path) -> dict:
     gate.write_text(GATE_OFF, encoding="utf-8")
     return {"gate": "open"}
+
+
+def close_gate(gate: Path) -> dict:
+    """Keep the player pages for the crew, with no change to the event window (before the event, while the board is being set up and looked at)."""
+    gate.write_text(GATE_ON, encoding="utf-8")
+    return {"gate": "crew only"}
