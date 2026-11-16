@@ -331,7 +331,7 @@ check_crew_only_switch() {
     state="$(MSYS_NO_PATHCONV=1 docker exec "$nginx_cid" sh -c "grep -v '^#' /etc/nginx/snippets/crew-only.conf | tr -d ' ;' | grep -m1 '^default'" 2>/dev/null || true)"
   fi
   case "$state" in
-    default1) record "FAIL" "crew_only_switch" "The channel pages are closed to players (crew only)" "Open them: tools/ops/crew-gate.sh open" ;;
+    default1) record "FAIL" "crew_only_switch" "The channel pages are closed to players (crew only)" "Open them: bash tools/ops/crew-gate.sh open" ;;
     default0) record "PASS" "crew_only_switch" "The channel pages are open to everybody" "" ;;
     *) record "SKIP" "crew_only_switch" "Could not read nginx's crew-only switch file" "" ;;
   esac

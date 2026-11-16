@@ -71,9 +71,9 @@ On the Release control page: *Take off the board* on every test programme, then 
 Before the event the channel pages (the board, the Guide, the scoreboard, the challenges, flags, hints and files) can be kept for the crew: on the crew address (`crew.l3m0nctf.xyz`) they work, and on the play address (`play.l3m0nctf.xyz`) players are told "Not on air yet". This is the same switch the rehearsal uses, on its own, with no change to the event window and no restart.
 
 ```bash
-tools/ops/crew-gate.sh status
-tools/ops/crew-gate.sh close     # keep the channel pages for the crew
-tools/ops/crew-gate.sh open      # open them to everybody
+bash tools/ops/crew-gate.sh status
+bash tools/ops/crew-gate.sh close     # keep the channel pages for the crew
+bash tools/ops/crew-gate.sh open      # open them to everybody
 ```
 
 **It must be opened before the event starts.** With the pages closed, real players cannot play. The pre-flight audit of the hour before (`tools/ops/preflight.sh --env production`) fails with `crew_only_switch` while the pages are closed, and `python -m l3mon deploy check` lists it as a thing to do.
@@ -81,7 +81,7 @@ tools/ops/crew-gate.sh open      # open them to everybody
 **How to open it (the person who deploys, from any computer):**
 
 1. In the Google Cloud console open Compute Engine, then VM instances, find the machine `l3mon-app` and press **SSH** (a terminal opens in the browser).
-2. Type: `cd ~/L3m0nCTF && tools/ops/crew-gate.sh open` and press Enter. It prints "Done. The channel pages answer everybody."
+2. Type: `cd ~/L3m0nCTF && bash tools/ops/crew-gate.sh open` and press Enter. It prints "Done. The channel pages answer everybody."
 3. Check: open `https://play.l3m0nctf.xyz/board` in a private window. Before 10:00 IST on the day it shows the board's own "Not on air yet" card; from the start it shows the channels.
 
 To close it again, the same with `close`. Opening it earlier than the start is harmless: before the start players still see "Not on air yet".
