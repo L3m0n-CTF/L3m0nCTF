@@ -109,3 +109,37 @@ def test_the_command_line_runs_the_three_commands(files, capsys):
     assert cli.main(["rehearsal", "on", "--event", str(event), "--gate", str(gate)]) == 1, "a second `on` is refused"
     assert cli.main(["rehearsal", "off", "--event", str(event), "--gate", str(gate)]) == 0
     assert "put back" in capsys.readouterr().out
+
+
+def test_off_can_keep_the_pages_closed_until_the_platform_has_the_real_window_and_then_open_them(files):
+    """The order that matters: the player pages must open only after the platform has been restarted with the real window, or for a few seconds a player
+    could reach the rehearsal's programmes with the rehearsal's window still open (found by the security review of the first version)."""
+    event, gate = files
+    original = event.read_text(encoding="utf-8")
+    rehearsal.turn_on(event, gate, hours=6, now=NOW)
+    summary = rehearsal.turn_off(event, gate, keep_gate=True)
+    assert event.read_text(encoding="utf-8") == original, "the real window is back in the file"
+    assert gate.read_text(encoding="utf-8") == rehearsal.GATE_ON, "but the pages stay closed"
+    assert summary["gate"] == "crew only"
+    assert rehearsal.status(event, gate)["rehearsing"] is False and rehearsal.status(event, gate)["gate"] == "crew only"
+    assert rehearsal.open_gate(gate)["gate"] == "open"
+    assert gate.read_text(encoding="utf-8") == rehearsal.GATE_OFF
+
+
+def test_the_command_line_has_the_two_steps_and_the_script_runs_them_in_the_safe_order(files, capsys):
+    from l3mon import cli
+
+    event, gate = files
+    cli.main(["rehearsal", "on", "--hours", "2", "--event", str(event), "--gate", str(gate)])
+    capsys.readouterr()
+    assert cli.main(["rehearsal", "off", "--keep-gate", "--event", str(event), "--gate", str(gate)]) == 0
+    assert gate.read_text(encoding="utf-8") == rehearsal.GATE_ON
+    assert cli.main(["rehearsal", "open-gate", "--event", str(event), "--gate", str(gate)]) == 0
+    assert gate.read_text(encoding="utf-8") == rehearsal.GATE_OFF
+    # the shell script: for `off` the platform is restarted BEFORE nginx is told to open the pages; for `on` nginx closes them BEFORE the platform opens the window
+    script = (ROOT / "tools" / "ops" / "rehearsal.sh").read_text(encoding="utf-8")
+    off_part = script[script.index("\n  off)"):]
+    assert off_part.index("restart_platform") < off_part.index("open-gate") < off_part.index("reload_nginx"), "off: platform first, then the pages"
+    on_part = script[script.index("\n  on)"):script.index("\n  off)")]
+    assert on_part.index("reload_nginx") < on_part.index("restart_platform"), "on: the pages close first, then the window opens"
+    assert "up -d --wait --force-recreate --no-deps ctfd" in script and "nginx -s reload" in script

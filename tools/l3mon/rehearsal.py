@@ -82,12 +82,20 @@ def turn_on(event: Path, gate: Path, hours, now: datetime | None = None) -> dict
     return {"start": start, "end": end, "hours": hours, "gate": "crew only"}
 
 
-def turn_off(event: Path, gate: Path) -> dict:
+def turn_off(event: Path, gate: Path, keep_gate: bool = False) -> dict:
+    """Put the real window back. With `keep_gate` the player pages stay closed: tools/ops/rehearsal.sh opens them (`open_gate`) only after the platform has been
+    restarted with the real window, so that for no moment a player can reach the rehearsal's programmes while the rehearsal's window is still open."""
     copy = _backup(event)
     if not copy.exists():
         raise RehearsalError("no rehearsal is on (there is no copy of the real settings), so nothing was changed")
     event.write_bytes(copy.read_bytes())
-    gate.write_text(GATE_OFF, encoding="utf-8")
+    if not keep_gate:
+        gate.write_text(GATE_OFF, encoding="utf-8")
     copy.unlink()
     start, end = _window(event.read_text(encoding="utf-8"))
-    return {"start": start, "end": end, "gate": "open"}
+    return {"start": start, "end": end, "gate": _gate_word(gate)}
+
+
+def open_gate(gate: Path) -> dict:
+    gate.write_text(GATE_OFF, encoding="utf-8")
+    return {"gate": "open"}

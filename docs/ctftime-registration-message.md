@@ -1,8 +1,6 @@
-# Message to the superiors: registering L3m0nCTF 2026 on CTFtime (updated 2026-10-17)
+Registering L3m0nCTF 2026 on CTFtime (updated 2026-10-17)
 
 Subject: L3m0nCTF 2026: registering the event on CTFtime (what we file, what we need from you, and where the build stands)
-
-Dear Sir/Madam,
 
 We want to list L3m0nCTF 2026 on CTFtime (ctftime.org), the international site where capture-the-flag events are listed and rated. Being listed makes the event visible to teams worldwide, and after the event the participating teams earn CTFtime rating points, which is a strong reason for good teams to join. The listing is filed through a form and approved by hand by CTFtime, and they do not publish how long that takes. The event is 7 weeks away (28 November), so we would like to file as soon as the items below are settled.
 
@@ -70,6 +68,3 @@ Still ahead:
 
 We can file as soon as items 1 to 5 in section 2 are settled. Please reply with those details, and we will register the event the same day.
 
-Regards,
-[Your name]
-TIFAC-CORE in Cyber Security, Amrita Vishwa Vidyapeetham, Coimbatore

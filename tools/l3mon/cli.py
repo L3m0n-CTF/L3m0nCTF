@@ -50,7 +50,8 @@ def build_parser() -> argparse.ArgumentParser:
     dc.add_argument("--admin-nets", help="the organisers' addresses file (default: $ADMIN_NETS_FILE)")
 
     r = sub.add_parser("rehearsal", help="open the broadcast window for a rehearsal and close the player pages to everybody but the crew (docs/runbooks/15-rehearsal.md)")
-    r.add_argument("action", choices=["status", "on", "off"])
+    r.add_argument("action", choices=["status", "on", "off", "open-gate"], help="`off --keep-gate` then `open-gate` is the safe order that tools/ops/rehearsal.sh uses")
+    r.add_argument("--keep-gate", action="store_true", help="with `off`: put the real window back but leave the player pages closed until `open-gate`")
     r.add_argument("--hours", type=int, default=6, help="how long the rehearsal window stays open (1 to 48; default 6)")
     r.add_argument("--event", help="the event settings file (default: config/event.toml)")
     r.add_argument("--gate", help="nginx's crew-only file (default: $CREW_ONLY_FILE, else deploy/nginx/snippets/crew-only.conf)")
@@ -90,10 +91,13 @@ def main(argv: list[str] | None = None) -> int:
                 s = rehearsal.turn_on(event, gate, args.hours)
                 print(f"Rehearsal on for {s['hours']} hours: the window is {s['start']} to {s['end']} (UTC); the player pages are {s['gate']}.")
                 print("Render the settings, reload nginx and restart the platform to apply it (tools/ops/rehearsal.sh does all of it).")
+            elif args.action == "open-gate":
+                s = rehearsal.open_gate(gate)
+                print(f"The player pages are {s['gate']} (reload nginx to apply it).")
             else:
-                s = rehearsal.turn_off(event, gate)
+                s = rehearsal.turn_off(event, gate, keep_gate=args.keep_gate)
                 print(f"Rehearsal off: the real window is put back ({s['start']} to {s['end']}) and the player pages are {s['gate']}.")
-                print("Render the settings, reload nginx and restart the platform to apply it; then clear what the rehearsal left (docs/runbooks/15-rehearsal.md).")
+                print("Render the settings and restart the platform to apply it; then open the pages and clear what the rehearsal left (docs/runbooks/15-rehearsal.md).")
         except (rehearsal.RehearsalError, OSError) as exc:
             print(f"error: {exc}")
             return 1
