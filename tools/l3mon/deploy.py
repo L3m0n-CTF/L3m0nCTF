@@ -66,7 +66,7 @@ def check_event(event_file: Path, generated: Path, items: list[Item]) -> dict | 
     return data
 
 
-def check_secrets(directory: Path, data: dict | None, items: list[Item]) -> None:
+def check_secrets(directory: Path, data: dict | None, items: list[Item], env: dict | None = None) -> None:
     if not directory.is_dir():
         items.append(Item(BLOCKED, "secrets", f"{directory} does not exist: run `python -m l3mon secrets generate --dir {directory}` on this machine"))
         return
@@ -100,6 +100,12 @@ def check_secrets(directory: Path, data: dict | None, items: list[Item]) -> None
     mail_password = _read(directory / "MAIL_PASSWORD") if (directory / "MAIL_PASSWORD").is_file() else None
     if mail_password is None:
         items.append(Item(BLOCKED, "mail", f"{directory / 'MAIL_PASSWORD'} does not exist: compose needs the file, and an empty one is fine (`: > {directory / 'MAIL_PASSWORD'}`)"))
+    elif not mail and "ops" in {name.strip() for name in (env or {}).get("L3MON_OVERLAYS", "").split(",")}:
+        # the production machine sends through the relay of the ops overlay: the provider's address and login are in production.env, the password is the secret
+        if mail_password:
+            items.append(Item(OK, "mail", "sends through the platform's own relay (the ops overlay); its provider settings are in production.env and its password is .secrets/MAIL_PASSWORD"))
+        else:
+            items.append(Item(TODO, "mail", "the platform's own relay is on but .secrets/MAIL_PASSWORD is empty: it holds every message instead of sending it, so nobody can finish registering"))
     elif not mail:
         verify = (data or {}).get("accounts", {}).get("verify_emails")
         items.append(Item(TODO, "mail", "no [mail] section: no verification or password-reset message can be sent, so nobody can finish registering" + (" (accounts.verify_emails is true)" if verify else "")))
@@ -210,7 +216,7 @@ def run_checks(root: Path, event_file: Path | None = None, secrets_dir: Path | N
         admin_nets = Path(env["ADMIN_NETS_FILE"])
     items: list[Item] = []
     data = check_event(event_file, root / "deploy" / "compose" / "generated", items)
-    check_secrets(secrets_dir, data, items)
+    check_secrets(secrets_dir, data, items, env)
     check_tls(tls_dir, items)
     check_admin_nets(admin_nets, root / "deploy" / "nginx" / "snippets" / "admin-nets.conf", items)
     check_cloudflare_list(root / "deploy" / "nginx" / "snippets" / "cloudflare-realip.conf", today or date.today(), items)

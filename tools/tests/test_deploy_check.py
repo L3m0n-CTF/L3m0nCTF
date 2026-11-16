@@ -280,3 +280,21 @@ def test_deploy_check_defaults_to_the_repository_root_whatever_the_current_folde
         assert Path(build_parser().parse_args(["deploy", "check"]).root).resolve() == Path(expected).resolve()
     # an explicit root still wins
     assert build_parser().parse_args(["deploy", "check", "--root", "elsewhere"]).root == "elsewhere"
+
+
+def test_mail_through_the_platforms_own_relay_is_in_place_when_the_relay_has_its_password_and_a_todo_when_it_has_none(tmp_path):
+    """The production machine sends mail through the relay of the ops overlay (the provider's settings are in production.env), not through a [mail] section of
+    event.toml. The check used to say that nobody could register; it must say what is true."""
+    world = make_deployment(tmp_path, mail=False)
+    world["env"]["L3MON_OVERLAYS"] = "identity,ops"
+    secret = world["secrets_dir"] / "MAIL_PASSWORD"
+    secret.write_text("the-provider-key\n", encoding="utf-8")
+    items = run(world)
+    assert statuses(items)["mail"] == deploy.OK and "relay" in next(i.detail for i in items if i.name == "mail")
+    secret.write_text("", encoding="utf-8")
+    items = run(world)
+    assert statuses(items)["mail"] == deploy.TODO and "holds every message" in next(i.detail for i in items if i.name == "mail")
+    world["env"]["L3MON_OVERLAYS"] = "identity"
+    secret.write_text("the-provider-key\n", encoding="utf-8")
+    items = run(world)
+    assert statuses(items)["mail"] == deploy.TODO and "nobody can finish registering" in next(i.detail for i in items if i.name == "mail"), "no relay, no [mail] section: still a todo"
