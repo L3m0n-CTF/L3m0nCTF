@@ -3,6 +3,8 @@
     GET /api/v1/l3mon/admin/release       the plan, what players see right now, and the newest audit lines
     PUT /api/v1/l3mon/admin/release       release, withhold or schedule channels and programmes (a batch is one transaction)
     PUT /api/v1/l3mon/admin/programmes    load the channels and programmes (an idempotent upsert; new entries start withheld)
+    DELETE /api/v1/l3mon/admin/programmes/<id>   take a programme off the board (its challenge stays in CTFd, on no channel, and is hidden)
+    DELETE /api/v1/l3mon/admin/channels/<id>     remove a channel that holds no programme
 
 Every call needs an administrator (CTFd's own `admins_only`); a signed-in session also needs CTFd's CSRF token, which CTFd checks
 for every unsafe request, and a script sends an API token instead. nginx refuses the whole prefix to anyone outside the
@@ -16,6 +18,7 @@ from sqlalchemy.exc import IntegrityError
 from CTFd.models import db
 from CTFd.plugins.l3mon_core import audit
 from CTFd.plugins.l3mon_core.clock import now
+from CTFd.plugins.l3mon_core.models import Channel, Programme
 from CTFd.plugins.l3mon_release import plan
 from CTFd.plugins.l3mon_release.reconcile import reconcile, serialize
 from CTFd.utils.decorators import admins_only
@@ -81,6 +84,41 @@ def put_programmes():
         db.session.rollback()
         return _refuse(plan.refused(error))
     return _answer(counts)
+
+
+@bp.route("/programmes/<int:programme_id>", methods=["DELETE"])
+@admins_only
+def delete_programme(programme_id):
+    """The way back from a mistake or a test: the challenge is no longer on any channel, so players cannot see it (CTFd's own state follows the plan)."""
+    serialize()
+    row = db.session.get(Programme, programme_id)
+    if row is None:
+        return _refuse({"programme": ["there is no such programme"]}, 404)
+    slug = row.slug
+    db.session.delete(row)
+    db.session.flush()
+    audit.record("plan.remove", "programme", f"{slug} taken off the board")
+    reconcile(locked=True)
+    return _answer(plan.release_view(now()))
+
+
+@bp.route("/channels/<int:channel_id>", methods=["DELETE"])
+@admins_only
+def delete_channel(channel_id):
+    """Only a channel with nothing on it: take its programmes off first, so that nothing is removed by surprise."""
+    serialize()
+    row = db.session.get(Channel, channel_id)
+    if row is None:
+        return _refuse({"channel": ["there is no such channel"]}, 404)
+    held = Programme.query.filter_by(channel_id=row.id).count()
+    if held:
+        return _refuse({"channel": [f"still holds {held} programmes: take them off the board first"]})
+    slug = row.slug
+    db.session.delete(row)
+    db.session.flush()
+    audit.record("plan.remove", "channel", f"{slug} removed")
+    reconcile(locked=True)
+    return _answer(plan.release_view(now()))
 
 
 @page_bp.route("/admin/l3mon/release")

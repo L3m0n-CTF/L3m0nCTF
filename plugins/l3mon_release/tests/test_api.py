@@ -566,3 +566,80 @@ def test_plain_names_with_ordinary_punctuation_are_accepted_and_a_challenge_name
         assert data["channels"][0]["name"] == "Chase Club: the (very) late show & more!"
         assert data["channels"][0]["programmes"][0]["name"] == "<b>x</b>"
     destroy_ctfd(app)
+
+
+# ---- taking a programme off the board, and removing an empty channel (the way back from a mistake or a test) -------------------------------------------
+
+def test_a_programme_can_be_taken_off_the_board_and_its_challenge_is_on_no_channel_and_hidden_again():
+    app = setup_app()
+    with app.app_context():
+        started()
+        admin = admin_client(app)
+        ids = load_plan(admin)
+        programmes, channels = plan_ids()
+        with clock(T_LIVE):
+            assert release(admin, ("channel", channels["street"], "release", None), ("programme", programmes["alpha"], "release", None)).status_code == 200
+            assert states()["alpha"] == "visible"
+            r = admin.delete(f"{PROGRAMMES}/{programmes['alpha']}", json={})
+        assert r.status_code == 200 and body(r)["success"] is True, r.get_data(as_text=True)
+        data = body(r)["data"]
+        street = next(c for c in data["channels"] if c["slug"] == "street")
+        assert [p["slug"] for p in street["programmes"]] == ["beta", "gamma"], "alpha is gone from its channel"
+        assert ids["alpha"] in [x["id"] for x in data["loose"]], "and its challenge waits for a channel again"
+        assert Programme.query.filter_by(challenge_id=ids["alpha"]).count() == 0
+        assert states()["alpha"] == "hidden", "players cannot see it any more: CTFd's state follows the plan"
+        assert Challenges.query.filter_by(id=ids["alpha"]).count() == 1, "the challenge itself is untouched"
+        assert any(a.action == "plan.remove" and "alpha" in a.detail for a in Audit.query.all()), "the crew's trail says who took it off"
+    destroy_ctfd(app)
+
+
+def test_taking_off_a_programme_that_does_not_exist_is_refused_and_a_visitor_or_a_player_may_not():
+    app = setup_app()
+    with app.app_context():
+        started()
+        admin = admin_client(app)
+        load_plan(admin)
+        programmes, _ = plan_ids()
+        assert admin.delete(f"{PROGRAMMES}/99999", json={}).status_code == 404
+        register_user(app, name="player", email="player@example.com")
+        for client in (app.test_client(), login_as_user(app, "player")):
+            assert client.delete(f"{PROGRAMMES}/{programmes['alpha']}", json={}).status_code in (302, 403)
+        assert Programme.query.count() == 4
+    destroy_ctfd(app)
+
+
+def test_an_empty_channel_can_be_removed_and_one_that_still_has_programmes_is_refused():
+    app = setup_app()
+    with app.app_context():
+        started()
+        admin = admin_client(app)
+        load_plan(admin)
+        programmes, channels = plan_ids()
+        r = admin.delete(f"/api/v1/l3mon/admin/channels/{channels['street']}", json={})
+        assert r.status_code == 400 and "channel" in r.get_json()["errors"] and "programmes" in " ".join(r.get_json()["errors"]["channel"]), r.get_data(as_text=True)
+        assert Channel.query.count() == 2, "refused: nothing was removed"
+        assert admin.delete(f"/api/v1/l3mon/admin/channels/{channels['break']}", json={}).status_code == 400, "the break holds delta"
+        assert admin.delete(f"{PROGRAMMES}/{programmes['delta']}", json={}).status_code == 200
+        r = admin.delete(f"/api/v1/l3mon/admin/channels/{channels['break']}", json={})
+        assert r.status_code == 200, r.get_data(as_text=True)
+        assert [c["slug"] for c in body(r)["data"]["channels"]] == ["street"]
+        assert Channel.query.count() == 1
+        assert any(a.action == "plan.remove" and "break" in a.detail for a in Audit.query.all())
+        assert admin.delete(f"/api/v1/l3mon/admin/channels/{channels['break']}", json={}).status_code == 404
+    destroy_ctfd(app)
+
+
+def test_removing_the_last_channel_leaves_the_platform_as_it_was_before_any_plan():
+    app = setup_app()
+    with app.app_context():
+        started()
+        admin = admin_client(app)
+        ids = load_plan(admin)
+        programmes, channels = plan_ids()
+        for slug in ("alpha", "beta", "gamma", "delta"):
+            assert admin.delete(f"{PROGRAMMES}/{programmes[slug]}", json={}).status_code == 200
+        for slug in ("street", "break"):
+            assert admin.delete(f"/api/v1/l3mon/admin/channels/{channels[slug]}", json={}).status_code == 200
+        data = body(admin.get(RELEASE))["data"]
+        assert data["channels"] == [] and sorted(x["id"] for x in data["loose"]) == sorted(ids.values())
+    destroy_ctfd(app)

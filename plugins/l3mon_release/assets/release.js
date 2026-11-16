@@ -89,6 +89,27 @@
     });
   }
 
+  function remove(kind, item) {
+    if (busy) return;
+    var text = kind === 'programme'
+      ? 'Take "' + item.name + '" off the board? The challenge stays in CTFd, on no channel, and players stop seeing it.'
+      : 'Remove the channel "' + item.name + '"? It has no programmes.';
+    if (!window.confirm(text)) return;
+    busy = true;
+    editing = null;
+    say('Removing…', false);
+    send('DELETE', {}, planApi.replace(/programmes$/, kind === 'programme' ? 'programmes/' : 'channels/') + item.id).then(function (data) {
+      plan = data;
+      busy = false;
+      say(kind === 'programme' ? '"' + item.name + '" is off the board.' : 'Channel "' + item.name + '" removed.', false);
+      render();
+    }).catch(function (error) {
+      busy = false;
+      say(friendly(error.message), true);
+      render();
+    });
+  }
+
   function load() {
     if (busy || editing) return;
     send('GET').then(function (data) {
@@ -117,6 +138,11 @@
     });
     buttons[1].addEventListener('click', function () { change([{ kind: kind, id: item.id, mode: 'withhold' }]); });
     buttons[2].addEventListener('click', function () { editing = key; render(); });
+    if (kind === 'programme') {
+      var off = node('button', { type: 'button', 'class': 'btn btn-sm btn-outline-danger', text: 'Take off the board' });
+      off.addEventListener('click', function () { remove('programme', item); });
+      box.appendChild(off);
+    }
     if (editing === key) {
       var input = node('input', { type: 'datetime-local', 'class': 'form-control form-control-sm', 'aria-label': 'Release time in India (IST)', value: istInputValue(plan.now + 600) });
       var set = node('button', { type: 'button', 'class': 'btn btn-sm btn-primary', text: 'Set' });
@@ -154,6 +180,11 @@
       node('span', { 'class': ch.on_air ? 'rc-onair' : 'rc-off', text: ch.on_air ? 'channel on air' : 'channel off air' }),
       actions('channel', ch)
     ]);
+    if (!ch.programmes.length) {
+      var gone = node('button', { type: 'button', 'class': 'btn btn-sm btn-outline-danger', text: 'Remove this empty channel' });
+      gone.addEventListener('click', function () { remove('channel', ch); });
+      head.appendChild(gone);
+    }
     return node('section', { 'class': 'rc-channel' }, [head, ch.programmes.length ? table : node('p', { 'class': 'p-3 mb-0', text: 'No programmes on this channel yet.' })]);
   }
 

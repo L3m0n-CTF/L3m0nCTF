@@ -154,6 +154,9 @@ services:
       - ../nginx/snippets:/etc/nginx/snippets:ro
       # The organisers' addresses: development list by default; production and the tests point ADMIN_NETS_FILE elsewhere.
       - ${ADMIN_NETS_FILE:-../nginx/snippets/admin-nets.conf}:/etc/nginx/snippets/admin-nets.conf:ro
+      # The crew-only switch (docs/runbooks/15-rehearsal.md): `default 0;` normally; the machine keeps its own copy, so that turning a rehearsal on and off never
+      # changes a file of the repository.
+      - ${CREW_ONLY_FILE:-../nginx/snippets/crew-only.conf}:/etc/nginx/snippets/crew-only.conf:ro
     tmpfs:
       - /tmp
       - /var/cache/nginx

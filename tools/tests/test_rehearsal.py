@@ -1,0 +1,111 @@
+"""The rehearsal switch: the crew tries the whole event on the real platform before the real event (docs/runbooks/15-rehearsal.md).
+
+`rehearsal on` opens the broadcast window around the present moment and closes the player pages to everybody but the crew (nginx's crew-only file);
+`rehearsal off` puts the real window back, opens the pages again and says what is left to clean. Both only change two files; the machine's own
+commands (render the settings, reload nginx, restart the platform) are in tools/ops/rehearsal.sh.
+"""
+from __future__ import annotations
+
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+import pytest
+
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "tools"))
+
+from l3mon import config, rehearsal  # noqa: E402
+
+NOW = datetime(2026, 11, 20, 9, 7, 41, tzinfo=timezone.utc)
+
+
+@pytest.fixture()
+def files(tmp_path):
+    event = tmp_path / "event.toml"
+    event.write_text((ROOT / "config" / "event.example.toml").read_text(encoding="utf-8"), encoding="utf-8")
+    gate = tmp_path / "crew-only.conf"
+    gate.write_text("default 0;\n", encoding="utf-8")
+    return event, gate
+
+
+def test_the_example_window_is_read_as_it_is_written(files):
+    event, gate = files
+    now = rehearsal.status(event, gate)
+    assert (now["start"], now["end"]) == ("2026-11-28T04:30:00Z", "2026-11-28T16:30:00Z")
+    assert now["rehearsing"] is False and now["gate"] == "open"
+
+
+def test_on_opens_a_window_around_now_closes_the_player_pages_and_keeps_the_original(files):
+    event, gate = files
+    original = event.read_text(encoding="utf-8")
+    summary = rehearsal.turn_on(event, gate, hours=6, now=NOW)
+    assert (summary["start"], summary["end"]) == ("2026-11-20T08:57:00Z", "2026-11-20T15:07:00Z"), "from ten minutes ago, to the minute"
+    text = event.read_text(encoding="utf-8")
+    assert 'start = "2026-11-20T08:57:00Z"' in text and 'end = "2026-11-20T15:07:00Z"' in text
+    assert "# 10:00 IST on 28 November 2026" in text, "the comments after the times stay"
+    assert text.replace('2026-11-20T08:57:00Z', '2026-11-28T04:30:00Z').replace('2026-11-20T15:07:00Z', '2026-11-28T16:30:00Z') == original, "nothing else changed"
+    assert gate.read_text(encoding="utf-8") == "default 1;\n"
+    assert event.with_name(event.name + rehearsal.BACKUP_SUFFIX).read_text(encoding="utf-8") == original
+    assert config.validate(config.load(event)) == [], "the file is still a valid settings file"
+    assert rehearsal.status(event, gate)["rehearsing"] is True and rehearsal.status(event, gate)["gate"] == "crew only"
+
+
+def test_on_twice_is_refused_so_the_real_window_can_never_be_lost(files):
+    event, gate = files
+    rehearsal.turn_on(event, gate, hours=6, now=NOW)
+    during = event.read_text(encoding="utf-8")
+    with pytest.raises(rehearsal.RehearsalError, match="already on"):
+        rehearsal.turn_on(event, gate, hours=2, now=NOW)
+    assert event.read_text(encoding="utf-8") == during
+
+
+def test_off_puts_the_real_window_back_opens_the_pages_and_removes_the_copy(files):
+    event, gate = files
+    original = event.read_text(encoding="utf-8")
+    rehearsal.turn_on(event, gate, hours=6, now=NOW)
+    summary = rehearsal.turn_off(event, gate)
+    assert event.read_text(encoding="utf-8") == original
+    assert gate.read_text(encoding="utf-8") == "default 0;\n"
+    assert not event.with_name(event.name + rehearsal.BACKUP_SUFFIX).exists()
+    assert (summary["start"], summary["end"]) == ("2026-11-28T04:30:00Z", "2026-11-28T16:30:00Z")
+
+
+def test_off_without_a_rehearsal_changes_nothing_and_still_opens_the_pages(files):
+    event, gate = files
+    gate.write_text("default 1;\n", encoding="utf-8")
+    original = event.read_text(encoding="utf-8")
+    with pytest.raises(rehearsal.RehearsalError, match="no rehearsal"):
+        rehearsal.turn_off(event, gate)
+    assert event.read_text(encoding="utf-8") == original and gate.read_text(encoding="utf-8") == "default 1;\n", "refused: nothing was touched"
+
+
+@pytest.mark.parametrize("hours", [0, -3, 49, 1.5, "6", None, True])
+def test_the_length_is_a_whole_number_of_hours_from_1_to_48(files, hours):
+    event, gate = files
+    original = event.read_text(encoding="utf-8")
+    with pytest.raises(rehearsal.RehearsalError, match="hours"):
+        rehearsal.turn_on(event, gate, hours=hours, now=NOW)
+    assert event.read_text(encoding="utf-8") == original and gate.read_text(encoding="utf-8") == "default 0;\n"
+
+
+def test_a_settings_file_without_the_two_times_is_refused_before_anything_is_written(files):
+    event, gate = files
+    event.write_text("[event]\nname = \"x\"\n", encoding="utf-8")
+    with pytest.raises(rehearsal.RehearsalError, match="start"):
+        rehearsal.turn_on(event, gate, hours=6, now=NOW)
+    assert gate.read_text(encoding="utf-8") == "default 0;\n" and not event.with_name(event.name + rehearsal.BACKUP_SUFFIX).exists()
+
+
+def test_the_command_line_runs_the_three_commands(files, capsys):
+    from l3mon import cli
+
+    event, gate = files
+    assert cli.main(["rehearsal", "status", "--event", str(event), "--gate", str(gate)]) == 0
+    assert "not on" in capsys.readouterr().out
+    assert cli.main(["rehearsal", "on", "--hours", "3", "--event", str(event), "--gate", str(gate)]) == 0
+    out = capsys.readouterr().out
+    assert "crew only" in out and "3 hours" in out
+    assert cli.main(["rehearsal", "on", "--event", str(event), "--gate", str(gate)]) == 1, "a second `on` is refused"
+    assert cli.main(["rehearsal", "off", "--event", str(event), "--gate", str(gate)]) == 0
+    assert "put back" in capsys.readouterr().out

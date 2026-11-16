@@ -43,3 +43,8 @@ deploy/compose/generated/
 pentest-bundle/
 tests/integration/fixtures/story-run/
 tests/load/summary.json
+
+# Local-only settings written by tools/local-test.sh and the rehearsal switch
+config/local-test.toml
+config/event.toml.before-rehearsal
+config/event.toml

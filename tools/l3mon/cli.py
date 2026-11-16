@@ -5,7 +5,9 @@ import argparse
 import sys
 from pathlib import Path
 
-from . import api_rules, config, deploy, hygiene, secrets_gen, story
+import os
+
+from . import api_rules, config, deploy, hygiene, rehearsal, secrets_gen, story
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -47,6 +49,12 @@ def build_parser() -> argparse.ArgumentParser:
     dc.add_argument("--tls", help="the folder with origin.pem, origin.key and cloudflare-origin-pull-ca.pem (default: $TLS_DIR or /etc/l3mon/tls)")
     dc.add_argument("--admin-nets", help="the organisers' addresses file (default: $ADMIN_NETS_FILE)")
 
+    r = sub.add_parser("rehearsal", help="open the broadcast window for a rehearsal and close the player pages to everybody but the crew (docs/runbooks/15-rehearsal.md)")
+    r.add_argument("action", choices=["status", "on", "off"])
+    r.add_argument("--hours", type=int, default=6, help="how long the rehearsal window stays open (1 to 48; default 6)")
+    r.add_argument("--event", help="the event settings file (default: config/event.toml)")
+    r.add_argument("--gate", help="nginx's crew-only file (default: $CREW_ONLY_FILE, else deploy/nginx/snippets/crew-only.conf)")
+
     st = sub.add_parser("story", help="compile and check the cold-open comics (the private story folder) into the files the platform serves")
     ssub2 = st.add_subparsers(dest="story_cmd", required=True)
     sb = ssub2.add_parser("build", help="check every channel's script and picture and write one bundle per channel")
@@ -69,6 +77,27 @@ def main(argv: list[str] | None = None) -> int:
         blocked = [i for i in items if i.status == deploy.BLOCKED]
         print(f"{len(blocked)} blocked, {sum(1 for i in items if i.status == deploy.TODO)} to do, {sum(1 for i in items if i.status == deploy.OK)} in place")
         return 1 if blocked else 0
+
+    if args.cmd == "rehearsal":
+        root = Path(__file__).resolve().parents[2]
+        event = Path(args.event) if args.event else root / "config" / "event.toml"
+        gate = Path(args.gate or os.environ.get("CREW_ONLY_FILE") or root / "deploy" / "nginx" / "snippets" / "crew-only.conf")
+        try:
+            if args.action == "status":
+                s = rehearsal.status(event, gate)
+                print(("A rehearsal is on" if s["rehearsing"] else "No rehearsal is on (not on)") + f": the window is {s['start']} to {s['end']}; the player pages are {s['gate']}.")
+            elif args.action == "on":
+                s = rehearsal.turn_on(event, gate, args.hours)
+                print(f"Rehearsal on for {s['hours']} hours: the window is {s['start']} to {s['end']} (UTC); the player pages are {s['gate']}.")
+                print("Render the settings, reload nginx and restart the platform to apply it (tools/ops/rehearsal.sh does all of it).")
+            else:
+                s = rehearsal.turn_off(event, gate)
+                print(f"Rehearsal off: the real window is put back ({s['start']} to {s['end']}) and the player pages are {s['gate']}.")
+                print("Render the settings, reload nginx and restart the platform to apply it; then clear what the rehearsal left (docs/runbooks/15-rehearsal.md).")
+        except (rehearsal.RehearsalError, OSError) as exc:
+            print(f"error: {exc}")
+            return 1
+        return 0
 
     if args.cmd == "hygiene":
         words = [w for w in args.deny_words.split(",") if w.strip()]

@@ -81,6 +81,23 @@ try {
   const row = await page.run(`(Array.from(document.querySelectorAll('tr')).find((r) => r.children[1] && r.children[1].textContent === 'wombat_walk') || {}).innerText || ''`);
   check('the channel and the first programme can be put on air from the same page', /released/.test(row) && /players see it|on air/.test(row), row);
 
+  // ---- the way back: a programme off the board, an empty channel removed ----
+  const loseRow = (slug) => page.run(`(() => { const row = Array.from(document.querySelectorAll('tr')).find((r) => r.children[1] && r.children[1].textContent === ${JSON.stringify(slug)}); Array.from(row.querySelectorAll('button')).find((b) => b.textContent.startsWith('Take off the board')).click(); })()`);
+  let before = page.log.dialogs || 0;
+  await loseRow('numbat_night');
+  await sleep(1800);
+  const hasRow = (slug) => page.run(`Array.from(document.querySelectorAll('tr')).some((r) => r.children[1] && r.children[1].textContent === ${JSON.stringify(slug)})`);
+  const hasChannel = (name) => page.run(`Array.from(document.querySelectorAll('.rc-channel > header')).some((h) => h.textContent.includes(${JSON.stringify(name)}))`);
+  const status = () => page.run('document.getElementById("release-status").textContent');
+  check('Take off the board asks first, then the programme is gone and its challenge waits for a channel again',
+    (page.log.dialogs || 0) === before + 1 && !(await hasRow('numbat_night')) && (await options('programme', 'challenge')).some((o) => o.includes('Numbat Night')),
+    JSON.stringify({ dialogs: (page.log.dialogs || 0) - before, status: await status(), row: await hasRow('numbat_night') }));
+  before = page.log.dialogs || 0;
+  await page.run(`(() => { const head = Array.from(document.querySelectorAll('.rc-channel > header')).find((h) => h.textContent.includes('Json Square')); Array.from(head.querySelectorAll('button')).find((b) => b.textContent.startsWith('Remove this empty channel')).click(); })()`);
+  await sleep(1800);
+  check('an empty channel can be removed (asks first); a channel that holds a programme has no such button',
+    (page.log.dialogs || 0) === before + 1 && !(await hasChannel('Json Square')) && (await hasChannel('Test Street')) &&
+    await page.run(`Array.from(document.querySelectorAll('.rc-channel > header')).filter((h) => h.textContent.includes('Test Street')).every((h) => !Array.from(h.querySelectorAll('button')).some((b) => b.textContent.startsWith('Remove this empty channel')))`));
   check('no script error, no failed request', page.log.errors.length === 0 && page.log.failed.length === 0, JSON.stringify({ errors: page.log.errors, failed: page.log.failed }));
   check('nothing was asked of any other host', page.log.urls.every((u) => u.startsWith(BASE) || u.startsWith('data:')), JSON.stringify(page.log.urls.filter((u) => !u.startsWith(BASE) && !u.startsWith('data:'))));
 

@@ -298,3 +298,20 @@ def test_mail_through_the_platforms_own_relay_is_in_place_when_the_relay_has_its
     secret.write_text("the-provider-key\n", encoding="utf-8")
     items = run(world)
     assert statuses(items)["mail"] == deploy.TODO and "nobody can finish registering" in next(i.detail for i in items if i.name == "mail"), "no relay, no [mail] section: still a todo"
+
+
+def test_the_crew_only_switch_file_must_exist_when_the_settings_name_it_and_a_missing_one_is_blocked(tmp_path):
+    """compose turns a missing file that it is told to mount into an empty FOLDER, and nginx then fails to start: the check says so before that happens."""
+    world = make_deployment(tmp_path)
+    assert "crew-only switch" not in statuses(run(world)), "not named: the repository's own file is used, nothing to check"
+    switch = tmp_path / "crew-only.conf"
+    world["env"]["CREW_ONLY_FILE"] = str(switch)
+    assert "crew-only switch" in blocked(run(world)), "named but missing"
+    switch.write_text("default 0;\n", encoding="utf-8")
+    items = run(world)
+    assert statuses(items)["crew-only switch"] == deploy.OK and "open" in next(i.detail for i in items if i.name == "crew-only switch")
+    switch.write_text("default 1;\n", encoding="utf-8")
+    items = run(world)
+    assert statuses(items)["crew-only switch"] == deploy.TODO and "rehearsal" in next(i.detail for i in items if i.name == "crew-only switch"), "left on is a thing to know before an event"
+    switch.write_text("this is not a switch\n", encoding="utf-8")
+    assert "crew-only switch" in blocked(run(world))

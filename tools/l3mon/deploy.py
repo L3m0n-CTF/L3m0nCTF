@@ -195,6 +195,25 @@ def check_cloudflare_list(path: Path, today: date, items: list[Item]) -> None:
         items.append(Item(OK, "Cloudflare address list", f"generated {found.group(1)} ({age} days ago)"))
 
 
+def check_crew_only(path: str | None, items: list[Item]) -> None:
+    """The crew-only switch (docs/runbooks/15-rehearsal.md). Not named: the repository's own file is mounted and says `default 0;`, nothing to check. Named: it
+    must be a file (compose turns a missing one into an empty FOLDER and nginx then does not start) with a `default 0;` or `default 1;` line in it."""
+    if not path:
+        return
+    file = Path(path)
+    if not file.is_file():
+        items.append(Item(BLOCKED, "crew-only switch", f"CREW_ONLY_FILE is {file}, which is not a file: create it with `default 0;` in it (docs/runbooks/15-rehearsal.md)"))
+        return
+    words = [line.split("#")[0].strip().rstrip(";").split() for line in file.read_text(encoding="utf-8").splitlines()]
+    value = next((w[-1] for w in words if w[:1] == ["default"] and len(w) == 2 and w[1] in ("0", "1")), None)
+    if value is None:
+        items.append(Item(BLOCKED, "crew-only switch", f"{file} has no `default 0;` or `default 1;` line: nginx would not start"))
+    elif value == "1":
+        items.append(Item(TODO, "crew-only switch", f"{file} says `default 1;`: only the crew sees the programme pages (a rehearsal is on); turn it off with tools/ops/rehearsal.sh off before real players come"))
+    else:
+        items.append(Item(OK, "crew-only switch", f"{file}: the programme pages are open to players"))
+
+
 def check_environment(env: dict, items: list[Item]) -> None:
     if env.get("L3MON_ENV", "dev") != "production":
         items.append(Item(TODO, "environment", "L3MON_ENV is not `production`: start with `L3MON_ENV=production tools/compose.sh up -d --wait`"))
@@ -220,5 +239,6 @@ def run_checks(root: Path, event_file: Path | None = None, secrets_dir: Path | N
     check_tls(tls_dir, items)
     check_admin_nets(admin_nets, root / "deploy" / "nginx" / "snippets" / "admin-nets.conf", items)
     check_cloudflare_list(root / "deploy" / "nginx" / "snippets" / "cloudflare-realip.conf", today or date.today(), items)
+    check_crew_only(env.get("CREW_ONLY_FILE"), items)
     check_environment(env, items)
     return items

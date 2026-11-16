@@ -57,12 +57,11 @@ def test_the_setup_forms_make_a_channel_and_put_challenges_on_it_in_a_real_brows
         # what the page did is what the platform holds: the plan has the channels and the programmes, and the two things put on air are on air
         status, view = r.admin("GET", r.RELEASE)
         by_slug = {c["slug"]: c for c in view["data"]["channels"]}
-        assert set(by_slug) == {"test-street", "json-square"}, list(by_slug)
+        assert set(by_slug) == {"test-street"}, list(by_slug)  # the pasted channel was removed again, being empty
         street = by_slug["test-street"]
-        assert street["state"] == "released" and [(p["slug"], p["number"], p["cell"], p["difficulty"], p["delivery"]) for p in street["programmes"]] == [
-            ("wombat_walk", 101, 0, "medium", "static_shared"), ("numbat_night", 102, 1, "medium", "static_shared")]
-        assert [p["state"] for p in street["programmes"]] == ["released", "withheld"], "only the programme that was released is on air"
+        assert street["state"] == "released" and [(p["slug"], p["number"], p["cell"], p["difficulty"], p["delivery"], p["state"]) for p in street["programmes"]] == [
+            ("wombat_walk", 101, 0, "medium", "static_shared", "released")], "the second programme was taken off the board; the first is on air"
         loose = [x["name"] for x in view["data"]["loose"]]
-        assert "Quokka Quiz" in loose and "Wombat Walk" not in loose and "Numbat Night" not in loose, "the challenge nobody placed is still on no channel"
+        assert "Quokka Quiz" in loose and "Numbat Night" in loose and "Wombat Walk" not in loose, "challenges that are on no channel wait in the list"
     finally:
         clean_up()
