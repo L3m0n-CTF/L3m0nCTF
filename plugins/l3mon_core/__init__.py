@@ -46,6 +46,13 @@ def load(app):
     install_player_locks(app)  # joining a studio and unlocking a hint wait for each other (the studio's row is locked first)
     app.register_blueprint(l3mon)
 
+    # The crew's Config page offers MajorLeagueCyber, which this event does not use: a stylesheet keeps its tab and its choice out of sight (the settings
+    # themselves are pinned empty in the preset).
+    from CTFd.plugins import register_admin_plugin_stylesheet, register_plugin_assets_directory
+
+    register_plugin_assets_directory(app, base_path="/plugins/l3mon_core/assets/")
+    register_admin_plugin_stylesheet("/plugins/l3mon_core/assets/admin-tidy.css")
+
     # Production runs behind HTTPS only. The __Host- prefix makes browsers refuse the cookie unless it is Secure, has
     # Path=/ and has no Domain, so it can never be set from a sibling sub-domain or sent over plain HTTP.
     if _switched_on("L3MON_SECURE_COOKIES"):

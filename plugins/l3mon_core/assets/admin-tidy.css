@@ -1,0 +1,8 @@
+/* The crew's Config page: no MajorLeagueCyber. This event does not use it (the settings are pinned empty in the preset), so its tab, its panel and the
+   "MajorLeagueCyber Only" way of registering stay out of sight. */
+li.nav-item:has(> a[href="#mlc"]),
+a[href="#mlc"],
+#mlc,
+select[name="registration_visibility"] option[value="mlc"] {
+  display: none !important;
+}

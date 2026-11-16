@@ -171,6 +171,11 @@ def preset_configs(data: dict) -> dict:
         # Off, and fixed: with it on, a team can read the name, category and value of a programme it once tried and the crew has
         # since withheld, through /api/v1/users/me/submissions (found by the independent review of SP3 part 3.2).
         "view_self_submissions": False,
+        # MajorLeagueCyber's sign-in is not used by this event. CTFd offers it as a setting in the admin panel (Config, MajorLeagueCyber) and, once a client ID is
+        # typed there, as a button and as the routes /oauth and /redirect, which find accounts by email address. Fixed empty here, so that nothing typed in the
+        # admin panel can switch it on (nginx closes the two routes as well).
+        "oauth_client_id": "",
+        "oauth_client_secret": "",
     }
 
 

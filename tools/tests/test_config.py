@@ -99,6 +99,8 @@ def test_preset_configs_are_the_keys_ctfd_reads():
         "verify_emails": True,
         "view_after_ctf": True,
         "view_self_submissions": False,
+        "oauth_client_id": "",
+        "oauth_client_secret": "",
     }
 
 
