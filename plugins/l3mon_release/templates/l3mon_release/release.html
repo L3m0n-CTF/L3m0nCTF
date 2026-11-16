@@ -13,7 +13,7 @@
 	</div>
 	<div class="container">
 		<noscript><div class="alert alert-warning">This page needs JavaScript to read and change the plan.</div></noscript>
-		<div id="release-app" data-api="{{ request.script_root }}/api/v1/l3mon/admin/release">
+		<div id="release-app" data-api="{{ request.script_root }}/api/v1/l3mon/admin/release" data-plan-api="{{ request.script_root }}/api/v1/l3mon/admin/programmes">
 			<p id="release-status" role="status" aria-live="polite">Loading the plan…</p>
 		</div>
 	</div>

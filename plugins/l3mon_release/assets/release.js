@@ -11,6 +11,7 @@
   var app = document.getElementById('release-app');
   if (!app) return;
   var api = app.getAttribute('data-api');
+  var planApi = app.getAttribute('data-plan-api');
   var nonce = (window.init && window.init.csrfNonce) || '';
   var statusLine = document.getElementById('release-status');
   var plan = null;
@@ -58,10 +59,10 @@
     return Object.keys(body.errors).map(function (field) { return field + ': ' + body.errors[field].join(' '); }).join(' | ');
   }
 
-  function send(method, payload) {
+  function send(method, payload, url) {
     var options = { method: method, credentials: 'same-origin', headers: { 'Accept': 'application/json', 'Content-Type': 'application/json', 'CSRF-Token': nonce } };
     if (payload) options.body = JSON.stringify(payload);
-    return fetch(api, options).then(function (response) {
+    return fetch(url || api, options).then(function (response) {
       return response.json().catch(function () { return null; }).then(function (body) {
         if (!response.ok || !body || body.success !== true) throw new Error(problems(body));
         return body.data;
@@ -156,6 +157,220 @@
     return node('section', { 'class': 'rc-channel' }, [head, ch.programmes.length ? table : node('p', { 'class': 'p-3 mb-0', text: 'No programmes on this channel yet.' })]);
   }
 
+  // ---- setting up the board: a channel, then a challenge on it (the plan, without writing JSON) ------------------------------------------------------------
+  // A challenge made in CTFd is on no channel, so the board never draws it. These forms are the crew's way of making a channel and putting a challenge on it.
+  // They write through PUT /api/v1/l3mon/admin/programmes, the same call the author kit uses; whatever they add starts OFF AIR (the buttons below put it on).
+  var DIFFICULTY_WORDS = [['warmup', 'Warm-up'], ['easy', 'Easy'], ['medium', 'Medium'], ['hard', 'Hard'], ['insane', 'Insane']];
+  var DELIVERY_WORDS = [
+    ['static_shared', 'The same flag for every studio (most challenges)'],
+    ['static_per_participant', 'A different flag for each studio'],
+    ['live_single', 'A live server for each studio'],
+    ['live_multi', 'Several live servers for each studio']
+  ];
+  var setup = null; // the forms: built once, so that what is being typed survives the plan being read again
+
+  function slugify(text, sep, max) {
+    var out = String(text || '').toLowerCase().replace(/[^a-z0-9]+/g, sep);
+    while (out.charAt(0) === sep) out = out.slice(1);
+    out = out.slice(0, max);
+    while (out.charAt(out.length - 1) === sep) out = out.slice(0, -1);
+    return out;
+  }
+
+  function friendly(message) {
+    return message.replace(/(programmes|channels)\[\d+\]\./g, '');
+  }
+
+  function field(label, control, hint) {
+    return node('label', { 'class': 'rc-field' }, [node('span', { text: label }), control, hint ? node('small', { text: hint }) : null]);
+  }
+
+  function input(type, name, extra) {
+    var props = { type: type, name: name, 'class': 'form-control form-control-sm' };
+    Object.keys(extra || {}).forEach(function (k) { props[k] = extra[k]; });
+    return node('input', props);
+  }
+
+  function choose(name, options) {
+    var s = node('select', { name: name, 'class': 'form-control form-control-sm' });
+    fillOptions(s, options);
+    return s;
+  }
+
+  function fillOptions(sel, options) { // replace the options and keep the choice when it is still there
+    var keep = sel.value;
+    while (sel.firstChild) sel.removeChild(sel.firstChild);
+    options.forEach(function (o) { sel.appendChild(node('option', { value: String(o[0]), text: o[1] })); });
+    if (options.some(function (o) { return String(o[0]) === keep; })) sel.value = keep;
+  }
+
+  function setupSay(text, isError) {
+    setup.note.textContent = text;
+    setup.note.className = 'rc-setup-note' + (isError ? ' rc-error' : '');
+  }
+
+  function savePlan(payload, done, afterSaving) {
+    if (busy) return;
+    busy = true;
+    editing = null;
+    setupSay('Saving…', false);
+    send('PUT', payload, planApi).then(function () {
+      return send('GET');
+    }).then(function (data) {
+      busy = false;
+      plan = data;
+      setup.dirty = {};
+      setupSay(done, false);
+      if (afterSaving) afterSaving();
+      render();
+    }).catch(function (error) {
+      busy = false;
+      setupSay(friendly(error.message), true);
+    });
+  }
+
+  function nextNumber(channel) {
+    var used = {};
+    plan.channels.forEach(function (c) { c.programmes.forEach(function (p) { used[p.number] = true; }); });
+    var n = Math.max(1, (channel ? channel.position : 1) * 100 + 1);
+    while (used[n] && n < 9999) n += 1;
+    return n;
+  }
+
+  function nextCell(channel) {
+    var used = {};
+    (channel ? channel.programmes : []).forEach(function (p) { used[p.cell] = true; });
+    var c = 0;
+    while (used[c]) c += 1;
+    return c;
+  }
+
+  function channelBySlug(slug) {
+    return plan.channels.filter(function (c) { return c.slug === slug; })[0] || null;
+  }
+
+  function looseById(id) {
+    return plan.loose.filter(function (c) { return String(c.id) === String(id); })[0] || null;
+  }
+
+  function buildSetup() {
+    var dirty = {};
+    var s = { dirty: dirty };
+    s.note = node('p', { 'class': 'rc-setup-note', role: 'status', 'aria-live': 'polite' });
+
+    // 1. a channel
+    s.cName = input('text', 'name', { maxlength: '80', placeholder: 'Mighty Street', required: 'required' });
+    s.cSlug = input('text', 'slug', { maxlength: '40' });
+    s.cPos = input('number', 'position', { min: '0', max: '99' });
+    s.cKind = choose('kind', [['standard', 'An ordinary channel'], ['sponsored', 'A sponsored channel']]);
+    s.cSponsor = input('text', 'sponsor_name', { maxlength: '80', placeholder: 'The sponsor\'s name' });
+    s.cSponsorField = field('Sponsor', s.cSponsor);
+    s.cSponsorField.hidden = true;
+    s.cSynopsis = input('text', 'synopsis', { maxlength: '200', placeholder: 'One line about the channel (optional)' });
+    var cSubmit = node('button', { type: 'submit', 'class': 'btn btn-sm btn-primary', text: 'Add the channel' });
+    s.channelForm = node('form', { 'class': 'rc-form', 'data-form': 'channel' }, [
+      node('h3', { text: '1. A channel' }),
+      node('p', { 'class': 'rc-hint', text: 'A channel is one row of the board: a theme with its programmes. It starts off air.' }),
+      field('Name', s.cName), field('Short address', s.cSlug, 'Lower-case letters, digits and hyphens. Made from the name.'),
+      field('Number on the dial', s.cPos), field('Kind', s.cKind), s.cSponsorField, field('One line about it', s.cSynopsis), cSubmit
+    ]);
+    s.cName.addEventListener('input', function () { if (!dirty.cSlug) s.cSlug.value = slugify(s.cName.value, '-', 40); });
+    s.cSlug.addEventListener('input', function () { dirty.cSlug = true; });
+    s.cPos.addEventListener('input', function () { dirty.cPos = true; });
+    s.cKind.addEventListener('change', function () { s.cSponsorField.hidden = s.cKind.value !== 'sponsored'; });
+    s.channelForm.addEventListener('submit', function (event) {
+      event.preventDefault();
+      var name = s.cName.value.trim();
+      if (!name) { setupSay('Give the channel a name.', true); return; }
+      var item = { slug: s.cSlug.value.trim() || slugify(name, '-', 40), name: name, position: parseInt(s.cPos.value, 10), kind: s.cKind.value };
+      if (isNaN(item.position)) { setupSay('Give the channel a number on the dial, from 0 to 99.', true); return; }
+      if (item.kind === 'sponsored') item.sponsor_name = s.cSponsor.value.trim();
+      if (s.cSynopsis.value.trim()) item.synopsis = s.cSynopsis.value.trim();
+      savePlan({ channels: [item], programmes: [] }, 'Channel "' + name + '" added. It is off air. Next, put a challenge on it (step 2).',
+        function () { s.cName.value = ''; s.cSlug.value = ''; s.cSynopsis.value = ''; });
+    });
+
+    // 2. a challenge on a channel
+    s.pChallenge = choose('challenge', [['', '']]);
+    s.pChannel = choose('channel', [['', '']]);
+    s.pNumber = input('number', 'number', { min: '1', max: '9999' });
+    s.pCell = input('number', 'cell', { min: '0', max: '999' });
+    s.pSlug = input('text', 'slug', { maxlength: '48' });
+    s.pDifficulty = choose('difficulty', DIFFICULTY_WORDS);
+    s.pDifficulty.value = 'medium';
+    s.pDelivery = choose('delivery', DELIVERY_WORDS);
+    s.pHint = node('p', { 'class': 'rc-hint' });
+    s.pSubmit = node('button', { type: 'submit', 'class': 'btn btn-sm btn-primary', text: 'Put it on the channel' });
+    s.programmeForm = node('form', { 'class': 'rc-form', 'data-form': 'programme' }, [
+      node('h3', { text: '2. A challenge on a channel' }),
+      node('p', { 'class': 'rc-hint', text: 'Make the challenge in CTFd first (Challenges, New). It starts off air here; the buttons below put it on.' }),
+      s.pHint,
+      field('Challenge', s.pChallenge), field('Channel', s.pChannel), field('Programme number', s.pNumber, 'Shown on the tile. Never used twice.'),
+      field('Place on the picture', s.pCell, 'Counted from 0. Never used twice on a channel.'), field('Short name', s.pSlug, 'Lower-case letters, digits, hyphens and underscores.'),
+      field('Difficulty', s.pDifficulty), field('How players get it', s.pDelivery), s.pSubmit
+    ]);
+    var defaults = function () {
+      var challenge = looseById(s.pChallenge.value);
+      var channel = channelBySlug(s.pChannel.value);
+      if (!dirty.pSlug) s.pSlug.value = challenge ? slugify(challenge.name, '_', 48) : '';
+      if (!dirty.pNumber) s.pNumber.value = channel ? nextNumber(channel) : '';
+      if (!dirty.pCell) s.pCell.value = channel ? nextCell(channel) : '';
+    };
+    s.defaults = defaults;
+    s.pChallenge.addEventListener('change', function () { dirty.pSlug = false; defaults(); });
+    s.pChannel.addEventListener('change', function () { dirty.pNumber = false; dirty.pCell = false; defaults(); });
+    ['pNumber', 'pCell', 'pSlug'].forEach(function (k) { s[k].addEventListener('input', function () { dirty[k] = true; }); });
+    s.programmeForm.addEventListener('submit', function (event) {
+      event.preventDefault();
+      var challenge = looseById(s.pChallenge.value);
+      var channel = channelBySlug(s.pChannel.value);
+      if (!challenge || !channel) { setupSay('Choose a challenge and a channel.', true); return; }
+      var item = {
+        challenge_id: challenge.id, channel: channel.slug, cell: parseInt(s.pCell.value, 10), number: parseInt(s.pNumber.value, 10), slug: s.pSlug.value.trim(),
+        difficulty: s.pDifficulty.value, delivery: s.pDelivery.value
+      };
+      if (isNaN(item.cell) || isNaN(item.number)) { setupSay('Give the programme a number and a place on the picture.', true); return; }
+      savePlan({ channels: [], programmes: [item] }, '"' + challenge.name + '" is on channel "' + channel.name + '" as programme ' + item.number +
+        '. It is off air: press "Release now" on the channel and on the programme below when players should see it.');
+    });
+
+    // 3. a whole plan at once
+    s.pJson = node('textarea', { name: 'plan', rows: '7', 'class': 'form-control form-control-sm rc-json', spellcheck: 'false', placeholder: '{"channels": [ ... ], "programmes": [ ... ]}' });
+    var jSubmit = node('button', { type: 'submit', 'class': 'btn btn-sm btn-outline-primary', text: 'Load this plan' });
+    s.jsonForm = node('form', { 'class': 'rc-form', 'data-form': 'json' }, [
+      node('h3', { text: '3. Or a whole plan at once' }),
+      node('p', { 'class': 'rc-hint', text: 'Paste the plan file the author kit made. The same rules apply; nothing goes on air by being loaded.' }),
+      s.pJson, jSubmit
+    ]);
+    s.jsonForm.addEventListener('submit', function (event) {
+      event.preventDefault();
+      var body;
+      try { body = JSON.parse(s.pJson.value); } catch (error) { setupSay('That is not valid JSON: ' + error.message, true); return; }
+      savePlan(body, 'The plan was loaded. Whatever is new is off air.', function () { s.pJson.value = ''; });
+    });
+
+    s.details = node('details', { 'class': 'rc-setup' }, [
+      node('summary', { text: 'Set up the board: add a channel, put a challenge on it' }),
+      s.note,
+      node('div', { 'class': 'rc-forms' }, [s.channelForm, s.programmeForm, s.jsonForm])
+    ]);
+    return s;
+  }
+
+  function refreshSetup() {
+    if (!setup) setup = buildSetup();
+    var s = setup;
+    var loose = plan.loose.map(function (c) { return [c.id, c.name + ' (' + c.category + ', ' + c.value + ' TRP)']; });
+    var channels = plan.channels.map(function (c) { return [c.slug, 'CH ' + c.position + ' · ' + c.name]; });
+    fillOptions(s.pChallenge, loose.length ? loose : [['', 'No challenge is waiting for a channel']]);
+    fillOptions(s.pChannel, channels.length ? channels : [['', 'Add a channel first (step 1)']]);
+    s.pSubmit.disabled = !loose.length || !channels.length;
+    s.pHint.textContent = !loose.length ? 'Every challenge is already on a channel. Make a new one in CTFd first.' : '';
+    if (!s.dirty.cPos) s.cPos.value = String(Math.min(99, Math.max.apply(null, [0].concat(plan.channels.map(function (c) { return c.position; }))) + 1));
+    s.defaults();
+    if (!s.opened && !plan.channels.length) { s.details.open = true; s.opened = true; } // the first time, with nothing on the board, the forms are open
+  }
+
   function buildShell() {
     var reasonBox = node('input', { type: 'text', 'class': 'form-control form-control-sm', maxlength: '200', placeholder: 'Reason (kept in the audit trail)', 'aria-label': 'Reason for the change' });
     var refresh = node('button', { type: 'button', 'class': 'btn btn-sm btn-outline-primary', text: 'Refresh' });
@@ -170,6 +385,8 @@
     while (app.firstChild) app.removeChild(app.firstChild);
     app.appendChild(statusLine);
     app.appendChild(node('div', { 'class': 'rc-bar' }, [summary, reasonBox, refresh, panic]));
+    if (!setup) setup = buildSetup();
+    app.appendChild(setup.details);
     app.appendChild(body);
     shell = { summary: summary, reasonBox: reasonBox, body: body };
   }
@@ -177,9 +394,11 @@
   function render() {
     if (!plan) return;
     if (!shell) buildShell(); // built once: a poll only replaces what is below, so the reason box keeps its text and its focus
+    refreshSetup();
     var counts = plan.counts;
     shell.summary.textContent = 'Now ' + istText(plan.now) + ' · broadcast ' + plan.phase.state + ' · ' + counts.on_air +
-      (counts.on_air === 1 ? ' programme' : ' programmes') + ' on air, ' + counts.coming + ' coming up';
+      (counts.on_air === 1 ? ' programme' : ' programmes') + ' on air, ' + counts.coming + ' coming up' +
+      (plan.phase.state === 'before' ? ' · players see nothing on the board until the broadcast starts (' + istText(plan.start) + ')' : '');
     var loose = plan.loose.length ? node('section', { 'class': 'rc-loose' }, [
       node('h2', { 'class': 'h5', text: 'Not on any channel (so not on air)' }),
       node('ul', {}, plan.loose.map(function (c) { return node('li', { text: c.name }); }))
@@ -193,7 +412,7 @@
         }))
       ])
     ]);
-    var children = (plan.channels.length ? plan.channels.map(channelBlock) : [node('p', { text: 'There are no channels yet. Load the plan first (PUT /api/v1/l3mon/admin/programmes).' })]).concat([loose, audit]);
+    var children = (plan.channels.length ? plan.channels.map(channelBlock) : [node('p', { 'class': 'p-3', text: 'There are no channels yet. Add the first one under "Set up the board" above.' })]).concat([loose, audit]);
     while (shell.body.firstChild) shell.body.removeChild(shell.body.firstChild);
     children.forEach(function (child) { if (child) shell.body.appendChild(child); });
   }

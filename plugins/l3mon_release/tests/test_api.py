@@ -161,6 +161,8 @@ def test_the_view_shows_every_channel_and_programme_with_what_players_see_right_
         assert (gamma["state"], gamma["at"], gamma["on_air"]) == ("withheld", None, False)
         assert data["counts"] == {"channels": 2, "programmes": 4, "on_air": 1, "coming": 3}
         assert [l["id"] for l in data["loose"]] == [Challenges.query.filter_by(name="loose").first().id]
+        # what the crew's form shows beside each challenge that is on no channel yet: its name, category, value and CTFd's own state
+        assert data["loose"][0] == {"id": data["loose"][0]["id"], "name": "loose", "category": "chal_category", "value": 100, "state": "hidden"}  # once a plan exists CTFd keeps a challenge that is on no channel hidden
         assert data["audit"][0]["action"] and len(data["audit"]) <= 20
     destroy_ctfd(app)
 

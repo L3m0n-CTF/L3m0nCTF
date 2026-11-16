@@ -38,11 +38,16 @@ try {
   check('Release now asks first, then releases', dialogs() === before + 1 && /released/.test(await rowText('mango')) && /changed\./.test(await text()), (await rowText('mango')));
 
   // the reason box keeps what is typed across a refresh of the plan, and is cleared once the change it was for is made
+  // releasing something announces "New on air" to every open page (a server-sent notice that CTFd shows in a dialog); the dialog takes the focus when it
+  // arrives, so the check lets it arrive, closes it, and only then types
+  await sleep(3500);
+  await page.run('document.querySelectorAll(".modal.show").forEach((m) => { const b = m.querySelector("[data-dismiss=modal], .close, button"); if (b) b.click(); })');
+  await sleep(600);
   await page.run('document.querySelector("input[aria-label=\\"Reason for the change\\"]").focus()');
   await page.send('Input.insertText', { text: 'typing a reason' });
   await sleep(16500); // the page re-reads the plan every 15 seconds
-  check('a refresh of the plan does not take the reason box away or empty it',
-    (await page.run('document.activeElement && document.activeElement.getAttribute("aria-label") === "Reason for the change" && document.activeElement.value')) === 'typing a reason');
+  const held = await page.run('document.activeElement ? document.activeElement.tagName + "|" + (document.activeElement.getAttribute("aria-label") || "") + "|" + (document.activeElement.value || "") + "|" + document.activeElement.className : "nothing has the focus"');
+  check('a refresh of the plan does not take the reason box away or empty it', held.startsWith('INPUT|Reason for the change|typing a reason'), held);
   await press('logger', 'Release now');
   await sleep(1500);
   const audit = await text();

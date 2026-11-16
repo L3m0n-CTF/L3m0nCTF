@@ -387,6 +387,7 @@ def release_view(t):
     ended = phase.state == "ended"
     states = dict(db.session.query(Challenges.id, Challenges.state).all())
     chal_names = dict(db.session.query(Challenges.id, Challenges.name).all())
+    chal_facts = {cid: (category, value) for cid, category, value in db.session.query(Challenges.id, Challenges.category, Challenges.value).all()}
     channels, on_air_total, programme_total, placed = [], 0, 0, set()
     for ch in Channel.query.order_by(Channel.position, Channel.id).all():
         channel_on = ended or entry_on_air(ch.release_state, ch.release_at, t)
@@ -409,7 +410,8 @@ def release_view(t):
     return {
         "now": int(t), "start": w.start, "end": w.end, "phase": {"state": phase.state, "frozen": phase.frozen},
         "channels": channels,
-        "loose": [{"id": cid, "name": chal_names[cid]} for cid in sorted(chal_names) if cid not in placed],
+        # beside each challenge that is on no channel the crew's form shows what CTFd knows of it (the category and value the tile will carry, and its own state)
+        "loose": [{"id": cid, "name": chal_names[cid], "category": chal_facts[cid][0], "value": chal_facts[cid][1], "state": states.get(cid)} for cid in sorted(chal_names) if cid not in placed],
         "counts": {"channels": len(channels), "programmes": programme_total, "on_air": on_air_total, "coming": programme_total - on_air_total},
         "audit": audit.recent(20),
     }
