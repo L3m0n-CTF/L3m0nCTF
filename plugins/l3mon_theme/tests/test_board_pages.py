@@ -214,7 +214,7 @@ def test_before_the_start_the_board_shows_its_own_not_on_air_page_and_the_stock_
     set_config("start", T_LIVE + 7200)
     set_config("end", T_END)
     with clock(T_LIVE):
-        for who in (play.alice, play.admin):
+        for who in (play.alice,):  # a player; the crew see the board as a preview (below)
             for path in ("/board", "/board/lantern_walk", "/board/never_existed"):
                 r = who.get(path)
                 html = text(r)
@@ -222,6 +222,9 @@ def test_before_the_start_the_board_shows_its_own_not_on_air_page_and_the_stock_
                 assert 'data-slate="before"' in html and "NOT ON AIR YET" in html and "data-board" not in html
                 assert re.search(r"It starts at \d\d:\d\d IST on \d{1,2} [A-Z][a-z]+ \d{4}\.", html)
                 assert "lantern_walk" not in html and "Lantern Walk" not in html
+        # the crew, who set the board up before the start, see it (the programmes that are on air), marked as a preview by the board's own answer
+        crew = text(play.admin.get("/board"))
+        assert "data-board" in crew and 'data-slate="before"' not in crew
         forbidden_words(text(play.alice.get("/board")))
         assert play.alice.get("/challenges").status_code == 302 and play.alice.get("/challenges").headers["Location"].endswith("/board")
         with mock.patch.dict(page.HOOKS, {"redirect_challenges": False}):

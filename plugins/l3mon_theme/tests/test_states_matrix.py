@@ -102,6 +102,8 @@ def test_the_crew_see_every_page_with_no_studio(play):
     assert got == {"board": (200, "board"), "programme": (200, "programme"), "notifications": (200, "notifications")}
 
 
-def test_the_crew_before_the_start_see_the_not_on_air_page_too(play):
+def test_the_crew_before_the_start_see_the_board_and_the_programmes_that_are_on_air_as_a_preview(play):
     got = visit(play.admin, T_START - 3600)
-    assert got["board"] == (200, "slate:before") and got["programme"] == (200, "slate:before")
+    # the programme's own address draws the board with that programme's panel, which the page's script opens (the no-script copy of the panel is only for a
+    # live broadcast, so the mark of a programme page is absent here)
+    assert got["board"] == (200, "board") and got["programme"] == (200, "board")

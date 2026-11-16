@@ -23,6 +23,13 @@ try {
   check('the board shows the crew the programme that is on air', tiles.some((t) => t.includes(process.env.L3MON_PROGRAMME)), JSON.stringify(tiles));
   check('and not the "not on air yet" card', !/NOT ON AIR YET/i.test(await page.run('document.body.innerText')));
   await page.shot('preview-2-board.png');
+  // the crew open the programme's panel from its tile: what the players will read
+  await page.run(`(() => { const tile = Array.from(document.querySelectorAll('#tiles li.tile')).find((t) => t.innerText.includes(${JSON.stringify(process.env.L3MON_PROGRAMME)})); tile.querySelector('a').click(); return true; })()`);
+  await sleep(2500);
+  const panel = await page.run('document.getElementById("pn-title").innerText');
+  const description = await page.run('document.querySelector("[data-panel]").innerText');
+  check('opening the tile opens the panel of that programme for the crew, with its description', panel.includes(process.env.L3MON_PROGRAMME) && /Find the wombat/.test(description), panel + ' | ' + description.slice(0, 200));
+  await page.shot('preview-3-panel.png');
 
   // a player (a visitor here) is told it is not on air: the API says "before" for anybody who is not the crew
   const visitor = await page.run(`fetch('/api/v1/l3mon/board', { credentials: 'omit' }).then((r) => r.status)`);
