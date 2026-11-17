@@ -827,8 +827,7 @@ const nf={all:[],ver:null,loading:false,again:false,prev:null};
 const nfSeen=()=>{
 const[a,b]=String(store.get('seen','0')).split(':');
 const id=Number(a);
-const ver=b===undefined?null:Number(b);
-return{id:Number.isInteger(id)&&id>=0?id:0,ver:Number.isInteger(ver)?ver:null};
+return{id:id>0?id:0,ver:b!==undefined?Number(b):null};
 };
 const nfMax=()=>nf.all.reduce((m,n)=>Math.max(m,n.id),0);
 const nfUnread=()=>{const s=nfSeen().id;return nf.all.filter((n)=>n.id>s).length;};
@@ -837,7 +836,7 @@ const n=nfUnread();
 const text=n>9?'9+':String(n);
 for(const b of $$('[data-notif-n]')){
 const changed=b.textContent!==text;
-b.hidden=n===0;
+b.hidden=!n;
 b.textContent=n?text:'';
 if(n&&changed){b.classList.remove('pop');void b.offsetWidth;b.classList.add('pop');}
 }
@@ -862,6 +861,7 @@ nf.loading=false;
 if(nf.again){nf.again=false;nfLoad();}
 }
 }
+const notifKind=(t='')=>/warn|alert|urg|crit/i.test(t)?'urgent':/air|prog|rel/i.test(t)?'release':'general';
 function nfOpen(bell){
 store.set('seen',`${nfMax()}:${nf.ver??0}`);
 nfBadge();
@@ -870,17 +870,17 @@ const items=[...nf.all].reverse().slice(0,SHOWN);
 if(!items.length){body.append(mk('p',null,'Nothing to report yet. All quiet on the airwaves.'));return;}
 const list=mk('ul','nt-dlg');
 for(const n of items){
-const li=mk('li');
-li.append(mk('b','nt-t',n.title));
+const k=notifKind(n.title);
+const li=mk('li','nt-'+k);
+li.append(mk('span','nt-tag nt-tag-'+k,k==='urgent'?'ALERT':k==='release'?'RELEASE':'NEWS'),' ',mk('b','nt-t',n.title));
 if(n.content)li.append(' ',mk('span','nt-c',n.content));
 list.append(li);
 }
-body.append(list);
 const more=mk('a','nt-all','Open the full list');
 more.href='/notifications';
 const p=mk('p','dlg-note');
 p.append(more);
-body.append(p);
+body.append(list,p);
 },bell);
 }
 function nfRestarted(v){
@@ -2595,9 +2595,17 @@ const r=await notifications(since);
 if(!r.ok||!Array.isArray(r.data)||!r.data.length)return;
 for(const n of r.data)bd.notifId=Math.max(bd.notifId,Number(n.id)||0);
 const last=r.data[r.data.length-1];
+const kind=notifKind(last.title);
 const line=`${String(last.title||'News').toUpperCase()}. ${last.content||''}`.trim();
+const el=$('[data-toast]');
+if(el){
+el.classList.remove('toast-release','toast-urgent','toast-general');
+el.classList.add(`toast-${kind}`);
+}
 toast(line);
-sfx('ding');
+if(kind==='urgent'){sfx('bonk');setTimeout(()=>sfx('ding'),120);}
+else if(kind==='release')sfx('tada');
+else sfx('ding');
 for(const list of $$('[data-crawl] .crawl-list'))list.prepend(mk('li',null,line));
 }
 function bdPolling(){

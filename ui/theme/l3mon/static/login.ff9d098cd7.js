@@ -827,8 +827,7 @@ const nf={all:[],ver:null,loading:false,again:false,prev:null};
 const nfSeen=()=>{
 const[a,b]=String(store.get('seen','0')).split(':');
 const id=Number(a);
-const ver=b===undefined?null:Number(b);
-return{id:Number.isInteger(id)&&id>=0?id:0,ver:Number.isInteger(ver)?ver:null};
+return{id:id>0?id:0,ver:b!==undefined?Number(b):null};
 };
 const nfMax=()=>nf.all.reduce((m,n)=>Math.max(m,n.id),0);
 const nfUnread=()=>{const s=nfSeen().id;return nf.all.filter((n)=>n.id>s).length;};
@@ -837,7 +836,7 @@ const n=nfUnread();
 const text=n>9?'9+':String(n);
 for(const b of $$('[data-notif-n]')){
 const changed=b.textContent!==text;
-b.hidden=n===0;
+b.hidden=!n;
 b.textContent=n?text:'';
 if(n&&changed){b.classList.remove('pop');void b.offsetWidth;b.classList.add('pop');}
 }
@@ -862,6 +861,7 @@ nf.loading=false;
 if(nf.again){nf.again=false;nfLoad();}
 }
 }
+const notifKind=(t='')=>/warn|alert|urg|crit/i.test(t)?'urgent':/air|prog|rel/i.test(t)?'release':'general';
 function nfOpen(bell){
 store.set('seen',`${nfMax()}:${nf.ver??0}`);
 nfBadge();
@@ -870,17 +870,17 @@ const items=[...nf.all].reverse().slice(0,SHOWN);
 if(!items.length){body.append(mk('p',null,'Nothing to report yet. All quiet on the airwaves.'));return;}
 const list=mk('ul','nt-dlg');
 for(const n of items){
-const li=mk('li');
-li.append(mk('b','nt-t',n.title));
+const k=notifKind(n.title);
+const li=mk('li','nt-'+k);
+li.append(mk('span','nt-tag nt-tag-'+k,k==='urgent'?'ALERT':k==='release'?'RELEASE':'NEWS'),' ',mk('b','nt-t',n.title));
 if(n.content)li.append(' ',mk('span','nt-c',n.content));
 list.append(li);
 }
-body.append(list);
 const more=mk('a','nt-all','Open the full list');
 more.href='/notifications';
 const p=mk('p','dlg-note');
 p.append(more);
-body.append(p);
+body.append(list,p);
 },bell);
 }
 function nfRestarted(v){
@@ -1055,100 +1055,68 @@ let ended=false;
 on('net',(r)=>{if(!ended&&r.error&&r.error.code==='auth_required'){ended=true;sessionEnded();}});
 document.addEventListener('visibilitychange',()=>audioVisibility(document.hidden));
 }
-const POLL_MS=15000;
-const IDLE_MS=180000;
-function followTicks({ver,onChange}){
-const s={ver,own:undefined,timer:0,last:Date.now(),busy:false};
-const schedule=()=>{
-clearTimeout(s.timer);
-if(document.hidden)return;
-const idle=Date.now()-s.last>IDLE_MS;
-s.timer=setTimeout(poll,idle?60000:POLL_MS+Math.round(Math.random()*6000-3000));
-};
-async function poll(){
-if(s.busy)return;
-s.busy=true;
-try{
-const t=await ticks();
-if(t.ok&&t.data){
-const moved=t.data.ver!==s.ver||(s.own!==undefined&&t.data.own!==s.own);
-if(s.own===undefined)s.own=t.data.own;
-if(moved&&(await onChange(t.data.ver))){s.ver=t.data.ver;s.own=t.data.own;}
+function initShow(form){
+const btn=$('[data-show]',form);
+const input=$('#f-password',form);
+if(!btn||!input)return;
+btn.addEventListener('click',()=>{
+const show=input.type==='password';
+input.type=show?'text':'password';
+btn.setAttribute('aria-pressed',String(show));
+});
+form.addEventListener('submit',()=>{input.type='password';btn.setAttribute('aria-pressed','false');});
 }
-}finally{s.busy=false;}
-schedule();
+function initRetry(form){
+const s=Number(form.dataset.retryAfter);
+if(!(s>0))return;
+const btn=$('[data-submit]',form);
+const wait=$('[data-wait]',form);
+btn.disabled=true;
+wait.hidden=false;
+countdown(s,(left)=>{
+const m=Math.ceil(left/60);
+wait.textContent=left>90?`You can try again in about ${m} minutes.`:`You can try again in ${left} s.`;
+},()=>{
+btn.disabled=false;
+wait.textContent='You can try again now.';
+});
 }
-const touch=()=>{s.last=Date.now();};
-for(const evt of['pointerdown','keydown','scroll'])addEventListener(evt,touch,{passive:true,capture:true});
-document.addEventListener('visibilitychange',()=>{if(document.hidden)clearTimeout(s.timer);else poll();});
-schedule();
-return{poll};
+function initLogin(){
+const form=$('[data-login]');
+if(!form)return;
+const name=$('#f-name',form);
+const pass=$('#f-password',form);
+const btn=$('[data-submit]',form);
+const host=form.parentElement;
+initShow(form);
+initRetry(form);
+for(const input of[name,pass])input.addEventListener('input',()=>{if(input.value)clearFieldError(input);});
+let sent=false;
+form.addEventListener('submit',(e)=>{
+if(sent||btn.getAttribute('aria-disabled')==='true'||btn.disabled){e.preventDefault();return;}
+const problems=[];
+for(const[input,msg]of[[name,'Enter your username or email.'],[pass,'Enter your password.']]){
+if(!input.value.trim()){fieldError(input,msg);problems.push({id:input.id,text:msg});}else clearFieldError(input);
 }
-function showBanner(b){
-const slot=$('[data-banner-slot]');
-if(!slot)return;
-const cur=$('[data-banner]',slot);
-if(!b){if(cur)cur.remove();return;}
-if(cur&&cur.dataset.banner===b.id)return;
-const p=mk('p',`banner ${b.cls}`);
-p.dataset.banner=b.id;
-p.append(mk('b','banner-lead',b.lead),` ${b.text}`);
-slot.replaceChildren(p);
+if(problems.length){
+e.preventDefault();
+showSummary(host,problems);
+sfx('bonk');
+return;
 }
-const sb={root:null,list:null,etag:null,rowsTag:null,sig:null,place:null};
-const sbOrdinal=(n)=>{
-const k=n%100;
-return k>=11&&k<=13?`${n}th`:`${n}${({1:'st',2:'nd',3:'rd'})[n%10]||'th'}`;
-};
-function sbText(el,text){
-if(el&&el.textContent!==text)el.textContent=text;
-}
-async function sbSwapRows(sig){
-if(!sb.list)return;
-const r=await scoreboardRows(sb.rowsTag);
-if(r.ok&&r.notModified){sb.sig=sig;return;}
-if(!r.ok||typeof r.html!=='string')return;
-sb.rowsTag=r.etag||sb.rowsTag;
-const doc=new DOMParser().parseFromString(`<body>${r.html}</body>`,'text/html');
-const rows=$$('.sb-row',doc.body).map((li)=>document.importNode(li,true));
-for(const li of rows)li.classList.add('swapped');
-sb.list.replaceChildren(...rows);
-sb.list.dataset.sig=sig;
-sb.sig=sig;
-}
-const sbPlace=(me,phase)=>(me.pos===null?(phase&&phase.frozen?'Ranks frozen':'Not ranked yet'):`${sbOrdinal(me.pos)} of ${me.of}`);
-function sbApply(d){
-const me=d.me;
-if(me){
-const place=sbPlace(me,d.phase);
-sbText($('[data-k="score"]',sb.root),String(me.score));
-sbText($('[data-k="place"]',sb.root),place);
-if(sb.place!==null&&sb.place!==place&&me.pos!==null)announce(`Your studio is now ${place}.`);
-sb.place=place;
-}
-showBanner(d.banner);
-}
-async function sbLoad(){
-const r=await scoreboard(sb.etag);
-if(!r.ok)return false;
-if(r.notModified||!r.data)return true;
-sb.etag=r.etag||sb.etag;
-sbApply(r.data);
-const has=r.data.total>0;
-if(has!==!!sb.list){location.reload();return true;}
-if(has&&r.data.rows_sig!==sb.sig){
-await sbSwapRows(r.data.rows_sig);
-}
-return true;
-}
-function initScoreboard(){
-sb.root=$('[data-sb]');
-if(!sb.root)return;
-sb.list=$('[data-rows]',sb.root);
-sb.sig=sb.list?sb.list.dataset.sig:null;
-const own=$('[data-k="place"]',sb.root);
-sb.place=own?own.textContent:null;
-followTicks({ver:Number(sb.root.dataset.ver),onChange:sbLoad});
+sent=true;
+setPending(btn,'Tuning in…');
+sfx('click');
+const card=$('[data-card]');
+if(card&&!reduced())card.classList.add('flick');
+});
+addEventListener('pageshow',(e)=>{
+if(!e.persisted)return;
+sent=false;
+clearPending(btn);
+const card=$('[data-card]');
+if(card)card.classList.remove('flick');
+});
 }
 function run(name,fn){
 try{fn();}catch(err){console.error(`[l3m0n] ${name} failed`,err);}
@@ -1157,5 +1125,5 @@ run('dialog',initDialog);
 run('prefs',initPrefs);
 run('shell',initShell);
 run('keys',initKeys);
-run('scoreboard',initScoreboard);
+run('login',initLogin);
 })();

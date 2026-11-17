@@ -10,7 +10,7 @@
 {% set build = {'sha': l3.build_sha} %}
 {% set news = [] %}
 {% set dev = none %}
-{% set nav = {'board': false, 'guide': false, 'scoreboard': false} %}
+{% set nav = {'board': false, 'guide': false, 'scoreboard': false, 'team': false} %}
 {% set banner = np.banner %}
 {% set nt = {'has': np.lines|length > 0, 'lines': np.lines, 'count': np.lines|length|string} %}
 {% set page = {'title': 'Notifications | ' ~ event_name, 'cls': 'pg-app pg-notices', 'osd': 'NOTIFICATIONS', 'skip': 'Skip to the notifications', 'crawl': false, 'signedIn': l3.signed_in, 'player': l3.player} %}

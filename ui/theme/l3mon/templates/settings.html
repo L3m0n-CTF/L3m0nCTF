@@ -5,7 +5,7 @@
 {% set event_name = l3.event_name or 'CTF' %}
 {% set page = {'title': 'Settings | ' ~ event_name, 'cls': 'pg-app pg-settings', 'osd': 'SETTINGS', 'skip': 'Skip to your settings', 'crawl': false, 'signedIn': l3.signed_in, 'player': l3.player} %}
 {% set asset = {'css': l3.assets['css.app'], 'boot': l3.assets['js.boot'], 'js': l3.assets['js.account']} %}
-{% set nav = {'board': false, 'guide': false, 'scoreboard': false} %}
+{% set nav = {'board': false, 'guide': false, 'scoreboard': false, 'team': false} %}
 {% set me = l3.me %}
 {% set csrf = l3.csrf %}
 {% set event = {'name': event_name, 'contact': l3.contact, 'discord': l3.discord, 'site': l3.site_url} %}

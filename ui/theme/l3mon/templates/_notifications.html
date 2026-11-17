@@ -80,6 +80,7 @@
       {% if nav.board %}<a href="/board" aria-current="page">Channels</a>{% else %}<a href="/board">Channels</a>{% endif %}
       {% if nav.guide %}<a href="/guide" aria-current="page">Guide</a>{% else %}<a href="/guide">Guide</a>{% endif %}
       {% if nav.scoreboard %}<a href="/scoreboard" aria-current="page">Scoreboard</a>{% else %}<a href="/scoreboard">Scoreboard</a>{% endif %}
+      {% if nav.team %}<a href="/team" aria-current="page">Studio</a>{% else %}<a href="/team">Studio</a>{% endif %}
     </nav>{% endif %}
     <div class="osd-tools">
       {% if page.signedIn %}<span class="pill pill-wait" data-pill hidden></span>{% endif %}
@@ -101,7 +102,7 @@
 <p class="nt-lead">News from the crew: programmes going on air and anything players need to know. Newest first.</p>
 </div>
 </header>
-{% if nt.has %}<ol class="nt-list">{% for item in nt.lines %}<li class="nt-item"><b class="nt-t">{{ item.title }}</b> <span class="nt-c">{{ item.content or "" }}</span></li>{% endfor %}</ol>
+{% if nt.has %}<ol class="nt-list">{% for item in nt.lines %}{% set t = (item.title or '')|lower %}{% if 'urgent' in t or 'alert' in t or 'warning' in t or 'critical' in t or 'notice' in t %}{% set kind = 'urgent' %}{% set tag = 'ALERT' %}{% elif 'on air' in t or 'programme' in t or 'release' in t or 'challenge' in t or 'drop' in t %}{% set kind = 'release' %}{% set tag = 'RELEASE' %}{% else %}{% set kind = 'general' %}{% set tag = 'NEWS' %}{% endif %}<li class="nt-item nt-{{ kind }}"><span class="nt-tag nt-tag-{{ kind }}">{{ tag }}</span> <b class="nt-t">{{ item.title }}</b> <span class="nt-c">{{ item.content or "" }}</span></li>{% endfor %}</ol>
 {% else %}<div class="nt-empty"><svg class="lm nt-zzz" viewBox="0 -6 128 118" aria-hidden="true"><use href="#mc-body"/><use href="#mc-shut"/><use href="#mc-smile"/></svg><p>Nothing to report yet. All quiet on the airwaves.</p></div>{% endif %}
 </section>
 </main>

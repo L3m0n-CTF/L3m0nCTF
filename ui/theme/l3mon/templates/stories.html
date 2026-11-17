@@ -4,7 +4,7 @@
 {% set news = l3.crawl %}
 {% set page = {'title': 'Stories | ' ~ event_name, 'cls': 'pg-app pg-stories', 'osd': 'STORIES', 'skip': 'Skip to stories', 'crawl': news|length > 0, 'signedIn': l3.signed_in, 'player': l3.player} %}
 {% set asset = {'css': l3.assets['css.app'], 'boot': l3.assets['js.boot'], 'js': l3.assets['js.shell']} %}
-{% set nav = {'board': false, 'guide': true, 'scoreboard': false} %}
+{% set nav = {'board': false, 'guide': true, 'scoreboard': false, 'team': false} %}
 {% set me = l3.me %}
 {% set csrf = l3.csrf %}
 {% set event = {'name': event_name, 'contact': l3.contact, 'discord': l3.discord, 'site': l3.site_url} %}

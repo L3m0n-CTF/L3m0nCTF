@@ -80,6 +80,7 @@
       {% if nav.board %}<a href="/board" aria-current="page">Channels</a>{% else %}<a href="/board">Channels</a>{% endif %}
       {% if nav.guide %}<a href="/guide" aria-current="page">Guide</a>{% else %}<a href="/guide">Guide</a>{% endif %}
       {% if nav.scoreboard %}<a href="/scoreboard" aria-current="page">Scoreboard</a>{% else %}<a href="/scoreboard">Scoreboard</a>{% endif %}
+      {% if nav.team %}<a href="/team" aria-current="page">Studio</a>{% else %}<a href="/team">Studio</a>{% endif %}
     </nav>{% endif %}
     <div class="osd-tools">
       {% if page.signedIn %}<span class="pill pill-wait" data-pill hidden></span>{% endif %}
@@ -118,6 +119,7 @@
 <span class="gd-ms" data-k="msolves">{{ item.text }}</span>
 <span class="gd-mt"><b data-k="mtrp">{{ item.trp }}</b> TRP</span>
 <span class="gd-mbar pv-{{ item.pct }}" aria-hidden="true"><i data-bar></i></span>
+{% if item.solve_items %}<div class="gd-solves-list">{% for s in item.solve_items %}<div class="gd-solve-item"><span class="gd-solve-name">{{ s.name }}</span><span class="gd-solve-meta"><span class="gd-solve-trp">{{ s.trp }} TRP</span><span class="gd-solve-time">{{ s.time }}</span></span></div>{% endfor %}</div>{% endif %}
 </li>{% endfor %}</ul>
 <p class="gd-foot">Each line is the TRP earned by solving programmes. Bonuses and hints belong to the whole studio.</p>
 </section>{% endif %}

@@ -186,10 +186,12 @@ def test_07_the_board_part_adds_no_way_to_write(world):
 
 def test_08_ctfds_own_team_and_player_pages_are_closed_to_a_player_and_a_visitor_and_the_studios_own_page_is_not(world):
     team, user = world.teams[0], world.users[0]
-    for path in ("/teams", "/users", "/user", f"/teams/{team}", f"/users/{user}", f"/teams/0{team}"):
+    for path in ("/teams", "/users", "/user", f"/users/{user}", f"/teams/0{team}"):
         status, _, _ = ask(world.players[0], path)
         assert status == 404, ("player", path, status)
         status, _, _ = t.request(path)
         assert status == 404, ("visitor", path, status)
+    status, _, _ = ask(world.players[0], f"/teams/{team}")
+    assert status == 200, "a studio's public page is open to players"
     status, _, _ = ask(world.players[0], "/team")
     assert status == 200, "a studio's own page stays open"

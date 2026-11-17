@@ -118,6 +118,7 @@ def build_guide_view(data: dict, me: dict | None, epg_html: str = "", channel_ke
             "trp": str(m.get("trp", 0)),
             "pct": str(m.get("pct", 0)),
             "text": f"{solves} {'solve' if solves == 1 else 'solves'}",
+            "solve_items": m.get("solve_items", []),
         })
 
     story_dict = None

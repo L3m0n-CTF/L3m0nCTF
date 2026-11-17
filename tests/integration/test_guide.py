@@ -83,7 +83,7 @@ def test_03_a_solve_moves_the_guide_and_the_scoreboard_and_the_scoreboard_is_the
     data = body["data"]
     assert re.fullmatch(r'"s[A-Za-z0-9_-]{22}"', headers["ETag"]) and data["me"] == {"name": "boardplayer1-team", "score": 150, "pos": 1, "of": data["total"]}
     status, _, markup = raw(world.players[0], ROWS)
-    rows = re.findall(r'<li class="sb-row[^"]*"><b class="sb-pos">(\d+)</b><span class="sb-name"><bdi>(.*?)</bdi>.*?<b>(-?\d+)</b> TRP', markup)
+    rows = re.findall(r'<li class="sb-row[^"]*"><b class="sb-pos">(\d+)</b>(?:<span|<a) class="sb-name"[^>]*><bdi>(.*?)</bdi>.*?<b>(-?\d+)</b> TRP', markup)
     deadline = time.time() + 40  # the feed may be kept for 15 seconds by a cache in front of it; the scoreboard never is
     while True:
         status_feed, _, feed = t.request("/ctftime/standings.json")

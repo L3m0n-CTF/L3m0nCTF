@@ -83,7 +83,7 @@ def html(view) -> str:
         out.append(markup.render(
             "scoreboard_row.html",
             row={
-                "pos": r.pos, "name": r.name, "score": r.score, "solves": f"{r.solves} {'solve' if r.solves == 1 else 'solves'}",
+                "pos": r.pos, "team_id": r.team_id, "name": r.name, "score": r.score, "solves": f"{r.solves} {'solve' if r.solves == 1 else 'solves'}",
                 "pct": max(1, figures.js_round(r.score / lead * 100)) if lead > 0 else 0,
                 "cls": "is-you" if yours else (f"is-top is-p{r.pos}" if r.pos <= 3 else ""),
                 "you": " (your studio)" if yours else "",
