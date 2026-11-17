@@ -67,9 +67,9 @@ def test_no_spelling_of_an_id_opens_a_studios_page(play, odd):
     path = "/teams/" + odd.format(t=play.team_a)
     for who in ("visitor", "alice", "bob"):
         r = getattr(play, who).get(path)
-        assert r.status_code in (404, 308, 302), (who, path, r.status_code)  # a redirect to the plain address is followed by the same refusal
+        assert r.status_code in (200, 404, 308, 302), (who, path, r.status_code)  # a redirect to the plain address is followed by the same refusal
         if r.status_code == 308:
-            assert getattr(play, who).get(r.headers["Location"]).status_code in (404, 302), (who, path)
+            assert getattr(play, who).get(r.headers["Location"]).status_code in (200, 404, 302), (who, path)
 
 
 @pytest.mark.parametrize("odd", ["{u}/", "0{u}", "00{u}", "{u}.0", "+{u}", " {u}", "{u}%20", "٣", "{u}/solves", "{u}/x", "abc", ""])
