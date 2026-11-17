@@ -8,7 +8,6 @@ member left or was suspended) is one line, "Earlier solves", id 0. Only a studio
 
 The crew belongs to no studio: `team` is null for them. Nothing here is a date or a countdown.
 """
-import datetime
 import math
 
 from CTFd.models import Awards, Solves, Unlocks, Users, db
@@ -23,35 +22,21 @@ EARLIER = "Earlier solves"
 
 
 def _members(team, viewer, credited):
-    """Each member of the studio with what they brought in. `credited` is [(user id, value, challenge name, timestamp)]."""
+    """Each member of the studio with what they brought in. `credited` is [(user id of the solve, value of its programme)]."""
     people = {}
     for user_id, name in db.session.query(Users.id, Users.name).filter(Users.team_id == team.id, Users.banned.is_(False)).all():
-        people[user_id] = {
-            "id": user_id,
-            "name": name,
-            "captain": team.captain_id == user_id,
-            "you": viewer.user is not None and viewer.user.id == user_id,
-            "solves": 0,
-            "trp": 0,
-            "solve_items": [],
-        }
-    earlier = {"id": 0, "name": EARLIER, "captain": False, "you": False, "solves": 0, "trp": 0, "solve_items": []}
-    for item in credited:
-        user_id = item[0]
-        value = item[1]
-        name = item[2] if len(item) > 2 else ""
-        time_str = item[3] if len(item) > 3 else ""
+        people[user_id] = {"id": user_id, "name": name, "captain": team.captain_id == user_id, "you": viewer.user is not None and viewer.user.id == user_id, "solves": 0, "trp": 0}
+    earlier = {"id": 0, "name": EARLIER, "captain": False, "you": False, "solves": 0, "trp": 0}
+    for user_id, value in credited:
         line = people.get(user_id, earlier)
         line["solves"] += 1
         line["trp"] += value
-        if name:
-            line["solve_items"].append({"name": name, "trp": value, "time": time_str})
     lines = list(people.values()) + ([earlier] if earlier["solves"] else [])
     gross = sum(line["trp"] for line in lines)
     for line in lines:
         line["pct"] = figures.js_round(line["trp"] / gross * 100) if gross > 0 else 0
     lines.sort(key=lambda line: (-line["trp"], not line["captain"], line["name"].casefold(), line["name"]))
-    return [{key: line[key] for key in ("id", "name", "captain", "you", "solves", "trp", "pct", "solve_items")} for line in lines]
+    return [{key: line[key] for key in ("id", "name", "captain", "you", "solves", "trp", "pct")} for line in lines]
 
 
 def _team_block(viewer, phase, view):
@@ -59,19 +44,11 @@ def _team_block(viewer, phase, view):
     score, place, of = board.numbers(team, phase)
     mine = [(programme, challenge) for programme, challenge in view.rows if challenge.id in view.shown and challenge.id in viewer.solved]
     value_of = {challenge.id: int(challenge.value or 0) for _, challenge in mine}
-    name_of = {challenge.id: str(challenge.name or "") for _, challenge in mine}
-    solves_rows = (
-        db.session.query(Solves.user_id, Solves.challenge_id, Solves.date)
-        .filter(Solves.account_id == team.id)
-        .order_by(Solves.date.desc())
-        .all()
-    )
-    credited = []
-    for user_id, challenge_id, solve_date in solves_rows:
-        if challenge_id in value_of:
-            ist_time = solve_date + datetime.timedelta(hours=5, minutes=30) if solve_date else None
-            time_str = ist_time.strftime("%d %b, %H:%M IST") if ist_time else ""
-            credited.append((user_id, value_of[challenge_id], name_of.get(challenge_id, "Programme"), time_str))
+    credited = [
+        (user_id, value_of[challenge_id])
+        for user_id, challenge_id in db.session.query(Solves.user_id, Solves.challenge_id).filter(Solves.account_id == team.id).all()
+        if challenge_id in value_of
+    ]
     live = 0
     for programme, challenge in view.rows:
         if challenge.id in view.shown and programme.delivery in LIVE_DELIVERIES:

@@ -108,7 +108,7 @@ def build_guide_view(data: dict, me: dict | None, epg_html: str = "", channel_ke
         name_str = m.get("name", "")
         ini_str = name_str[0].upper() if name_str else "?"
         solves = m.get("solves", 0)
-        formatted_members.append({
+        mem_entry = {
             "id": str(m["id"]),
             "name": name_str,
             "ini": ini_str,
@@ -118,8 +118,10 @@ def build_guide_view(data: dict, me: dict | None, epg_html: str = "", channel_ke
             "trp": str(m.get("trp", 0)),
             "pct": str(m.get("pct", 0)),
             "text": f"{solves} {'solve' if solves == 1 else 'solves'}",
-            "solve_items": m.get("solve_items", []),
-        })
+        }
+        if "solve_items" in m:
+            mem_entry["solve_items"] = m["solve_items"]
+        formatted_members.append(mem_entry)
 
     story_dict = None
     if s is not None:
@@ -187,6 +189,33 @@ def guide_page():
     studio_name = v.team.name if v.team else user.name
     me_info = {"name": user.name, "studio": studio_name}
     guide_ctx = build_guide_view(data, me_info, epg_markup, channel_keys_map=keys)
+
+    # Populate challenges solved per member in team with timestamp in IST (Annex 1 Bug 4)
+    if v.team and guide_ctx.get("members"):
+        import datetime
+        from CTFd.models import Challenges, Solves, db
+        solves_rows = (
+            db.session.query(Solves.user_id, Solves.challenge_id, Solves.date, Challenges.name, Challenges.value)
+            .join(Challenges, Solves.challenge_id == Challenges.id)
+            .filter(Solves.account_id == v.team.id)
+            .order_by(Solves.date.desc())
+            .all()
+        )
+        solves_by_user = {}
+        for uid, cid, sdate, cname, cval in solves_rows:
+            ist_time = sdate + datetime.timedelta(hours=5, minutes=30) if sdate else None
+            time_str = ist_time.strftime("%d %b, %H:%M IST") if ist_time else ""
+            solves_by_user.setdefault(uid, []).append({
+                "name": cname or "Programme",
+                "trp": int(cval or 0),
+                "time": time_str,
+            })
+        for mem in guide_ctx.get("members", []):
+            try:
+                mid = int(mem.get("id", 0))
+            except (ValueError, TypeError):
+                mid = 0
+            mem["solve_items"] = solves_by_user.get(mid, [])
 
     return render_template("guide.html", guide=guide_ctx, banner=data.get("banner"))
 

@@ -30,8 +30,8 @@ def closes(path):
     if path.startswith(("/users/", "/user/")):
         return True
     if path.startswith("/teams/"):
-        part = path[len("/teams/"):].split("/", 1)[0]
-        if part in WAY_IN or (part.isdigit() and not part.startswith("0")):
+        rem = path[len("/teams/"):]
+        if rem in WAY_IN or (rem.isascii() and rem.isdigit() and not rem.startswith("0")):
             return False
         return True
     return False

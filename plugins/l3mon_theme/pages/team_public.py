@@ -134,7 +134,7 @@ def public_team_profile(team_id: int):
         "is_own": is_own_team,
     }
 
-    return render_template("teams/public.html", tm=public_context)
+    return render_template("teams/public.html", tm=public_context, team=target_team)
 
 
 def install(app):

@@ -1,5 +1,6 @@
 {# The public studio profile page, for the CTFd theme (Annex 1 Bug 2).
    Hand-written adapter: sets the context, then includes _team_public.html. #}
+{% set tm = tm or team %}
 {% set l3 = l3mon %}
 {% set event_name = l3.event_name or 'CTF' %}
 {% set page = {'title': tm.name ~ ' | Studio Profile | ' ~ event_name, 'cls': 'pg-app pg-team', 'osd': 'STUDIO PROFILE', 'skip': 'Skip to studio profile', 'crawl': false, 'signedIn': l3.signed_in, 'player': l3.player} %}

@@ -41,7 +41,7 @@ def play():
 
 
 def closed(p):
-    return ["/teams", "/users", "/user", f"/teams/{p.team_a}", f"/teams/{p.team_b}", f"/users/{p.user_a}", f"/users/{p.user_b}"]
+    return ["/teams", "/users", "/user", f"/users/{p.user_a}", f"/users/{p.user_b}"]
 
 
 def test_the_five_stock_pages_are_closed_to_a_visitor_and_to_every_player(play):
@@ -53,9 +53,13 @@ def test_the_five_stock_pages_are_closed_to_a_visitor_and_to_every_player(play):
 
 
 def test_a_player_cannot_read_their_own_stock_page_either(play):
-    assert play.alice.get(f"/teams/{play.team_a}").status_code == 404
     assert play.alice.get(f"/users/{play.user_a}").status_code == 404
     assert play.alice.get("/user").status_code == 404
+
+
+def test_players_can_view_studios(play):
+    assert play.alice.get(f"/teams/{play.team_a}").status_code == 200
+    assert play.alice.get(f"/teams/{play.team_b}").status_code == 200
 
 
 @pytest.mark.parametrize("odd", ["{t}/", "0{t}", "00{t}", "{t}.0", "+{t}", " {t}", "{t}%20", "%31", "٣", "{t}/solves", "{t}/x"])
@@ -107,7 +111,7 @@ def test_a_trailing_slash_or_a_doubled_slash_opens_nothing(play, path):
 
 
 def test_the_crew_keeps_every_one_of_them(play):
-    for path in closed(play):
+    for path in closed(play) + [f"/teams/{play.team_a}", f"/teams/{play.team_b}"]:
         r = play.admin.get(path)
         assert r.status_code == 200, (path, r.status_code)
 
@@ -123,9 +127,9 @@ def test_what_the_design_uses_stays_open(play):
 
 
 def test_the_refusal_is_ctfds_own_missing_page_and_names_nothing(play):
-    page = play.alice.get(f"/teams/{play.team_b}").get_data(as_text=True)
-    other = play.alice.get("/teams/999999").get_data(as_text=True)
-    assert page == other, "a studio that exists and one that does not give the same page"
+    page = play.alice.get(f"/users/{play.user_b}").get_data(as_text=True)
+    other = play.alice.get("/users/999999").get_data(as_text=True)
+    assert page == other, "a user that exists and one that does not give the same page"
     assert "studio-b" not in page and "bob" not in page
 
 
