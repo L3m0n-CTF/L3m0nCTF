@@ -36,7 +36,7 @@ set_mode() {
     echo "Error: mail-relay service container is not running." >&2
     exit 1
   fi
-  docker exec --user root "$cid" sh -c "echo '$target_mode' > /var/spool/l3mon-mail/mode"
+  docker exec "$cid" sh -c "echo '$target_mode' > /var/spool/l3mon-mail/mode 2>/dev/null || true; mkdir -p /tmp/l3mon-mail && echo '$target_mode' > /tmp/l3mon-mail/mode 2>/dev/null || true"
 }
 
 case "$ACTION" in
@@ -50,8 +50,22 @@ case "$ACTION" in
 import os, urllib.request
 from pathlib import Path
 
-mode_file = Path('/var/spool/l3mon-mail/mode')
-current_mode = mode_file.read_text().strip() if mode_file.is_file() else os.environ.get('MAIL_UPSTREAM_MODE', 'auto')
+candidate_paths = [
+    Path('/tmp/l3mon-mail/mode'),
+    Path('/var/spool/l3mon-mail/mode'),
+]
+current_mode = None
+for p in candidate_paths:
+    if p.is_file():
+        try:
+            val = p.read_text().strip()
+            if val:
+                current_mode = val
+                break
+        except Exception:
+            pass
+if not current_mode:
+    current_mode = os.environ.get('MAIL_UPSTREAM_MODE', 'auto')
 
 print('=== Mail Relay Upstream Status ===')
 print(f'Active Mode:        {current_mode.upper()}')

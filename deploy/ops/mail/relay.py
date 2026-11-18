@@ -201,13 +201,19 @@ def get_fallback_password() -> str:
 
 def get_active_mode() -> str:
     """Return active upstream mode: 'auto', 'brevo', 'gmail', or 'hold'."""
-    if MODE_FILE.is_file():
-        try:
-            val = MODE_FILE.read_text(encoding="utf-8").strip().lower()
-            if val in ("auto", "both", "brevo", "primary", "gmail", "fallback", "hold", "off", "pause"):
-                return val
-        except OSError:
-            pass
+    candidate_paths = [
+        MODE_FILE,
+        Path("/var/spool/l3mon-mail/mode"),
+        Path("/tmp/l3mon-mail/mode"),
+    ]
+    for p in candidate_paths:
+        if p.is_file():
+            try:
+                val = p.read_text(encoding="utf-8").strip().lower()
+                if val in ("auto", "both", "brevo", "primary", "gmail", "fallback", "hold", "off", "pause"):
+                    return val
+            except OSError:
+                pass
     return DEFAULT_MODE
 
 
