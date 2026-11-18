@@ -14,7 +14,17 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
 ACTION="${1:-status}"
 
+if [[ -f /etc/l3mon/production.env ]]; then
+  set -a; . /etc/l3mon/production.env; set +a
+fi
+
 get_relay_cid() {
+  local cid
+  cid="$(docker ps -q --filter "name=mail-relay" 2>/dev/null | head -n 1 || true)"
+  if [[ -n "$cid" ]]; then
+    echo "$cid"
+    return
+  fi
   tools/compose.sh ps -q mail-relay 2>/dev/null || true
 }
 
@@ -26,7 +36,7 @@ set_mode() {
     echo "Error: mail-relay service container is not running." >&2
     exit 1
   fi
-  docker exec "$cid" python -c "from pathlib import Path; Path('/var/spool/l3mon-mail/mode').write_text('$target_mode')"
+  docker exec --user root "$cid" sh -c "echo '$target_mode' > /var/spool/l3mon-mail/mode"
 }
 
 case "$ACTION" in
