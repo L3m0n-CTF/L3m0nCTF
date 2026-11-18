@@ -55,6 +55,19 @@ UPSTREAM_TLS = os.environ.get("UPSTREAM_SMTP_TLS", "true").lower() in ("true", "
 UPSTREAM_SSL = os.environ.get("UPSTREAM_SMTP_SSL", "false").lower() in ("true", "1", "yes")
 PASSWORD_FILE = Path(os.environ.get("MAIL_PASSWORD_FILE", "/run/secrets/MAIL_PASSWORD"))
 
+# Fallback / Secondary Upstream (e.g. Gmail SMTP)
+FALLBACK_HOST = os.environ.get("FALLBACK_SMTP_HOST", "").strip()
+FALLBACK_PORT = int(os.environ.get("FALLBACK_SMTP_PORT", "587"))
+FALLBACK_USER = os.environ.get("FALLBACK_SMTP_USER", "").strip()
+FALLBACK_TLS = os.environ.get("FALLBACK_SMTP_TLS", "true").lower() in ("true", "1", "yes")
+FALLBACK_SSL = os.environ.get("FALLBACK_SMTP_SSL", "false").lower() in ("true", "1", "yes")
+FALLBACK_PASSWORD_ENV = os.environ.get("FALLBACK_SMTP_PASSWORD", "").strip()
+FALLBACK_PASSWORD_FILE = Path(os.environ.get("FALLBACK_MAIL_PASSWORD_FILE", "/run/secrets/FALLBACK_MAIL_PASSWORD"))
+
+# Runtime mode control: 'auto' (fallback on error), 'brevo' (primary only), 'gmail' (secondary only), 'hold' (pause)
+MODE_FILE = SPOOL_DIR / "mode"
+DEFAULT_MODE = os.environ.get("MAIL_UPSTREAM_MODE", "auto").strip().lower()
+
 # Allowed client CIDRs (Docker internal networks and localhost)
 ALLOWED_NETWORKS = [
     ipaddress.ip_network("127.0.0.0/8"),
@@ -66,6 +79,9 @@ ALLOWED_NETWORKS = [
 # Metrics counters
 METRICS = {
     "sent_total": 0,
+    "sent_primary_total": 0,
+    "sent_fallback_total": 0,
+    "fallback_triggered_total": 0,
     "failed_total": 0,
     "rate_limited_total": 0,
     "received_total": 0,
@@ -170,6 +186,29 @@ def get_mail_password() -> str:
     if PASSWORD_FILE.is_file():
         return PASSWORD_FILE.read_text(encoding="utf-8").strip()
     return ""
+
+
+def get_fallback_password() -> str:
+    if FALLBACK_PASSWORD_ENV:
+        return FALLBACK_PASSWORD_ENV
+    if FALLBACK_PASSWORD_FILE.is_file():
+        try:
+            return FALLBACK_PASSWORD_FILE.read_text(encoding="utf-8").strip()
+        except OSError:
+            pass
+    return ""
+
+
+def get_active_mode() -> str:
+    """Return active upstream mode: 'auto', 'brevo', 'gmail', or 'hold'."""
+    if MODE_FILE.is_file():
+        try:
+            val = MODE_FILE.read_text(encoding="utf-8").strip().lower()
+            if val in ("auto", "both", "brevo", "primary", "gmail", "fallback", "hold", "off", "pause"):
+                return val
+        except OSError:
+            pass
+    return DEFAULT_MODE
 
 
 # ------------------------------------------------------------- SMTP Server Implementation
@@ -319,6 +358,96 @@ async def start_smtp_server():
 
 
 # -------------------------------------------------------- Outgoing Delivery Worker
+def _send_smtp(host: str, port: int, user: str, password: str, use_tls: bool, use_ssl: bool, sender: str, recipients: list[str], data: bytes) -> tuple[bool, str]:
+    try:
+        if use_ssl:
+            context = ssl.create_default_context()
+            server = smtplib.SMTP_SSL(host, port, context=context, timeout=15)
+        else:
+            server = smtplib.SMTP(host, port, timeout=15)
+            if use_tls:
+                context = ssl.create_default_context()
+                server.starttls(context=context)
+
+        if user and password:
+            server.login(user, password)
+
+        # For providers enforcing authenticated envelope sender (like Gmail)
+        env_sender = user if ("gmail" in host.lower() and user) else sender
+        server.sendmail(env_sender, recipients, data)
+        try:
+            server.quit()
+        except Exception:
+            try:
+                server.close()
+            except Exception:
+                pass
+        return True, ""
+    except Exception as e:
+        return False, str(e)
+
+
+def dispatch_upstream(sender: str, recipients: list[str], data: bytes) -> tuple[bool, str]:
+    mode = get_active_mode()
+    primary_pw = get_mail_password()
+    fallback_pw = get_fallback_password()
+
+    primary_ready = bool(UPSTREAM_HOST and primary_pw)
+    fallback_ready = bool(FALLBACK_HOST and FALLBACK_USER and fallback_pw)
+
+    if mode in ("hold", "pause", "off"):
+        return False, "Holding mode: upstream delivery paused by operator"
+
+    # Gmail only mode
+    if mode in ("gmail", "fallback"):
+        if not fallback_ready:
+            return False, "Fallback (Gmail) mode selected but fallback credentials not ready"
+        ok, err = _send_smtp(FALLBACK_HOST, FALLBACK_PORT, FALLBACK_USER, fallback_pw, FALLBACK_TLS, FALLBACK_SSL, sender, recipients, data)
+        if ok:
+            METRICS["sent_fallback_total"] += 1
+        return ok, err
+
+    # Brevo only mode
+    if mode in ("brevo", "primary"):
+        if not primary_ready:
+            return False, "Primary (Brevo) mode selected but primary credentials not ready"
+        ok, err = _send_smtp(UPSTREAM_HOST, UPSTREAM_PORT, UPSTREAM_USER, primary_pw, UPSTREAM_TLS, UPSTREAM_SSL, sender, recipients, data)
+        if ok:
+            METRICS["sent_primary_total"] += 1
+        return ok, err
+
+    # Auto mode: try primary first; on failure, cascade to fallback
+    if primary_ready:
+        ok, err = _send_smtp(UPSTREAM_HOST, UPSTREAM_PORT, UPSTREAM_USER, primary_pw, UPSTREAM_TLS, UPSTREAM_SSL, sender, recipients, data)
+        if ok:
+            METRICS["sent_primary_total"] += 1
+            return True, ""
+
+        # Primary failed! Attempt fallback if available
+        if fallback_ready:
+            logger.warning("Primary upstream (%s) delivery failed: %s. Falling back to %s...", UPSTREAM_HOST, err, FALLBACK_HOST)
+            METRICS["fallback_triggered_total"] += 1
+            fb_ok, fb_err = _send_smtp(FALLBACK_HOST, FALLBACK_PORT, FALLBACK_USER, fallback_pw, FALLBACK_TLS, FALLBACK_SSL, sender, recipients, data)
+            if fb_ok:
+                METRICS["sent_fallback_total"] += 1
+                logger.info("Delivered message via fallback upstream (%s) to %s", FALLBACK_HOST, recipients)
+                return True, ""
+            return False, f"Primary error: {err} | Fallback error: {fb_err}"
+        return False, err
+
+    if fallback_ready:
+        ok, err = _send_smtp(FALLBACK_HOST, FALLBACK_PORT, FALLBACK_USER, fallback_pw, FALLBACK_TLS, FALLBACK_SSL, sender, recipients, data)
+        if ok:
+            METRICS["sent_fallback_total"] += 1
+        return ok, err
+
+    return False, "No upstream SMTP provider configured or ready"
+
+
+def send_upstream(sender: str, recipients: list[str], data: bytes, password: str = "") -> tuple[bool, str]:
+    return dispatch_upstream(sender, recipients, data)
+
+
 def delivery_worker():
     logger.info("Delivery worker thread started.")
     while True:
@@ -328,9 +457,15 @@ def delivery_worker():
             if purged > 0:
                 logger.warning("Purged %d expired messages from spool", purged)
 
-            password = get_mail_password()
-            if not UPSTREAM_HOST or not password:
-                # Holding mode: no upstream or empty password secret
+            mode = get_active_mode()
+            primary_pw = get_mail_password()
+            fallback_pw = get_fallback_password()
+
+            primary_ready = bool(UPSTREAM_HOST and primary_pw and mode not in ("gmail", "fallback", "hold", "off", "pause"))
+            fallback_ready = bool(FALLBACK_HOST and FALLBACK_USER and fallback_pw and mode not in ("brevo", "primary", "hold", "off", "pause"))
+
+            if mode in ("hold", "pause", "off") or not (primary_ready or fallback_ready):
+                # Holding mode: no upstream ready or paused by operator
                 METRICS["holding"] = 1
                 time.sleep(3)
                 continue
@@ -355,7 +490,7 @@ def delivery_worker():
 
             for msg_id, sender, rcpts_json, data, created_at, attempts in pending:
                 recipients = json.loads(rcpts_json)
-                success, err = send_upstream(sender, recipients, data, password)
+                success, err = dispatch_upstream(sender, recipients, data)
                 if success:
                     spool.mark_success(msg_id)
                     METRICS["sent_total"] += 1
@@ -371,33 +506,6 @@ def delivery_worker():
             time.sleep(2)
 
 
-def send_upstream(sender: str, recipients: list[str], data: bytes, password: str) -> tuple[bool, str]:
-    try:
-        if UPSTREAM_SSL:
-            context = ssl.create_default_context()
-            server = smtplib.SMTP_SSL(UPSTREAM_HOST, UPSTREAM_PORT, context=context, timeout=15)
-        else:
-            server = smtplib.SMTP(UPSTREAM_HOST, UPSTREAM_PORT, timeout=15)
-            if UPSTREAM_TLS:
-                context = ssl.create_default_context()
-                server.starttls(context=context)
-
-        if UPSTREAM_USER and password:
-            server.login(UPSTREAM_USER, password)
-
-        server.sendmail(sender, recipients, data)
-        try:
-            server.quit()
-        except Exception:
-            try:
-                server.close()
-            except Exception:
-                pass
-        return True, ""
-    except Exception as e:
-        return False, str(e)
-
-
 # ------------------------------------------------------------- Metrics HTTP Server
 class MetricsHandler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
@@ -410,6 +518,15 @@ class MetricsHandler(http.server.BaseHTTPRequestHandler):
                 "# HELP l3mon_mail_sent_total Total delivered emails.\n"
                 "# TYPE l3mon_mail_sent_total counter\n"
                 f"l3mon_mail_sent_total {METRICS['sent_total']}\n"
+                "# HELP l3mon_mail_sent_primary_total Total emails delivered through primary upstream.\n"
+                "# TYPE l3mon_mail_sent_primary_total counter\n"
+                f"l3mon_mail_sent_primary_total {METRICS['sent_primary_total']}\n"
+                "# HELP l3mon_mail_sent_fallback_total Total emails delivered through fallback upstream.\n"
+                "# TYPE l3mon_mail_sent_fallback_total counter\n"
+                f"l3mon_mail_sent_fallback_total {METRICS['sent_fallback_total']}\n"
+                "# HELP l3mon_mail_fallback_triggered_total Count of fallback delivery triggers.\n"
+                "# TYPE l3mon_mail_fallback_triggered_total counter\n"
+                f"l3mon_mail_fallback_triggered_total {METRICS['fallback_triggered_total']}\n"
                 "# HELP l3mon_mail_failed_total Total failed email delivery attempts.\n"
                 "# TYPE l3mon_mail_failed_total counter\n"
                 f"l3mon_mail_failed_total {METRICS['failed_total']}\n"

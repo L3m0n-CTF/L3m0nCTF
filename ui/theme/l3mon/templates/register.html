@@ -8,9 +8,11 @@
 {% set event_name = l3.event_name or 'CTF' %}
 {% set next_to = request.args.get('next') or request.form.get('next') or '' %}
 {% set ctftime_on = l3.ctftime_on %}
+{% set google_on = l3.google_on %}
 {% set cap = l3.captcha %}
 {% set captcha = {'sitekey': cap.sitekey or none} %}
 {% set ctftime_href = '/auth/ctftime' ~ ('?next=' ~ next_to|urlencode if next_to else '') %}
+{% set google_href = '/auth/google' ~ ('?next=' ~ next_to|urlencode if next_to else '') %}
 
 {% set FIELD_MAP = l3.field_messages if (l3 and l3.field_messages) else {
   'That user name is already taken': 'username',
@@ -97,7 +99,7 @@
   'email': request.form.get('email', ''),
   'privacy': true if request.form.get('privacy') == '1' else false,
   'err': field_errs,
-  'providers': {'google': none, 'ctftime': ctftime_href if ctftime_on else none, 'any': ctftime_on},
+  'providers': {'google': google_href if google_on else none, 'ctftime': ctftime_href if ctftime_on else none, 'any': (ctftime_on or google_on)},
   'submit': 'Next: check your email',
   'retry': '',
   'human': true if (cap.sitekey and cap.register) else false,
