@@ -1281,20 +1281,6 @@ btn.setAttribute('aria-pressed',String(show));
 });
 form.addEventListener('submit',()=>{input.type='password';btn.setAttribute('aria-pressed','false');});
 }
-function initBack(form){
-const back=$('[data-back]',form);
-if(!back)return;
-back.addEventListener('click',(e)=>{
-if(e.ctrlKey||e.metaKey||e.shiftKey||e.button)return;
-e.preventDefault();
-const go=document.createElement('input');
-go.type='hidden';
-go.name='go';
-go.value='back';
-form.append(go);
-form.submit();
-});
-}
 function initAccount(form){
 const user=$('#f-username',form);
 const email=$('#f-email',form);
@@ -1454,7 +1440,6 @@ sfx('squeak');
 });
 for(const r of $$('input[name=mode]',form))r.addEventListener('change',()=>{if(r.checked&&r.value==='create')check();});
 if(name.value&&!name.getAttribute('aria-invalid'))check();
-initBack(form);
 liveForm(form,[
 [name,()=>vStudioName(name.value).error],
 [country,()=>(country.value?null:V_MSG.country)],
@@ -1465,7 +1450,6 @@ liveForm(form,[
 }
 function initGoLive(form){
 const rules=$('#f-rules',form);
-initBack(form);
 liveForm(form,[[rules,()=>(rules.checked?null:V_MSG.rules)]],{pending:'Going live…',onSubmit:(ok)=>{for(const m of $$('.mascot'))moodOf(m).set(ok?'wow':'sad');}});
 }
 function initDone(){
