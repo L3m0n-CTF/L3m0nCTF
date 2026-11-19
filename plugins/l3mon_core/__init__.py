@@ -44,6 +44,10 @@ def load(app):
     install_attempt_input(app)  # a flag attempt that is not text, or is far too long, is answered 400 (it was a server error)
     install_log_redaction()  # a submitted flag is not written to the application log
     install_player_locks(app)  # joining a studio and unlocking a hint wait for each other (the studio's row is locked first)
+
+    from CTFd.plugins.l3mon_core import activity
+
+    activity.install()  # the activity ledger: studio changes are seen wherever they come from, and a line follows the commit that made its action real
     app.register_blueprint(l3mon)
 
     # The crew's Config page offers MajorLeagueCyber, which this event does not use: a stylesheet keeps its tab and its choice out of sight (the settings

@@ -6,6 +6,7 @@ production gets the schema models.py describes. It needs a MariaDB; tools/run-mi
     tools/run-migration-test.sh
 """
 import importlib.util
+import logging
 import os
 import threading
 
@@ -13,11 +14,11 @@ import pytest
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
 from sqlalchemy import inspect, text
-from sqlalchemy.exc import DBAPIError  # MariaDB reports a failed CHECK as an OperationalError, a key or a foreign key as an IntegrityError
+from sqlalchemy.exc import DBAPIError, OperationalError  # MariaDB reports a failed CHECK as an OperationalError, a key or a foreign key as an IntegrityError
 
 from CTFd.cache import cache
 from CTFd.models import Challenges, Configs, Teams, db
-from CTFd.plugins.l3mon_core import models
+from CTFd.plugins.l3mon_core import activity, models
 from CTFd.plugins.migrations import current, upgrade
 from CTFd.utils import _get_config, get_config, set_config
 from tests.helpers import create_ctfd, destroy_ctfd, gen_award, gen_challenge, gen_solve, gen_team, gen_user
@@ -29,13 +30,15 @@ FIRST = "7a41c0d2b1e3"
 SECOND = "b3d95f0a6c12"
 THIRD = "c5e2a7b9d104"
 FOURTH = "d8f3a1b4e205"
-REVISION = "d8f3a1b4e205"  # the head: the fourth revision adds the story column of a programme
+FIFTH = "e9a4b2c5f306"
+REVISION = FIFTH  # the head: the fifth revision adds the activity ledger and the removal records
 THIRD_COLUMNS = ("difficulty", "delivery")
 FOURTH_COLUMNS = ("story",)
 THIRD_CHECKS = {"ck_l3mon_programme_difficulty", "ck_l3mon_programme_delivery"}
 VERSION_KEY = "l3mon_core_alembic_version"
-MODELS = {m.__tablename__: m for m in (models.Channel, models.Programme, models.Void, models.Bonus, models.Note, models.Audit)}
-FIRST_FIVE = {name for name in MODELS if name != "l3mon_audit"}
+MODELS = {m.__tablename__: m for m in (models.Channel, models.Programme, models.Void, models.Bonus, models.Note, models.Audit, models.Activity, models.Removal)}
+FIRST_FIVE = {"l3mon_channel", "l3mon_programme", "l3mon_void", "l3mon_bonus", "l3mon_note"}
+FIFTH_TABLES = {"l3mon_activity", "l3mon_removal"}
 
 
 def _load(file_name, module_name):
@@ -66,6 +69,11 @@ def fourth_module():
     return _load("d8f3a1b4e205_add_story_to_programmes.py", "l3mon_fourth_revision")
 
 
+def fifth_module():
+    """The fifth revision (the activity ledger and the removal records)."""
+    return _load("e9a4b2c5f306_add_the_activity_ledger_and_removals.py", "l3mon_fifth_revision")
+
+
 def programme_columns():
     return {c["name"] for c in inspect(db.engine).get_columns("l3mon_programme")}
 
@@ -90,7 +98,7 @@ def forget_the_recorded_revision():
     cache.delete_memoized(_get_config, VERSION_KEY)
 
 
-def test_loading_the_plugin_creates_the_six_tables_and_records_the_head_revision():
+def test_loading_the_plugin_creates_the_eight_tables_and_records_the_head_revision():
     app = create_ctfd(enable_plugins=True, user_mode="teams")
     with app.app_context():
         assert set(MODELS) <= tables()
@@ -269,14 +277,15 @@ def test_the_second_downgrade_drops_only_the_audit_table_and_a_database_at_the_f
     destroy_ctfd(app)
 
 
-def test_the_downgrades_drop_the_six_tables_and_nothing_else_and_a_forgotten_revision_brings_them_back_at_the_next_start():
+def test_the_downgrades_drop_the_eight_tables_and_nothing_else_and_a_forgotten_revision_brings_them_back_at_the_next_start():
     app = create_ctfd(enable_plugins=True, user_mode="teams")
     with app.app_context():
         before = tables()
+        run_on_connection(lambda op: fifth_module().downgrade(op=op))
         run_on_connection(lambda op: audit_module().downgrade(op=op))
         run_on_connection(lambda op: migration_module().downgrade(op=op))
         after = tables()
-        assert before - after == set(MODELS), "exactly our six tables are gone"
+        assert before - after == set(MODELS), "exactly our eight tables are gone"
         assert after <= before and "challenges" in after and "teams" in after
         run_on_connection(lambda op: migration_module().downgrade(op=op))  # a second downgrade is harmless
         # CTFd's runner only goes forward from the revision it recorded, so after a manual downgrade the recorded revision must be
@@ -418,4 +427,97 @@ def test_two_workers_adding_the_story_column_at_the_same_moment_both_succeed():
                 t.join()
             assert not errors, f"round {round_number}: {errors}"
             assert set(FOURTH_COLUMNS) <= programme_columns(), f"round {round_number}"
+    destroy_ctfd(app)
+
+
+# ------------------------------------------------------------------ the fifth revision: the activity ledger and the removal records
+
+ACTIVITY_INDEXES = {"ix_l3mon_activity_at", "ix_l3mon_activity_kind_at", "ix_l3mon_activity_team_id", "ix_l3mon_activity_actor_id"}
+
+
+def test_the_fifth_revision_adds_the_two_tables_with_their_indexes_and_a_second_run_changes_nothing():
+    app = create_ctfd(enable_plugins=True, user_mode="teams")
+    with app.app_context():
+        assert FIFTH_TABLES <= tables()
+        assert ACTIVITY_INDEXES <= {i["name"] for i in inspect(db.engine).get_indexes("l3mon_activity")}
+        assert {"ix_l3mon_removal_team_user", "ix_l3mon_removal_team_at"} <= {i["name"] for i in inspect(db.engine).get_indexes("l3mon_removal")}
+        before = tables()
+        run_on_connection(lambda op: fifth_module().upgrade(op=op))  # again: nothing happens, and no error
+        assert tables() == before
+        run_on_connection(lambda op: fifth_module().downgrade(op=op))
+        assert before - tables() == FIFTH_TABLES, "only the two new tables are gone"
+        run_on_connection(lambda op: fifth_module().downgrade(op=op))  # a second downgrade is harmless
+        run_on_connection(lambda op: fifth_module().upgrade(op=op))
+        assert tables() == before
+    destroy_ctfd(app)
+
+
+def test_the_activity_ledger_keeps_its_rows_when_the_account_or_the_studio_it_names_is_deleted():
+    """No foreign keys on the ledger: a deleted studio must not cascade into it (the removal records, which do have them, go with their studio)."""
+    app = create_ctfd(enable_plugins=True, user_mode="teams")
+    with app.app_context():
+        team = gen_team(db, name="Gone Studio", email="g@e.com", member_count=1)
+        member = team.members[0]
+        row_id = activity.record("studio.leave", actor=member, team_id=team.id, target=f"user:{member.id}")
+        db.session.add(models.Removal(team_id=team.id, user_id=member.id, removed_by=None))
+        db.session.commit()
+        db.session.execute(text("UPDATE users SET team_id = NULL WHERE team_id = :i"), {"i": team.id})
+        db.session.execute(text("DELETE FROM teams WHERE id = :i"), {"i": team.id})
+        db.session.commit()
+        assert models.Removal.query.count() == 0, "a removal record goes with its studio"
+        assert models.Activity.query.get(row_id) is not None, "the ledger line stays"
+    destroy_ctfd(app)
+
+
+def test_on_a_database_that_allows_it_the_migration_creates_the_triggers_and_the_database_refuses_changes():
+    """This MariaDB has no binary log, so the application user may create triggers (production's has one: see the next test)."""
+    app = create_ctfd(enable_plugins=True, user_mode="teams")
+    with app.app_context():
+        assert activity.triggers_installed()
+        row_id = activity.record("k.one", target="t")
+        for statement in ("UPDATE l3mon_activity SET kind = 'k.two' WHERE id = :i", "DELETE FROM l3mon_activity WHERE id = :i"):
+            with pytest.raises(DBAPIError) as err:
+                db.session.execute(text(statement), {"i": row_id})
+                db.session.commit()
+            db.session.rollback()
+            assert "append-only" in str(err.value)
+        assert models.Activity.query.get(row_id).kind == "k.one"
+        assert activity.verify_chain().ok
+    destroy_ctfd(app)
+
+
+def test_a_database_that_refuses_the_triggers_does_not_stop_the_migration_and_says_what_to_do():
+    """Production: MariaDB with binary logging answers ERROR 1419 to CREATE TRIGGER from a user without SUPER. The platform must still start."""
+    app = create_ctfd(enable_plugins=True, user_mode="teams")
+    with app.app_context():
+        run_on_connection(lambda op: fifth_module().downgrade(op=op))
+        assert not (FIFTH_TABLES & tables())
+
+        def refuse(op):
+            real = op.execute
+
+            def execute(statement, *args, **kwargs):
+                if "CREATE TRIGGER" in str(statement):
+                    raise OperationalError(str(statement), {}, Exception(1419, "You do not have the SUPER privilege and binary logging is enabled"))
+                return real(statement, *args, **kwargs)
+
+            op.execute = execute
+            fifth_module().upgrade(op=op)
+
+        warnings = []
+
+        class Grab(logging.Handler):  # pytest's caplog is not wired to this logger in the real-database runner
+            def emit(self, record):
+                warnings.append(record.getMessage())
+
+        grab = Grab(level=logging.WARNING)
+        logging.getLogger("l3mon").addHandler(grab)
+        try:
+            run_on_connection(refuse)
+        finally:
+            logging.getLogger("l3mon").removeHandler(grab)
+        assert FIFTH_TABLES <= tables(), "the tables are there"
+        assert not activity.triggers_installed(), "the triggers are not"
+        assert any("activity-triggers.sh" in w for w in warnings), "the warning names the step that creates them"
+        assert activity.record("k.one", target="t") is not None, "the ledger works without them (chained, and echoed to the log)"
     destroy_ctfd(app)

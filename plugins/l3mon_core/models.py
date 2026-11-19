@@ -115,3 +115,64 @@ class Audit(db.Model):
     action = db.Column(db.String(40), nullable=False)
     target = db.Column(db.String(100), nullable=False)
     detail = db.Column(db.String(500), nullable=False, default="")
+
+
+class Activity(db.Model):
+    """The activity ledger (docs/runbooks/17-activity-log.md): one row for everything a participant did, append-only and chained.
+
+    No foreign keys on purpose: deleting an account or a studio must never change or cascade into the ledger, so the person's name is copied onto the row and
+    the ids are plain numbers. The database refuses UPDATE and DELETE (triggers: created by the migration where the database user may, and by
+    tools/ops/activity-triggers.sh as the database's root user where it may not: MariaDB with binary logging refuses CREATE TRIGGER to anyone without SUPER). Every
+    row holds the hash of the row before it, so a changed or missing row is found by activity.verify_chain(). Written by plugins/l3mon_core/activity.py only."""
+
+    __tablename__ = "l3mon_activity"
+    id = db.Column(db.Integer, primary_key=True)
+    at = db.Column(db.DateTime, nullable=False)
+    kind = db.Column(db.String(40), nullable=False)
+    actor_id = db.Column(db.Integer)
+    actor_name = db.Column(db.String(80), nullable=False)
+    team_id = db.Column(db.Integer)
+    target = db.Column(db.String(100), nullable=False, default="")
+    detail = db.Column(db.String(1000), nullable=False, default="")
+    ip = db.Column(db.String(45), nullable=False, default="")
+    user_agent = db.Column(db.String(200), nullable=False, default="")
+    request_id = db.Column(db.String(64), nullable=False, default="")
+    prev_hash = db.Column(db.String(64), nullable=False)
+    hash = db.Column(db.String(64), nullable=False)
+    __table_args__ = (
+        db.Index("ix_l3mon_activity_at", "at"),
+        db.Index("ix_l3mon_activity_kind_at", "kind", "at"),
+        db.Index("ix_l3mon_activity_team_id", "team_id", "id"),
+        db.Index("ix_l3mon_activity_actor_id", "actor_id", "id"),
+    )
+
+
+class Removal(db.Model):
+    """A captain removed a member from a studio. While `lifted_at` is empty the same person cannot join the same studio again (an old invite link would
+    otherwise bring them straight back); the crew lifts it. The member's solves, hint unlocks and awards are NOT touched: the studio earned them."""
+
+    __tablename__ = "l3mon_removal"
+    id = db.Column(db.Integer, primary_key=True)
+    team_id = db.Column(db.Integer, db.ForeignKey("teams.id", ondelete="CASCADE"), nullable=False)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    removed_by = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"))
+    removed_at = db.Column(db.DateTime, nullable=False, default=_utcnow)
+    recent_activity = db.Column(db.SmallInteger, nullable=False, default=0)  # 0 or 1: the member had a solve or a hint unlock in the 24 hours before (the "lend my flag, then leave" pattern)
+    lifted_at = db.Column(db.DateTime)
+    lifted_by = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"))
+    __table_args__ = (db.Index("ix_l3mon_removal_team_user", "team_id", "user_id"), db.Index("ix_l3mon_removal_team_at", "team_id", "removed_at"))
+
+
+def _append_only_triggers_for_sqlite():
+    """SQLite (the tests, and development) gets the triggers with the table. MariaDB does not: see Activity."""
+    from sqlalchemy import DDL, event
+
+    for verb in ("UPDATE", "DELETE"):
+        event.listen(
+            Activity.__table__,
+            "after_create",
+            DDL(f"CREATE TRIGGER l3mon_activity_no_{verb.lower()} BEFORE {verb} ON l3mon_activity BEGIN SELECT RAISE(ABORT, 'l3mon_activity is append-only'); END").execute_if(dialect="sqlite"),
+        )
+
+
+_append_only_triggers_for_sqlite()
