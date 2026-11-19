@@ -30,6 +30,10 @@ server {
   include /etc/nginx/snippets/platform-server.conf;
 }
 
+# The web addresses of challenge instances (<32 hex>.<instance domain>). Present only when the `instancer-central` overlay mounts its block here; with no
+# file in the folder this line includes nothing (deploy/nginx/instances/instances.conf).
+include /etc/nginx/instances.d/*.conf;
+
 # The container's own health check, from inside the container only (nothing publishes this port).
 server {
   listen 127.0.0.1:8080;

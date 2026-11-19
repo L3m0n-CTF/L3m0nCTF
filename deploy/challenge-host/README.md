@@ -122,7 +122,7 @@ chmod 0600 /etc/l3mon/secrets/*
 
 Point secret file environment variables to the token locations, ensure `INSTANCE_DOMAIN` matches central, and pass the generated environment file:
 ```bash
-export INSTANCE_DOMAIN="inst.l3m0nctf.xyz"
+export INSTANCE_DOMAIN="l3m0nctf.xyz"
 export INSTANCER_TOKEN_FILE_HOST="/etc/l3mon/secrets/INSTANCER_TOKEN"
 export ROUTER_TOKEN_FILE_HOST="/etc/l3mon/secrets/ROUTER_TOKEN"
 

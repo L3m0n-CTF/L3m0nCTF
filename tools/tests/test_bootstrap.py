@@ -364,7 +364,8 @@ def test_bootstrap_reboot_unit_is_written_ordered_after_docker_and_enabled():
             "L3MON_SYSTEMD_SERVICE": str(unit).replace(chr(92), "/"),
             "L3MON_BOOTSTRAP_SCRIPT": str(script_copy).replace(chr(92), "/"),
         }
-        script = f'source "{str(BOOTSTRAP_SCRIPT).replace(chr(92), "/")}" >/dev/null; MODE=apply; configure_systemd_service'
+        # chown is a shell function here: the test does not run as root, and the real one would refuse (test_bootstrap_hands_its_boot_script_to_root checks the call)
+        script = f'source "{str(BOOTSTRAP_SCRIPT).replace(chr(92), "/")}" >/dev/null; chown() {{ :; }}; MODE=apply; configure_systemd_service'
         res = subprocess.run([get_bash_cmd(), "-c", script], cwd=str(ROOT), capture_output=True, text=True, env=env, timeout=15)
         assert res.returncode == 0, res.stderr
         text = unit.read_text(encoding="utf-8")
@@ -376,6 +377,29 @@ def test_bootstrap_reboot_unit_is_written_ordered_after_docker_and_enabled():
         calls = log.read_text(encoding="utf-8")
         assert "systemctl daemon-reload" in calls, calls
         assert "systemctl enable l3mon-firewall.service" in calls, calls
+
+
+def test_bootstrap_hands_its_boot_script_to_root():
+    """root runs /etc/l3mon/bootstrap.sh at every boot (the firewall unit). `cp -p` keeps the owner of the file it copies, so a script run by an administrator
+    stayed owned by that login user, who could then change what root executes. Found on the first real challenge VM (19 Nov 2026); the copy must belong to root."""
+    with tempfile.TemporaryDirectory() as d:
+        d_path = Path(d)
+        log = d_path / "calls.log"
+        _stub(d_path, "systemctl", log)
+        script_copy = d_path / "bootstrap.sh"
+        env = {
+            **os.environ,
+            "PATH": f"{d}{os.pathsep}{os.environ.get('PATH', '')}",
+            "L3MON_SYSTEMD_SERVICE": str(d_path / "l3mon-firewall.service").replace(chr(92), "/"),
+            "L3MON_BOOTSTRAP_SCRIPT": str(script_copy).replace(chr(92), "/"),
+        }
+        # chown is a shell function here (a function beats PATH, so Git Bash's own chown on Windows cannot be the one that runs, and nothing is really changed)
+        record = str(log).replace(chr(92), "/")
+        script = f'source "{str(BOOTSTRAP_SCRIPT).replace(chr(92), "/")}" >/dev/null; chown() {{ echo "chown $@" >> "{record}"; }}; MODE=apply; configure_systemd_service'
+        res = subprocess.run([get_bash_cmd(), "-c", script], cwd=str(ROOT), capture_output=True, text=True, env=env, timeout=15)
+        assert res.returncode == 0, res.stderr
+        calls = log.read_text(encoding="utf-8")
+        assert f"chown root:root {str(script_copy).replace(chr(92), '/')}" in calls, calls
 
 
 def test_bootstrap_dry_run_shows_the_reboot_unit_and_does_not_enable_it():

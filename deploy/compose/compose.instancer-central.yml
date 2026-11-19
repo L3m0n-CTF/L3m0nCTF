@@ -1,0 +1,90 @@
+# The platform VM in a FLEET: the challenge instances run on separate challenge VMs (deploy/challenge-host/), so this machine runs ONLY the central router
+# (hop 1) and CTFd's per-host wiring. No instancer and no Docker-socket proxy run here: the machine that holds the database and the flag secret must not
+# have a Docker socket next to it. Do not combine this overlay with `instancer`, `instancer-production` or `instancer-multihost` (it replaces all three).
+#
+#   L3MON_ENV=production L3MON_OVERLAYS=identity,ops,instancer-central \
+#   INSTANCE_DOMAIN=l3m0nctf.xyz \
+#   L3MON_HOSTS_FILE=/etc/l3mon/hosts.json \
+#   L3MON_INSTANCER_TOKENS_DIR=/etc/l3mon/host-secrets/instancer \
+#   L3MON_ROUTER_TOKENS_DIR=/etc/l3mon/host-secrets/router \
+#   tools/compose.sh up -d --wait
+#
+# What it adds, and where it goes:
+#   router      the central router (hop 1): reads the list of hosts, asks each host's router which instances it runs, and forwards a request for
+#               <id>.<INSTANCE_DOMAIN> to the router of the host that runs <id>. It publishes NO port: only nginx, on a private network, talks to it. Players reach
+#               raw TCP challenges on the challenge host's own public address (ports 30000-30199), never through this machine.
+#   ctfd        hosts.json and the folder of INSTANCER_TOKEN_<NAME> files (read-only), and the flag secret: CTFd derives every team's flag and sends it to the host
+#               in the start request, so the challenge host never holds a master secret. CTFd never sees a router token.
+#   router      hosts.json and the folder of ROUTER_TOKEN_<NAME> files (read-only). The router never sees an instancer token or the flag secret.
+#   nginx       joins the private network of the router, waits for it, and gets the server block for the instances' web addresses
+#               (deploy/nginx/instances/instances.conf, included by the production template). Without this overlay nginx has no such block.
+#
+# A new host is a line in hosts.json and two token files (name in capitals: host "h2" -> INSTANCER_TOKEN_H2 and ROUTER_TOKEN_H2); no compose file is edited.
+# The challenge host kit must use the same INSTANCE_DOMAIN as this platform (compose.challenge-host.yml reads INSTANCE_DOMAIN).
+
+name: l3mon
+
+services:
+  ctfd:
+    environment:
+      FLAG_HMAC_SECRET_FILE: /run/secrets/FLAG_HMAC_SECRET
+      L3MON_HOSTS_PATH: /etc/l3mon/hosts.json
+      L3MON_HOST_SECRETS_DIR: /run/host-secrets
+    secrets:
+      - FLAG_HMAC_SECRET
+    volumes:
+      - ${L3MON_HOSTS_FILE:?L3MON_HOSTS_FILE must be the path of hosts.json}:/etc/l3mon/hosts.json:ro
+      - ${L3MON_INSTANCER_TOKENS_DIR:?L3MON_INSTANCER_TOKENS_DIR must be a folder with one INSTANCER_TOKEN_<NAME> file per host}:/run/host-secrets:ro
+    networks:
+      - edge
+      - internal
+      - instancer
+
+  router:
+    build:
+      context: ../..
+      dockerfile: services/instancer/router/Dockerfile
+    image: l3mon/instance-router:dev
+    restart: unless-stopped
+    init: true
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    user: "10002:10002"
+    mem_limit: 256m
+    pids_limit: 128
+    tmpfs:
+      - /tmp
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+    volumes:
+      - ${L3MON_HOSTS_FILE:?L3MON_HOSTS_FILE must be the path of hosts.json}:/etc/l3mon/hosts.json:ro
+      - ${L3MON_ROUTER_TOKENS_DIR:?L3MON_ROUTER_TOKENS_DIR must be a folder with one ROUTER_TOKEN_<NAME> file per host}:/run/host-secrets:ro
+    environment:
+      ROUTER_HOSTS_PATH: /etc/l3mon/hosts.json
+      L3MON_HOST_SECRETS_DIR: /run/host-secrets
+      INSTANCE_DOMAIN: "${INSTANCE_DOMAIN:?INSTANCE_DOMAIN must be set (for example l3m0nctf.xyz); it must equal the challenge hosts' INSTANCE_DOMAIN}"
+      POLL_INTERVAL: "2.0"
+    networks:
+      - instancer
+
+  nginx:
+    volumes:
+      - ../nginx/instances/instances.conf:/etc/nginx/instances.d/instances.conf:ro
+    networks:
+      - edge
+      - instancer
+    depends_on:
+      router: { condition: service_started }
+
+networks:
+  instancer:
+    name: l3mon_instancer
+    driver: bridge
+
+secrets:
+  FLAG_HMAC_SECRET:
+    file: ../../.secrets/FLAG_HMAC_SECRET
