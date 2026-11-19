@@ -6,6 +6,7 @@ Provides:
 - Routes:
     POST /team                       update studio details (captain only)
     POST /team/members/<id>/captain  hand over captain's chair (captain only)
+    POST /team/members/<id>/remove   remove a member; what they earned stays with the studio (captain only)
     POST /settings                   update username, email, or password
 """
 import logging
@@ -15,7 +16,9 @@ from CTFd.cache import clear_team_session, clear_user_session
 from CTFd.constants.sessions import Session
 from CTFd.models import Teams, Users, db
 from CTFd.plugins.l3mon_board import board
+from CTFd.plugins.l3mon_core import activity, studio_rules
 from CTFd.plugins.l3mon_core.clock import current_phase
+from CTFd.plugins.l3mon_core.player_locks import lock_studio
 from CTFd.plugins.l3mon_core.signup_rules import enforced
 from CTFd.plugins.l3mon_guard.policies.disposable import is_disposable_domain
 from CTFd.plugins.l3mon_guard.policies.email_norm import is_email_disguise_used
@@ -47,6 +50,7 @@ _log = logging.getLogger("l3mon.theme.team_settings")
 NOTICES = {
     "team-saved": "Your changes are saved.",
     "captain-moved": "Done. The captain's chair has been handed over.",
+    "member-removed": "Done. The member was removed from your studio. Their solves and hints stay with the studio.",
     "settings-saved": "Your changes are saved.",
     "settings-saved-confirm": "Your changes are saved. Open the link we sent to your new address to confirm it.",
     "settings-saved-nomail": "Your changes are saved, but confirmation mail could not be sent. Please ask the crew to confirm your account.",
@@ -303,6 +307,8 @@ def install(app):
         if team.captain_id != user.id:
             abort(403)
 
+        lock_studio(team.id)  # two renames (a second tab, a double press) must not both pass the once-a-day rule
+
         raw_name = request.form.get("name", "")
         country = request.form.get("country", "").strip()
         affiliation = request.form.get("affiliation", "").strip()
@@ -320,6 +326,13 @@ def install(app):
                 name = raw_name
             else:
                 name = clean_name
+
+        # The rename policy (studio_rules.py): once a day, locked from the real start or after the first solve. The API path has the same rule in a before_request.
+        if "name" not in errors and name != team.name:
+            refusal = studio_rules.rename_refusal(team, name, user)
+            if refusal:
+                errors["name"] = [refusal]
+                activity.record("studio.rename.refused", actor=user, team_id=team.id, target=f"team:{team.id}", detail={"asked": name, "via": "form"})
 
         # Validate country code if provided
         if country and lookup_country_code(country) is None:
@@ -369,6 +382,41 @@ def install(app):
         db.session.commit()
         clear_team_session(team_id=team.id)
         session[FLASH_NOTICE_KEY] = "captain-moved"
+        return redirect("/team", code=303)
+
+    @app.route("/team/members/<int:member_id>/remove", methods=["POST"])
+    @ratelimit(method="POST", limit=10, interval=60)
+    def remove_member(member_id):
+        _verify_nonce()
+        if not authed():
+            return redirect(url_for("auth.login"))
+
+        team = get_current_team()
+        user = get_current_user()
+        if not team:
+            return redirect(url_for("teams.private"))
+
+        # Captain only (like the hand-over of the chair)
+        if team.captain_id != user.id:
+            abort(403)
+
+        lock_studio(team.id)  # a removal and a join of the same studio take turns
+
+        # A person who is not in this studio: a made-up request, not something the page can send
+        target = Users.query.filter_by(id=member_id, team_id=team.id).first()
+        if not target:
+            abort(400)
+
+        refusal = studio_rules.removal_refusal(team, target, user)
+        if refusal:
+            session[FLASH_ERROR_KEY] = {"members": [refusal]}
+            return redirect("/team", code=303)
+
+        studio_rules.remove_member(team, target, user)
+        db.session.commit()
+        clear_team_session(team_id=team.id)
+        clear_user_session(user_id=target.id)
+        session[FLASH_NOTICE_KEY] = "member-removed"
         return redirect("/team", code=303)
 
     @app.route("/settings", methods=["POST"])

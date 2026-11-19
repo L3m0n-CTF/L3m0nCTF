@@ -113,6 +113,20 @@ def _resolve_actor(actor):
     return getattr(actor, "id", None), _clip(getattr(actor, "name", None) or SYSTEM, _LIMITS["actor_name"])
 
 
+def _actor_inside_a_flush(actor):
+    """(id, name) for a line queued while the database is being written. The session may not run queries after the commit (SQLAlchemy forbids it in after_commit),
+    so the name is read NOW, with a plain SELECT on the session's own connection (read only, and allowed inside a flush)."""
+    if actor is None:
+        return None, SYSTEM
+    if hasattr(actor, "id"):
+        return actor.id, _clip(getattr(actor, "name", None) or SYSTEM, _LIMITS["actor_name"])
+    try:
+        name = db.session.execute(text("SELECT name FROM users WHERE id = :i"), {"i": actor}).scalar()
+    except Exception:
+        name = None
+    return actor, _clip(name or f"user {actor}", _LIMITS["actor_name"])
+
+
 def _fields(kind, actor, team_id, target, detail, resolve_now=True, uid_hint=None) -> dict:
     fields = {
         "kind": _clip(kind, _LIMITS["kind"]),
@@ -123,8 +137,8 @@ def _fields(kind, actor, team_id, target, detail, resolve_now=True, uid_hint=Non
     }
     if resolve_now:
         fields["actor_id"], fields["actor_name"] = _resolve_actor(actor)
-    else:  # inside a flush: remember who, look the name up after the commit
-        fields["_actor"] = actor if actor is not UNSET else (uid_hint or _session_user_id())
+    else:  # inside a flush: who it was is read now, never after the commit
+        fields["actor_id"], fields["actor_name"] = _actor_inside_a_flush(actor if actor is not UNSET else (uid_hint or _session_user_id()))
     return fields
 
 
@@ -196,11 +210,7 @@ def queue(kind, *, actor=UNSET, team_id=None, target="", detail=None):
 def _after_commit(session):
     pending = session.info.pop(_PENDING, None)
     for fields in pending or ():
-        try:
-            fields["actor_id"], fields["actor_name"] = _resolve_actor(fields.pop("_actor", UNSET))
-        except Exception:
-            fields["actor_id"], fields["actor_name"] = None, SYSTEM
-        _commit_line(fields)
+        _commit_line(fields)  # complete already: no query may be run here
 
 
 def _forget(session, *_):

@@ -1,10 +1,12 @@
-{# Forbidden (403), for the CTFd theme (SP6 slice 1). A bad or expired invite link (CTFd's teams.invite answers 403) gets its own wording (2026-11-15: it said "for the crew only"). Hand-written: it sets the values the generated slate page reads, then includes it.
+{# Forbidden (403), for the CTFd theme (SP6 slice 1). A person who was removed from a studio by its captain and tries to join it again (studio_rules.joining_refusal sets g.l3mon_join_refused) is told so first, because that request is a POST or an invite link and would otherwise get the wrong wording below. A bad or expired invite link (CTFd's teams.invite answers 403) gets its own wording (2026-11-15: it said "for the crew only"). Hand-written: it sets the values the generated slate page reads, then includes it.
    CTFd answers a sign-in or a form with a session token that no longer matches with the same 403 as a forbidden page, so a POST
    gets the "session changed" wording of the prototype's csrf state; any other request gets the forbidden wording. The status is CTFd's. #}
 {% set l3 = l3mon %}
 {% set event_name = l3.event_name or 'CTF' %}
 {% set target = '/' if request.path.startswith('//') else request.path %}
-{% if request.method == 'POST' %}
+{% if g.get('l3mon_join_refused') %}
+{% set state = {'title': 'Not allowed to join', 'id': 'forbidden', 'cls': 'sl-403', 'code': 'REMOVED FROM THIS STUDIO', 'h1': 'You cannot rejoin this studio', 'line': g.l3mon_join_refused, 'ways': [{'href': '/teams/new', 'label': 'Start your own studio', 'cls': 'btn-main'}, {'href': '/teams/join', 'label': 'Join another studio', 'cls': 'btn'}]} %}
+{% elif request.method == 'POST' %}
 {% set state = {'title': 'Session changed', 'id': 'csrf', 'cls': 'sl-403', 'code': 'SESSION CHANGED', 'h1': 'Your session changed', 'line': 'Reload the page to carry on. Nothing was sent.', 'ways': [{'href': target, 'label': 'Reload the page', 'cls': 'btn-main'}]} %}
 {% elif request.endpoint == 'teams.invite' %}
 {% set state = {'title': 'Invite link not valid', 'id': 'forbidden', 'cls': 'sl-403', 'code': 'INVITE NOT VALID', 'h1': 'That invite link did not work', 'line': 'It may have expired (a link lasts one day) or been mistyped. Ask your captain for a fresh one.', 'ways': [{'href': '/teams/join', 'label': 'Join with a code', 'cls': 'btn-main'}, {'href': l3.routes.channels, 'label': 'Channels', 'cls': 'btn'}]} %}

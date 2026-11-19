@@ -225,3 +225,21 @@ def test_joining_leaving_and_a_new_captain_are_seen_wherever_they_come_from(app)
         db.session.commit()
         kinds = [r.kind for r in Activity.query.order_by(Activity.id).all()][before:]
         assert kinds == ["studio.join", "studio.captain", "studio.leave"]
+
+
+def test_a_line_queued_during_a_request_names_the_signed_in_person_and_not_system(app):
+    """Found on 20 Nov 2026: the name used to be looked up after the commit, where SQLAlchemy forbids queries, the failure was swallowed, and every rename by a
+    signed-in captain was attributed to "system"."""
+    from flask import session
+
+    with app.app_context():
+        team = gen_team(db, name="Alpha", email="a@example.com", member_count=2)
+        captain = Users.query.get(team.captain_id)
+        captain_id, captain_name, team_id = captain.id, captain.name, team.id
+        with app.test_request_context("/team", environ_base={"REMOTE_ADDR": "198.51.100.9"}):
+            session["id"] = captain_id
+            Teams.query.get(team_id).name = "Alpha Two"
+            db.session.commit()
+        line = Activity.query.filter_by(kind="studio.rename").one()
+        assert (line.actor_id, line.actor_name) == (captain_id, captain_name)
+        assert line.ip == "198.51.100.9"

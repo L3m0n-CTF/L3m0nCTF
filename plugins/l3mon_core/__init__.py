@@ -48,6 +48,14 @@ def load(app):
     from CTFd.plugins.l3mon_core import activity
 
     activity.install()  # the activity ledger: studio changes are seen wherever they come from, and a line follows the commit that made its action real
+
+    from CTFd.plugins.l3mon_core import studio_rules
+
+    studio_rules.install(app)  # a removed member cannot rejoin the studio; the rename policy on the API path (after player_locks, so the studio's row lock is held)
+
+    from CTFd.plugins.l3mon_core.crew_api import bp as crew_activity_api
+
+    app.register_blueprint(crew_activity_api)  # the crew's removals list, lift, and the ledger (administrator surface)
     app.register_blueprint(l3mon)
 
     # The crew's Config page offers MajorLeagueCyber, which this event does not use: a stylesheet keeps its tab and its choice out of sight (the settings
