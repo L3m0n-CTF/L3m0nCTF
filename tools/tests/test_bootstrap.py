@@ -396,8 +396,10 @@ def test_bootstrap_hands_its_boot_script_to_root():
         # chown is a shell function here (a function beats PATH, so Git Bash's own chown on Windows cannot be the one that runs, and nothing is really changed)
         record = str(log).replace(chr(92), "/")
         script = f'source "{str(BOOTSTRAP_SCRIPT).replace(chr(92), "/")}" >/dev/null; chown() {{ echo "chown $@" >> "{record}"; }}; MODE=apply; configure_systemd_service'
-        res = subprocess.run([get_bash_cmd(), "-c", script], cwd=str(ROOT), capture_output=True, text=True, env=env, timeout=15)
+        # the script copies ITSELF ($0), and under `bash -c` $0 is just "bash" unless it is given as the argument after the command: without it the copy step is skipped on Linux
+        res = subprocess.run([get_bash_cmd(), "-c", script, str(BOOTSTRAP_SCRIPT).replace(chr(92), "/")], cwd=str(ROOT), capture_output=True, text=True, env=env, timeout=15)
         assert res.returncode == 0, res.stderr
+        assert script_copy.is_file(), "the script was not copied"
         calls = log.read_text(encoding="utf-8")
         assert f"chown root:root {str(script_copy).replace(chr(92), '/')}" in calls, calls
 

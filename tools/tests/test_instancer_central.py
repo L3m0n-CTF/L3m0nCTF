@@ -183,6 +183,10 @@ def test_nginx_accepts_the_production_configuration_with_and_without_the_instanc
         run = lambda *a: subprocess.run(a, check=True, capture_output=True, cwd=tmp)  # noqa: E731
         run("openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", "tls/origin.key", "-out", "tls/origin.pem", "-days", "1", "-subj", "/CN=test")
         shutil.copy(tmp / "tls" / "origin.pem", tmp / "tls" / "cloudflare-origin-pull-ca.pem")
+        # nginx runs as an unprivileged user inside the container: the throwaway files (not secrets) must be readable by it
+        (tmp / "tls").chmod(0o755)
+        for item in (tmp / "tls").iterdir():
+            item.chmod(0o644)
         rendered = PROD_TEMPLATE.read_text(encoding="utf-8").replace("${PLATFORM_HOST}", "play.example.test").replace("${EXTRA_HOST}", "crew.example.test")
         (tmp / "default.conf").write_text(rendered, encoding="utf-8")
         mount = ["-v", f"{INSTANCES_CONF}:/etc/nginx/instances.d/instances.conf:ro"] if with_block else []
