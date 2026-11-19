@@ -19,10 +19,13 @@ import test_stack as t
 pytestmark = pytest.mark.integration
 
 SLATE = b"Not on air yet"
-PAGES = ("/board", "/board/anything", "/guide", "/scoreboard", "/challenges", "/files/00000000/x.txt")
+PAGES = ("/board", "/board/anything", "/guide", "/scoreboard", "/challenges", "/files/00000000/x.txt", "/teams/1", "/teams/123/", "/stories", "/story/anything")
 API_GET = ("/api/v1/challenges", "/api/v1/challenges/1", "/api/v1/l3mon/board", "/api/v1/l3mon/guide", "/api/v1/l3mon/scoreboard", "/api/v1/l3mon/instances",
+           "/api/v1/l3mon/story", "/api/v1/l3mon/story/anything", "/api/v1/l3mon/story/anything/pic/1.png",
            "/api/v1/scoreboard", "/api/v1/scoreboard/top/10", "/api/v1/hints/1", "/api/v1/users/me/solves", "/api/v1/teams/me/solves", "/api/v1/teams/3/awards")
-NOT_TOUCHED = ("/login", "/register", "/reset_password", "/healthcheck", "/l3mon/healthz", "/rules", "/favicon.ico")
+# what must keep working while the gate is closed: registration (every step), sign-in, the player's own studio and settings, the health routes
+NOT_TOUCHED = ("/login", "/register", "/reset_password", "/healthcheck", "/l3mon/healthz", "/rules", "/favicon.ico",
+               "/teams/new", "/teams/join", "/teams/invite", "/team", "/settings", "/register/studio", "/api/v1/l3mon/teams/available", "/api/v1/l3mon/ticks")
 
 
 @pytest.fixture(scope="module")
@@ -66,6 +69,9 @@ def test_with_the_switch_on_the_player_pages_say_not_on_air_yet(switch):
         status, headers, body = t.request(path)
         assert status == 200 and is_slate(body) and answered_by_the_switch(headers), (path, status, body[:80])
         assert t.header_values(headers, "Cache-Control") == ["no-store"], path
+        # not a dead end: the player can still reach the studio, the settings and the sign-in page (none of which is gated)
+        for way in (b'href="/team"', b'href="/settings"', b'href="/login"'):
+            assert way in body, (path, way)
 
 
 def test_with_the_switch_on_the_api_answers_a_short_json_refusal(switch):
