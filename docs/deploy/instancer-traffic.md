@@ -5,6 +5,8 @@
 **Date:** 19 October 2026  
 **Status:** Design Proposal for Owner Decision  
 
+> **Decision, 19 November 2026 (owner):** use the same domain, `l3m0nctf.xyz` (option (a) below, a wildcard one level under the zone). **Change from this text: the instances' web addresses are served on the normal HTTPS port 443, not 8443**, so players type no port, and the firewall (Cloudflare's ranges on 443, already open) needs no new rule. nginx listens on 8443 inside its container as always (published as 443). `INSTANCE_DOMAIN=l3m0nctf.xyz` on the platform and on every challenge host. How it is wired: `deploy/compose/compose.instancer-central.yml` and `docs/deploy/instancer.md` (the section on the platform VM in a fleet). The "Option (a) ... on Port 8443" headings below keep the original wording.
+
 ---
 
 ## 1. Context & Problem Statement

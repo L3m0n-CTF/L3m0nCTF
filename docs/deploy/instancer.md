@@ -158,6 +158,25 @@ It also works in development (`L3MON_OVERLAYS=instancer,instancer-multihost`, wi
 5. **Down Host Instance Status:** If an instance's host is down, the player API returns `state="error"`, never `"running"`.
 6. **Hop 1 Destination Integrity:** The central router looks up the instance's host and forwards HTTP traffic strictly to that host's configured `router_url`. Untrusted route targets from the agent are completely ignored.
 
+### The platform VM in a fleet: `compose.instancer-central.yml` (the production way with a challenge VM)
+
+With the challenge instances on a separate VM (`deploy/challenge-host/`), the platform VM must not run an instancer or a Docker-socket proxy: the overlays above (`instancer`, `instancer-production`, `instancer-multihost`) all start both, because they are the one-machine and development forms. `instancer-central` is the overlay for the fleet and **replaces those three**:
+
+```bash
+L3MON_ENV=production L3MON_OVERLAYS=identity,ops,instancer-central \
+  INSTANCE_DOMAIN=l3m0nctf.xyz \
+  L3MON_HOSTS_FILE=/etc/l3mon/hosts.json \
+  L3MON_INSTANCER_TOKENS_DIR=/etc/l3mon/host-secrets/instancer \
+  L3MON_ROUTER_TOKENS_DIR=/etc/l3mon/host-secrets/router \
+  tools/compose.sh up -d --wait
+```
+
+It runs only the **central router** (hop 1, no published port), gives CTFd the hosts file, the folder of `INSTANCER_TOKEN_<NAME>` files and the flag secret, gives the router the hosts file and the folder of `ROUTER_TOKEN_<NAME>` files (never the other's), and gives **nginx** one extra server block for the instances' web addresses (`deploy/nginx/instances/instances.conf`). Without this overlay nginx has no such block and nothing changes. A challenge instance is then reached at `https://<32 hex>.l3m0nctf.xyz/` on the **normal HTTPS port 443** (Cloudflare's wildcard record `*.l3m0nctf.xyz`, proxied; its free certificate covers exactly one level), through the same Cloudflare client-certificate check as the platform. The block answers only a name that starts with 32 hex characters and a dot; the router then checks the rest of the name against `INSTANCE_DOMAIN` and answers 404 for any other domain. A challenge that tries to set a cookie for the whole zone gets it rewritten to its own host name (otherwise it could shadow the platform's session cookie). `tools/tests/test_instancer_central.py` renders the overlay, checks that no Docker socket is mounted anywhere, that the router publishes nothing, that each token folder goes only where it belongs, and runs `nginx -t` on the real production configuration with and without the block.
+
+**Security note: instance pages are on a sibling name of the platform (the owner's choice of 19 Nov 2026), so they are the same *site* as the platform though not the same *origin*.** What protects the platform: (1) its session cookie is `__Host-session` (`Secure; HttpOnly; Path=/`, no `Domain`; checked live on 19 Nov with `curl -sI https://play.l3m0nctf.xyz/login`), and a browser refuses to let any other origin or a `Domain` cookie overwrite, shadow or delete a `__Host-` cookie, so a challenge page cannot fix or replace a player's session; (2) the Same-Origin Policy keeps a challenge page from reading anything of the platform (different host name), and the platform sends no cross-origin permission headers; (3) every state-changing request to CTFd carries a CSRF token that lives in the session, which a challenge page cannot read; (4) nginx rewrites any `Domain` attribute a challenge sends to its own host name. What is **not** closed: a challenge page's own JavaScript can still write many cookies for the whole zone (`document.cookie` with `Domain=l3m0nctf.xyz`), enough to make the platform refuse a request from that visitor's browser (a request header that is too large) until the cookies are cleared. The victim must open that player's instance address, which is a random 32-character name. The complete fix is a second registrable domain for the instances (about two dollars a year; `INSTANCE_DOMAIN` on the platform and the hosts, a wildcard record and a certificate for it; **no code change**, the nginx block matches the 32 hex characters whatever the domain is). Decide before the event; for the test days the same domain is fine.
+
+Rollback is removing `instancer-central` from `L3MON_OVERLAYS` and recreating: the player experience (the board, flags, scoring) does not depend on it.
+
 ---
 
 ## 5. Author Challenge Image Workflow (GHCR Integration)

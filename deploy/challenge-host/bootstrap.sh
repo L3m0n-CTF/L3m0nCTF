@@ -281,6 +281,8 @@ configure_systemd_service() {
   if [[ "${MODE}" == "apply" ]] && [[ -f "$0" ]]; then
     run_cmd cp -p "$0" "${script_path}"
     run_cmd chmod 0755 "${script_path}"
+    # root runs this copy at every boot: it must belong to root (cp -p keeps the owner of the original, which is whoever ran the bootstrap)
+    run_cmd chown root:root "${script_path}"
   elif [[ "${MODE}" == "dry-run" ]]; then
     echo "[DRY-RUN] Would install ${script_path} (mode 0755)"
   fi
