@@ -22,10 +22,11 @@ Guide the operations crew through opening the doors for L3m0nCTF 2026 at T-60 to
    ```
    Both endpoints must return HTTP 200 with `{"status": "ready"}` and `{"status": "ok"}`.
 
-2b. **Open the channel pages to the play address** (they may have been kept for the crew; the pre-flight above fails while they are closed):
+2b. **Open the channel pages to the play address** (they may have been kept for the crew; the pre-flight above fails while they are closed). From the owner's laptop, ONE command, which also confirms from the outside that players can get in (read its last line: `GATE IS OPEN`):
    ```bash
-   bash tools/ops/crew-gate.sh open
+   bash tools/ops/gate.sh open
    ```
+   (On the server itself the same switch is `bash tools/ops/crew-gate.sh open`; see runbook 15, section 5.)
 
 3. **Verify maintenance mode is disabled**:
    ```bash

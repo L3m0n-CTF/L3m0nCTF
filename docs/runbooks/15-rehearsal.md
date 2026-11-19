@@ -80,13 +80,28 @@ bash tools/ops/crew-gate.sh open      # open them to everybody
 
 **It must be opened before the event starts.** With the pages closed, real players cannot play. The pre-flight audit of the hour before (`tools/ops/preflight.sh --env production`) fails with `crew_only_switch` while the pages are closed, and `python -m l3mon deploy check` lists it as a thing to do.
 
-**How to open it (the person who deploys, from any computer):**
+**How to open it: ONE command, from the owner's laptop (nothing to log in to):**
+
+```bash
+bash tools/ops/gate.sh open        # in the repository folder, in Git Bash (or any bash) with gcloud signed in
+```
+
+It logs in to the server through the IAP tunnel, runs the server's own switch, and then asks the public site what a visitor gets. It ends with one of these lines:
+
+- `GATE IS OPEN: the channels answer players.` (confirmed from outside): done.
+- `STILL CLOSED: ...` or `COULD NOT CHECK from the outside ...` with a non-zero exit: do **not** assume players can get in. Run `bash tools/ops/gate.sh status`, and use the browser steps below.
+
+`bash tools/ops/gate.sh status` shows the server's switch and what a player sees, and changes nothing. `bash tools/ops/gate.sh close --yes` closes it (it needs `--yes` because it locks the players out). It uses your gcloud configuration `l3mon-new`; no project id or password is in the script. Every toggle is written to the server's journal with who and from where: `journalctl -t l3mon-gate` on the server.
+
+**If the laptop command cannot be used** (no gcloud, no network to Google), the same switch from the browser:
 
 1. In the Google Cloud console open Compute Engine, then VM instances, find the machine `l3mon-app` and press **SSH** (a terminal opens in the browser).
 2. Type: `cd ~/L3m0nCTF && bash tools/ops/crew-gate.sh open` and press Enter. It prints "Done. The channel pages answer everybody."
 3. Check: open `https://play.l3m0nctf.xyz/board` in a private window. Before 10:00 IST on the day it shows the board's own "Not on air yet" card; from the start it shows the channels.
 
-To close it again, the same with `close`. Opening it earlier than the start is harmless: before the start players still see "Not on air yet".
+Opening it earlier than the start is harmless: before the start players still see "Not on air yet".
+
+**What the gate shuts, and how a new page is added.** The list of routes is one file, `deploy/nginx/snippets/programme-routes.conf` (the board, the Guide, the scoreboard, the challenges, the story pages, a studio's public page `/teams/<number>`, the files, and the data behind them). Registration, sign-in, the player's own studio and settings, and the health routes are never shut. `tools/tests/test_gate_routes.py` reads every route the plugins register and fails until each has a recorded decision, so a new page cannot be left out by forgetting. The page a shut-out player sees (`deploy/nginx/snippets/slates/not-yet.html`) is plain, static and has links to the studio, the settings and sign-in; it is served by nginx itself, so it still works when the platform is down.
 
 ## 6. The event on now, with no date gate (`live`)
 

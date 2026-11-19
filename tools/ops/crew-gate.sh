@@ -23,6 +23,14 @@ fi
 
 run_tool() { (cd tools && python3 -m l3mon rehearsal "$@"); }
 reload_nginx() { tools/compose.sh exec -T nginx nginx -s reload; }
+# who toggled the gate and from where, in the server's own journal (`journalctl -t l3mon-gate`): on 16 Nov somebody closed it and nobody could say who
+audit() {
+  local who from
+  who="${SUDO_USER:-$(id -un)}"
+  from="${SSH_CONNECTION%% *}"
+  logger -t l3mon-gate "gate $1 by $who from ${from:-local}" 2> /dev/null || true
+  echo "Logged: gate $1 by $who from ${from:-local} at $(date -u +%FT%TZ) (journalctl -t l3mon-gate)"
+}
 
 case "$ACTION" in
   status)
@@ -32,11 +40,13 @@ case "$ACTION" in
     run_tool close-gate
     reload_nginx
     echo "Done. The channel pages answer only on the crew address; players on the play address are told \"Not on air yet\"."
+    audit close
     ;;
   open)
     run_tool open-gate
     reload_nginx
     echo "Done. The channel pages answer everybody."
+    audit open
     ;;
   *)
     echo "usage: $0 status | close | open" >&2
