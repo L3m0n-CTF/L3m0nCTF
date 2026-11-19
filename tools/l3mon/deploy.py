@@ -114,6 +114,26 @@ def check_secrets(directory: Path, data: dict | None, items: list[Item], env: di
     else:
         items.append(Item(OK, "mail", f"sends through {mail['host']}:{mail['port']} as {mail['from_addr']}"))
 
+    if "ops" in {name.strip() for name in (env or {}).get("L3MON_OVERLAYS", "").split(",")}:
+        _check_gmail_fallback(directory, env or {}, items)
+
+
+def _check_gmail_fallback(directory: Path, env: dict, items: list[Item]) -> None:
+    """The relay's second provider (Gmail). Its app password is the Docker secret FALLBACK_MAIL_PASSWORD; a line in production.env is readable by every
+    account on the machine and shows in `docker inspect`, so it is a todo until it is moved. The value is never printed."""
+    name = "mail fallback (Gmail)"
+    path = directory / "FALLBACK_MAIL_PASSWORD"
+    if not path.is_file():
+        items.append(Item(BLOCKED, name, f"{path} does not exist: compose needs the file, and an empty one is fine (`python -m l3mon secrets generate --dir {directory} --only-missing` makes it, or `: > {path}`)"))
+    elif (env.get("FALLBACK_SMTP_PASSWORD") or "").strip():
+        items.append(Item(TODO, name, "the Gmail app password is still a line in production.env (every account on this machine can read it): put it in .secrets/FALLBACK_MAIL_PASSWORD, delete the line, then rotate the app password"))
+    elif _read(path):
+        items.append(Item(OK, name, "the Gmail app password is in its secret file (.secrets/FALLBACK_MAIL_PASSWORD)"))
+    elif (env.get("FALLBACK_SMTP_USER") or "").strip():
+        items.append(Item(TODO, name, "Gmail is named in production.env but there is no password in .secrets/FALLBACK_MAIL_PASSWORD: the relay has no second provider to fall back on"))
+    else:
+        items.append(Item(OK, name, "not set up: Brevo is the only provider"))
+
 
 def check_tls(directory: Path, items: list[Item]) -> None:
     missing = [name for name in TLS_FILES if not (directory / name).is_file()]

@@ -19,7 +19,7 @@ NAMES = {
     "INSTANCER_TOKEN", "ROUTER_TOKEN", "GRAFANA_ADMIN_PASSWORD", "DB_EXPORTER_PASSWORD",
 }
 # secrets that cannot exist when the machine is set up: somebody outside has to give them (an empty file is made until then)
-LATER = {"CTFTIME_CLIENT_SECRET", "MAIL_PASSWORD", "DISCORD_WEBHOOK_URL", "TURNSTILE_SECRET", "GOOGLE_CLIENT_SECRET"}
+LATER = {"CTFTIME_CLIENT_SECRET", "MAIL_PASSWORD", "FALLBACK_MAIL_PASSWORD", "DISCORD_WEBHOOK_URL", "TURNSTILE_SECRET", "GOOGLE_CLIENT_SECRET"}
 
 
 def read(path: Path) -> str:
