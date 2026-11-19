@@ -79,10 +79,10 @@ tests:
               description: "Redis memory consumption has exceeded 85% of the configured memory ceiling."
               runbook: "04-redis-down.md"
 
-  # Test 5: MailQueueGrowing fires when mail_spool_queue_count > 50
+  # Test 5: MailQueueGrowing fires when l3mon_mail_queue_length > 50 (the metric the relay really exposes)
   - interval: 1m
     input_series:
-      - series: 'mail_spool_queue_count'
+      - series: 'l3mon_mail_queue_length'
         values: '60 60 60 60 60 60 60'
     alert_rule_test:
       - eval_time: 6m
@@ -94,7 +94,48 @@ tests:
             exp_annotations:
               summary: "Mail relay queue backlog accumulating (> 50 messages)"
               description: "More than 50 outbound verification emails are spooled in the mail relay queue."
-              runbook: "01-event-start.md"
+              runbook: "16-mail-delayed.md"
+
+  # Test 5b: MailQueueStale fires when the oldest queued mail is older than 10 minutes for 5 minutes
+  - interval: 1m
+    input_series:
+      - series: 'l3mon_mail_queue_age_seconds'
+        values: '700 760 820 880 940 1000 1060'
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: MailQueueStale
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              service: mail
+            exp_annotations:
+              summary: "A mail has been waiting more than 10 minutes"
+              description: "The longest-waiting email in the relay's queue is older than 10 minutes: players are not getting their confirmation or reset mail."
+              runbook: "16-mail-delayed.md"
+
+  # Test 5c: MailProviderCapHigh fires for the provider that is above 80% of its own cap, and only for that one
+  - interval: 1m
+    input_series:
+      - series: 'l3mon_mail_sent_24h{provider="brevo"}'
+        values: '250 250 250 250 250 250 250'
+      - series: 'l3mon_mail_cap{provider="brevo"}'
+        values: '290 290 290 290 290 290 290'
+      - series: 'l3mon_mail_sent_24h{provider="gmail"}'
+        values: '100 100 100 100 100 100 100'
+      - series: 'l3mon_mail_cap{provider="gmail"}'
+        values: '450 450 450 450 450 450 450'
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: MailProviderCapHigh
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              service: mail
+              provider: brevo
+            exp_annotations:
+              summary: "A mail provider has used more than 80% of its daily limit"
+              description: "Brevo or Gmail is close to its daily sending limit; when a provider is full the relay uses the other, and when both are full mail waits."
+              runbook: "16-mail-delayed.md"
 
   # Test 6: CTFtimeFeedStale fires when probe_success is 0
   - interval: 1m

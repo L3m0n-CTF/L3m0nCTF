@@ -112,7 +112,7 @@ groups:
           runbook: "03-database-recovery.md"
 
       - alert: MailQueueGrowing
-        expr: mail_spool_queue_count > 50
+        expr: l3mon_mail_queue_length > 50
         for: 5m
         labels:
           severity: warning
@@ -120,7 +120,29 @@ groups:
         annotations:
           summary: "Mail relay queue backlog accumulating (> 50 messages)"
           description: "More than 50 outbound verification emails are spooled in the mail relay queue."
-          runbook: "01-event-start.md"
+          runbook: "16-mail-delayed.md"
+
+      - alert: MailQueueStale
+        expr: l3mon_mail_queue_age_seconds > 600
+        for: 5m
+        labels:
+          severity: critical
+          service: mail
+        annotations:
+          summary: "A mail has been waiting more than 10 minutes"
+          description: "The longest-waiting email in the relay's queue is older than 10 minutes: players are not getting their confirmation or reset mail."
+          runbook: "16-mail-delayed.md"
+
+      - alert: MailProviderCapHigh
+        expr: (l3mon_mail_sent_24h / on(provider) l3mon_mail_cap) > 0.8
+        for: 5m
+        labels:
+          severity: warning
+          service: mail
+        annotations:
+          summary: "A mail provider has used more than 80% of its daily limit"
+          description: "Brevo or Gmail is close to its daily sending limit; when a provider is full the relay uses the other, and when both are full mail waits."
+          runbook: "16-mail-delayed.md"
 
       - alert: CertificateExpiring
         expr: (probe_ssl_earliest_cert_expiry - time() < 14 * 86400) and on() (probe_ssl_earliest_cert_expiry > 0)

@@ -70,6 +70,12 @@ jobs:
         run: docker run --rm -v "$PWD:/repo" -w /repo "$ACTIONLINT_IMAGE"
       - name: Dockerfile (hadolint)
         run: docker run --rm -i "$HADOLINT_IMAGE" < docker/ctfd/Dockerfile
+      - name: Alert rules (promtool unit tests, the Prometheus image the stack itself runs)
+        # Until 19 Nov 2026 nothing ran these: the "mail queue growing" alert watched a metric the relay never produced, and no test noticed.
+        run: >
+          docker run --rm --entrypoint /bin/promtool -v "$PWD/deploy/ops/prometheus:/etc/prometheus:ro"
+          prom/prometheus:v2.54.1@sha256:f6639335d34a77d9d9db382b92eeb7fc00934be8eae81dbc03b31cfe90411a94
+          test rules /etc/prometheus/rules_test.yml
       - name: Shell scripts (shellcheck, warnings and errors)
         run: >
           docker run --rm -v "$PWD:/mnt" -w /mnt "$SHELLCHECK_IMAGE" --severity=warning -x

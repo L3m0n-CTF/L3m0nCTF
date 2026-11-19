@@ -300,6 +300,34 @@ def test_mail_through_the_platforms_own_relay_is_in_place_when_the_relay_has_its
     assert statuses(items)["mail"] == deploy.TODO and "nobody can finish registering" in next(i.detail for i in items if i.name == "mail"), "no relay, no [mail] section: still a todo"
 
 
+def test_the_gmail_fallback_password_belongs_in_its_secret_file_not_in_production_env(tmp_path):
+    """The relay's second provider (Gmail) used to get its app password from an ordinary line in production.env, which every account on the machine can
+    read. It is a Docker secret now; the check blocks a machine where compose would fail for want of the file and tells the crew when the old line is still there."""
+    world = make_deployment(tmp_path, mail=False)
+    world["env"]["L3MON_OVERLAYS"] = "identity,ops"
+    world["env"]["FALLBACK_SMTP_USER"] = "backup@gmail.com"
+    secret = world["secrets_dir"] / "FALLBACK_MAIL_PASSWORD"
+    name = "mail fallback (Gmail)"
+    secret.unlink()
+    assert name in blocked(run(world)), "compose cannot start the relay without the file (an empty one is fine)"
+    secret.write_text("", encoding="utf-8")
+    items = run(world)
+    assert statuses(items)[name] == deploy.TODO and "no password" in next(i.detail for i in items if i.name == name)
+    secret.write_text("a-gmail-app-password\n", encoding="utf-8")
+    items = run(world)
+    assert statuses(items)[name] == deploy.OK and "secret file" in next(i.detail for i in items if i.name == name)
+    world["env"]["FALLBACK_SMTP_PASSWORD"] = "still-in-the-environment"
+    items = run(world)
+    assert statuses(items)[name] == deploy.TODO and "production.env" in next(i.detail for i in items if i.name == name)
+    assert "still-in-the-environment" not in " ".join(i.detail for i in items), "the value itself is never printed"
+
+
+def test_without_the_ops_overlay_there_is_nothing_to_say_about_the_gmail_fallback(tmp_path):
+    world = make_deployment(tmp_path, mail=False)
+    world["env"]["L3MON_OVERLAYS"] = "identity"
+    assert "mail fallback (Gmail)" not in statuses(run(world))
+
+
 def test_the_crew_only_switch_file_must_exist_when_the_settings_name_it_and_a_missing_one_is_blocked(tmp_path):
     """compose turns a missing file that it is told to mount into an empty FOLDER, and nginx then fails to start: the check says so before that happens."""
     world = make_deployment(tmp_path)

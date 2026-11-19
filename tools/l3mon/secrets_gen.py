@@ -39,7 +39,7 @@ MAKERS = {
 # is made and Google's once the sign-in client is made. Production mounts them as Docker secrets, and compose refuses to start when a secret's file is
 # missing, so an EMPTY file is made for each. The platform treats an empty one as "off" (no sign-in with CTFtime, no mail, no alerts to chat, no CAPTCHA,
 # no sign-in with Google). Never replaced, not even with --force: a filled one is a real secret.
-PLACEHOLDERS = ("CTFTIME_CLIENT_SECRET", "MAIL_PASSWORD", "DISCORD_WEBHOOK_URL", "TURNSTILE_SECRET", "GOOGLE_CLIENT_SECRET")
+PLACEHOLDERS = ("CTFTIME_CLIENT_SECRET", "MAIL_PASSWORD", "FALLBACK_MAIL_PASSWORD", "DISCORD_WEBHOOK_URL", "TURNSTILE_SECRET", "GOOGLE_CLIENT_SECRET")
 
 
 def generate(directory: Path, force: bool = False, only_missing: bool = False) -> dict[str, Path]:

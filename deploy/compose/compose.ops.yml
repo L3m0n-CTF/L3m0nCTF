@@ -48,16 +48,20 @@ services:
       UPSTREAM_SMTP_TLS: "${UPSTREAM_SMTP_TLS:-true}"
       UPSTREAM_SMTP_SSL: "${UPSTREAM_SMTP_SSL:-false}"
       RATE_LIMIT_PER_MINUTE: "${RATE_LIMIT_PER_MINUTE:-30}"
-      RATE_LIMIT_PER_DAY: "${RATE_LIMIT_PER_DAY:-500}"
+      # each provider has its own daily limit (rolling 24 hours); RATE_LIMIT_PER_DAY is the overall ceiling on top of both
+      RATE_LIMIT_PER_DAY: "${RATE_LIMIT_PER_DAY:-780}"
+      PRIMARY_DAILY_CAP: "${PRIMARY_DAILY_CAP:-290}"
+      FALLBACK_DAILY_CAP: "${FALLBACK_DAILY_CAP:-450}"
       MAIL_PASSWORD_FILE: "/run/secrets/MAIL_PASSWORD"
       FALLBACK_SMTP_HOST: "${FALLBACK_SMTP_HOST:-smtp.gmail.com}"
       FALLBACK_SMTP_PORT: "${FALLBACK_SMTP_PORT:-587}"
       FALLBACK_SMTP_USER: "${FALLBACK_SMTP_USER:-}"
-      FALLBACK_SMTP_PASSWORD: "${FALLBACK_SMTP_PASSWORD:-}"
+      # the Gmail app password is the Docker secret FALLBACK_MAIL_PASSWORD (a value in production.env is no longer passed on)
+      FALLBACK_MAIL_PASSWORD_FILE: "/run/secrets/FALLBACK_MAIL_PASSWORD"
       FALLBACK_SMTP_TLS: "${FALLBACK_SMTP_TLS:-true}"
       FALLBACK_SMTP_SSL: "${FALLBACK_SMTP_SSL:-false}"
       MAIL_UPSTREAM_MODE: "${MAIL_UPSTREAM_MODE:-auto}"
-    secrets: [MAIL_PASSWORD]
+    secrets: [MAIL_PASSWORD, FALLBACK_MAIL_PASSWORD]
     networks: [internal, ops]
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9025/healthz', timeout=2)"]
@@ -411,6 +415,7 @@ networks:
 
 secrets:
   MAIL_PASSWORD: { file: ../../.secrets/MAIL_PASSWORD }
+  FALLBACK_MAIL_PASSWORD: { file: ../../.secrets/FALLBACK_MAIL_PASSWORD }
   DISCORD_WEBHOOK_URL: { file: ../../.secrets/DISCORD_WEBHOOK_URL }
   GRAFANA_ADMIN_PASSWORD: { file: ../../.secrets/GRAFANA_ADMIN_PASSWORD }
   DB_EXPORTER_PASSWORD: { file: ../../.secrets/DB_EXPORTER_PASSWORD }

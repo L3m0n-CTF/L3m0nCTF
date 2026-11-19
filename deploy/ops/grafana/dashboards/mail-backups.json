@@ -22,7 +22,9 @@
       "title": "Spool Queue Backlog Depth",
       "type": "timeseries",
       "targets": [
-        { "expr": "mail_spool_queue_count", "legendFormat": "Queued Messages" }
+        { "expr": "l3mon_mail_queue_length", "legendFormat": "Queued Messages" },
+        { "expr": "l3mon_mail_action_queue_length", "legendFormat": "of which confirmation / reset" },
+        { "expr": "l3mon_mail_queue_age_seconds", "legendFormat": "Oldest waiting (seconds)" }
       ]
     },
     {
@@ -33,8 +35,8 @@
       "title": "Delivery Rate vs Submission Rate",
       "type": "timeseries",
       "targets": [
-        { "expr": "rate(mail_delivered_total[1m])", "legendFormat": "Delivered/s" },
-        { "expr": "rate(mail_submissions_total[1m])", "legendFormat": "Submitted/s" }
+        { "expr": "rate(l3mon_mail_sent_total[5m])", "legendFormat": "Delivered/s" },
+        { "expr": "rate(l3mon_mail_received_total[5m])", "legendFormat": "Submitted/s" }
       ]
     },
     {
@@ -42,10 +44,13 @@
       "fieldConfig": { "defaults": { "unit": "ops" } },
       "gridPos": { "h": 7, "w": 8, "x": 16, "y": 1 },
       "id": 4,
-      "title": "Rejection Rate (Size / Rate Limits)",
+      "title": "Failures, caps and refused connections",
       "type": "timeseries",
       "targets": [
-        { "expr": "rate(mail_rejected_total[1m])", "legendFormat": "Rejections/s" }
+        { "expr": "rate(l3mon_mail_failed_total[5m])", "legendFormat": "Failed attempts/s" },
+        { "expr": "rate(l3mon_mail_rate_limited_total[5m])", "legendFormat": "Held back by a limit/s" },
+        { "expr": "l3mon_mail_sent_24h", "legendFormat": "Sent in 24 h ({{provider}})" },
+        { "expr": "l3mon_mail_cap", "legendFormat": "Daily cap ({{provider}})" }
       ]
     },
     {
