@@ -243,3 +243,32 @@ def test_a_line_queued_during_a_request_names_the_signed_in_person_and_not_syste
         line = Activity.query.filter_by(kind="studio.rename").one()
         assert (line.actor_id, line.actor_name) == (captain_id, captain_name)
         assert line.ip == "198.51.100.9"
+
+
+# ------------------------------------------------------------------ a rename's line lives and dies with the rename itself
+
+def test_a_rename_line_is_written_inside_the_renames_own_transaction_so_a_rollback_takes_it_with_it(app, capsys):
+    """The once-a-day rule reads the ledger. If the line were written after the commit, a second request that was waiting for the studio's row lock could read the
+    ledger in the instant between the two and be let through (a review finding of 20 Nov 2026). Written in the same transaction, the line exists exactly when the
+    rename does."""
+    with app.app_context():
+        team = gen_team(db, name="Alpha", email="a@example.com", member_count=1)
+        capsys.readouterr()
+        Teams.query.get(team.id).name = "Alpha Two"
+        db.session.flush()
+        assert Activity.query.filter_by(kind="studio.rename").count() == 1, "the line is already there, inside the transaction that holds the studio's lock and before it is released"
+        db.session.rollback()
+        assert Activity.query.filter_by(kind="studio.rename").count() == 0, "rolled back with the rename"
+        assert not [l for l in lines(capsys) if l["kind"] == "studio.rename"], "and never printed"
+
+
+def test_the_log_line_of_a_rename_is_printed_only_after_the_commit_that_made_it_real(app, capsys):
+    with app.app_context():
+        team = gen_team(db, name="Alpha", email="a@example.com", member_count=1)
+        capsys.readouterr()
+        Teams.query.get(team.id).name = "Alpha Two"
+        db.session.flush()
+        assert not [l for l in lines(capsys) if l["kind"] == "studio.rename"], "not yet: the rename is not committed"
+        db.session.commit()
+        printed = [l for l in lines(capsys) if l["kind"] == "studio.rename"]
+        assert len(printed) == 1 and printed[0]["detail"] == {"old": "Alpha", "new": "Alpha Two"} and printed[0]["hash"] == Activity.query.filter_by(kind="studio.rename").one().hash

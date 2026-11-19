@@ -252,3 +252,27 @@ def test_the_crew_can_rename_any_studio_at_any_time_through_the_admin_api(world)
 def test_a_member_who_is_not_the_captain_still_cannot_rename_at_all(world):
     assert rename_form(world.member_client, "Hijacked").status_code == 403
     assert Teams.query.get(world.team.id).name == "Alpha"
+
+
+# ------------------------------------------------------------------ the API path takes the studio's row lock too (a review finding of 20 Nov 2026)
+
+def test_the_api_rename_takes_the_studios_row_lock_before_it_checks_the_rule(world, monkeypatch):
+    """Without it two simultaneous API renames could both read 'no rename today' and both pass. The form path locks as well. (The real concurrency is proved on
+    MariaDB: SQLite has one writer at a time and ignores the lock, so what is shown here is WHICH row is locked, and that it is before the check.)"""
+    from CTFd.plugins.l3mon_core import player_locks, studio_rules
+
+    order = []
+    real_lock, real_check = player_locks.lock_studio, studio_rules.rename_refusal
+    monkeypatch.setattr(player_locks, "lock_studio", lambda team_id: (order.append(("lock", team_id)), real_lock(team_id))[1])
+    monkeypatch.setattr(studio_rules, "rename_refusal", lambda *a, **k: (order.append(("check",)), real_check(*a, **k))[1])
+    assert rename_api(world.captain_client, "Alpha Two").status_code == 200
+    assert order[:2] == [("lock", world.team.id), ("check",)], order
+
+
+def test_a_member_who_is_not_the_captain_does_not_take_the_lock_on_the_api_path(world, monkeypatch):
+    from CTFd.plugins.l3mon_core import player_locks
+
+    taken = []
+    monkeypatch.setattr(player_locks, "lock_studio", lambda team_id: taken.append(team_id))
+    assert rename_api(world.member_client, "Hijacked").status_code in (400, 403)
+    assert taken == [] and Teams.query.get(world.team.id).name == "Alpha"

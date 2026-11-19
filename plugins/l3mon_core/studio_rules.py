@@ -179,6 +179,9 @@ def guard_before_the_handler():
         body = request.get_json(silent=True)
         team, user = get_current_team(), get_current_user()
         if isinstance(body, dict) and "name" in body and team is not None and user is not None and user.id == team.captain_id:
+            from CTFd.plugins.l3mon_core.player_locks import lock_studio
+
+            lock_studio(team.id)  # like the form: two renames at once must not both pass the once-a-day rule (the lock lasts until CTFd's handler commits)
             reason = rename_refusal(team, body["name"], user)
             if reason:
                 activity.record("studio.rename.refused", actor=user, team_id=team.id, target=f"team:{team.id}", detail={"asked": body["name"], "via": "api"})

@@ -521,3 +521,24 @@ def test_a_database_that_refuses_the_triggers_does_not_stop_the_migration_and_sa
         assert any("activity-triggers.sh" in w for w in warnings), "the warning names the step that creates them"
         assert activity.record("k.one", target="t") is not None, "the ledger works without them (chained, and echoed to the log)"
     destroy_ctfd(app)
+
+
+def test_on_a_real_mariadb_a_rename_writes_its_line_in_its_own_transaction_and_a_rollback_takes_it_away():
+    """The rename's ledger line is written with the chain's locking read (SELECT ... FOR UPDATE) inside the rename's transaction: SQLite ignores that, so only
+    here can it be seen to work, to commit with the rename, to vanish with a rollback, and to leave a chain that verifies."""
+    app = create_ctfd(enable_plugins=True, user_mode="teams")
+    with app.app_context():
+        team = gen_team(db, name="Alpha", email="a@example.com", member_count=1)
+        team_id = team.id
+        db.session.expire_all()
+        Teams.query.get(team_id).name = "Alpha Two"
+        db.session.flush()
+        assert models.Activity.query.filter_by(kind="studio.rename").count() == 1, "there inside the transaction"
+        db.session.rollback()
+        assert models.Activity.query.filter_by(kind="studio.rename").count() == 0, "gone with the rollback"
+        Teams.query.get(team_id).name = "Alpha Three"
+        db.session.commit()
+        line = models.Activity.query.filter_by(kind="studio.rename").one()
+        assert line.team_id == team_id
+        assert activity.verify_chain().ok
+    destroy_ctfd(app)

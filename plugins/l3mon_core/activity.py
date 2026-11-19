@@ -40,6 +40,7 @@ _SECRET_KEY = re.compile(r"pass|token|secret|csrf|nonce|cookie|authorization|fla
 _FLAG_TEXT = re.compile(r"L3m0n\{[^}]*\}")
 _HIDDEN = "[hidden]"
 _PENDING = "l3mon_activity_pending"
+_ECHOES = "l3mon_activity_echoes"
 _log = logging.getLogger("l3mon")
 _installed = False
 
@@ -153,15 +154,21 @@ def _digest(prev_hash, at, f) -> str:
     return hashlib.sha256((prev_hash + "\n" + _canonical(at, f)).encode("utf-8")).hexdigest()
 
 
-def _write(f):
-    """Append one row to the chain in its own short transaction. Returns (id, at, hash)."""
+def _append(conn, f, at):
+    lock = " FOR UPDATE" if conn.dialect.name in ("mysql", "mariadb") else ""
+    previous = conn.execute(text("SELECT hash FROM l3mon_activity ORDER BY id DESC LIMIT 1" + lock)).scalar() or GENESIS
+    digest = _digest(previous, at, f)
+    result = conn.execute(Activity.__table__.insert().values(at=at, prev_hash=previous, hash=digest, **{k: v for k, v in f.items() if not k.startswith("_")}))
+    return result.inserted_primary_key[0], at, digest
+
+
+def _write(f, conn=None):
+    """Append one row to the chain: in the caller's transaction when `conn` is given, else in its own short one. Returns (id, at, hash)."""
     at = datetime.datetime.utcnow().replace(microsecond=0)
-    with db.engine.begin() as conn:
-        lock = " FOR UPDATE" if conn.dialect.name in ("mysql", "mariadb") else ""
-        previous = conn.execute(text("SELECT hash FROM l3mon_activity ORDER BY id DESC LIMIT 1" + lock)).scalar() or GENESIS
-        digest = _digest(previous, at, f)
-        result = conn.execute(Activity.__table__.insert().values(at=at, prev_hash=previous, hash=digest, **{k: v for k, v in f.items() if not k.startswith("_")}))
-        return result.inserted_primary_key[0], at, digest
+    if conn is not None:
+        return _append(conn, f, at)
+    with db.engine.begin() as own:
+        return _append(own, f, at)
 
 
 def _echo(f, row_id=None, at=None, digest=None, lost=False, error=None) -> None:
@@ -207,7 +214,20 @@ def queue(kind, *, actor=UNSET, team_id=None, target="", detail=None):
     db.session.info.setdefault(_PENDING, []).append(_fields(kind, actor, team_id, target, detail, resolve_now=False))
 
 
+def record_in_transaction(connection, kind, *, actor=UNSET, team_id=None, target="", detail=None):
+    """Write the line in the transaction of the change it describes (`connection` is the one the database flush is using), so that it exists exactly when the change
+    does, and is already there when the studio's row lock is released: the once-a-day rename rule reads the ledger, and a line written after the commit left a few
+    milliseconds in which a second request, waiting for that lock, could read the ledger too early (a review finding of 20 Nov 2026). Its copy on standard output is
+    printed after the commit (and never when the change is rolled back). Use it only for rare events: the chain's row lock is held until the commit."""
+    fields = _fields(kind, actor, team_id, target, detail, resolve_now=False)
+    row_id, at, digest = _write(fields, conn=connection)
+    db.session.info.setdefault(_ECHOES, []).append((fields, row_id, at, digest))
+    return row_id
+
+
 def _after_commit(session):
+    for fields, row_id, at, digest in session.info.pop(_ECHOES, None) or ():
+        _echo(fields, row_id, at, digest)
     pending = session.info.pop(_PENDING, None)
     for fields in pending or ():
         _commit_line(fields)  # complete already: no query may be run here
@@ -215,6 +235,7 @@ def _after_commit(session):
 
 def _forget(session, *_):
     session.info.pop(_PENDING, None)
+    session.info.pop(_ECHOES, None)
 
 
 # ------------------------------------------------------------------ studio changes seen wherever they come from
@@ -229,7 +250,7 @@ def _history(target, attribute):
 def _studio_updated(mapper, connection, team):
     changed, old, new = _history(team, "name")
     if changed and old is not None and old != new:
-        queue("studio.rename", team_id=team.id, target=f"team:{team.id}", detail={"old": old, "new": new})
+        record_in_transaction(connection, "studio.rename", team_id=team.id, target=f"team:{team.id}", detail={"old": old, "new": new})
     changed, old, new = _history(team, "captain_id")
     if changed and old != new:
         queue("studio.captain", team_id=team.id, target=f"user:{new}" if new else "", detail={"old_captain": old, "new_captain": new})
