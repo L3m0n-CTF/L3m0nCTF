@@ -8,6 +8,7 @@ Run through tools/run-ctfd-tests.sh:
     tools/run-ctfd-tests.sh l3mon/ctfd:dev -- -q -p no:randomly -p no:cacheprovider /l3mon_tests/l3mon_core
 """
 import json
+import re
 
 import pytest
 
@@ -52,9 +53,10 @@ def test_a_sign_in_leaves_a_line_with_the_person_the_address_and_the_browser(app
         assert json.loads(row.detail)["via"] == "auth.login"
 
 
-def test_a_wrong_password_leaves_a_failure_line_with_the_name_tried_and_never_the_password(app, capsys):
+def test_a_wrong_password_leaves_a_failure_line_naming_the_account_that_was_attacked_and_never_the_password(app, capsys):
     with app.app_context():
-        gen_user(db, name="player_two", email="two@example.com", verified=True)
+        two = gen_user(db, name="player_two", email="two@example.com", verified=True)
+        two_id = two.id
         baseline = Activity.query.count()  # CTFd's own set-up signs the first administrator in, which is (rightly) a line too
         with app.test_client() as client:
             client.get("/login")
@@ -62,18 +64,43 @@ def test_a_wrong_password_leaves_a_failure_line_with_the_name_tried_and_never_th
             r = client.post("/login", data={"name": "player_two", "password": "hunter2-wrong", "nonce": nonce_of(client)})
             assert r.status_code == 200, "CTFd shows the form again"
         row = line("auth.login.fail")
-        assert row is not None and json.loads(row.detail) == {"name": "player_two"}
+        assert row is not None and json.loads(row.detail) == {"account": two_id, "by": "name"} and row.target == f"user:{two_id}"
+        assert "player_two" not in row.detail, "the typed text itself is not kept: the account is named by its number"
         assert row.actor_id is None, "nobody was signed in"
         assert "hunter2-wrong" not in row.detail and "hunter2-wrong" not in capsys.readouterr().out
         assert "auth.login.ok" not in kinds()[baseline:]
 
 
-def test_a_name_that_does_not_exist_is_recorded_too(app):
+def test_a_name_that_matches_no_account_is_recorded_as_a_keyed_hash_never_as_the_text(app, capsys):
+    """People type an e-mail address, or even their password, into the name box by mistake. Whatever does not match an account is kept only as a keyed hash: the same
+    string can be recognised the next time (a guessing run), but it can never be read, and a weak string cannot be guessed back without the platform's secret key."""
     with app.app_context():
         with app.test_client() as client:
             client.get("/login")
-            client.post("/login", data={"name": "nobody_here", "password": "x", "nonce": nonce_of(client)})
-        assert json.loads(line("auth.login.fail").detail) == {"name": "nobody_here"}
+            capsys.readouterr()
+            for typed in ("nobody_here", "nobody_here", "My-Real-Password-9"):
+                client.post("/login", data={"name": typed, "password": "x", "nonce": nonce_of(client)})
+        rows = Activity.query.filter_by(kind="auth.login.fail").order_by(Activity.id).all()
+        details = [json.loads(r.detail) for r in rows]
+        assert all(d["unknown"] is True and d["shape"] == "name" and re.fullmatch(r"[0-9a-f]{12}", d["typed"]) for d in details)
+        assert details[0]["typed"] == details[1]["typed"] != details[2]["typed"], "the same text gives the same mark, another text another"
+        everything = " ".join(r.detail for r in rows) + capsys.readouterr().out
+        assert "nobody_here" not in everything and "My-Real-Password-9" not in everything
+
+
+def test_an_address_typed_into_the_name_box_matches_its_account_or_leaves_only_its_domain(app):
+    with app.app_context():
+        three = gen_user(db, name="player_six", email="six@example.com", verified=True)
+        six_id = three.id
+        with app.test_client() as client:
+            client.get("/login")
+            client.post("/login", data={"name": "six@example.com", "password": "wrong", "nonce": nonce_of(client)})
+            client.post("/login", data={"name": "stranger@example.org", "password": "wrong", "nonce": nonce_of(client)})
+        known, unknown = Activity.query.filter_by(kind="auth.login.fail").order_by(Activity.id).all()
+        assert json.loads(known.detail) == {"account": six_id, "by": "email"}
+        stranger = json.loads(unknown.detail)
+        assert stranger["unknown"] is True and stranger["shape"] == "email" and stranger["email_domain"] == "example.org"
+        assert "stranger" not in unknown.detail and "six@example.com" not in known.detail
 
 
 def test_signing_out_leaves_a_line_and_a_page_view_leaves_none(app):

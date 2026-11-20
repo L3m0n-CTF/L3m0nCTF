@@ -181,7 +181,12 @@ def studio_context() -> dict:
     flashed_form = _take_flash(FLASH_FORM_KEY, {})
 
     summary = []
-    err = {"name": None, "country": None, "affiliation": None}
+    err = {"name": None, "country": None, "affiliation": None, "members": None}
+
+    # A refusal of a removal belongs inside the removal card, not in the "Fix these to save your changes" list of the details form.
+    removal_refusal = flashed_errors.pop("members", None) if isinstance(flashed_errors, dict) else None
+    if removal_refusal:
+        err["members"] = str(removal_refusal[0] if isinstance(removal_refusal, list) else removal_refusal)
 
     if flashed_errors:
         field_anchors = {"name": "#t-name", "country": "#t-country", "affiliation": "#t-aff"}

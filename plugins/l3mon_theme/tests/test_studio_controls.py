@@ -276,3 +276,36 @@ def test_a_member_who_is_not_the_captain_does_not_take_the_lock_on_the_api_path(
     monkeypatch.setattr(player_locks, "lock_studio", lambda team_id: taken.append(team_id))
     assert rename_api(world.member_client, "Hijacked").status_code in (400, 403)
     assert taken == [] and Teams.query.get(world.team.id).name == "Alpha"
+
+
+# ------------------------------------------------------------------ the studio page itself
+
+def test_the_captain_sees_one_removal_form_for_each_other_member_and_never_for_themself(world):
+    page = world.captain_client.get("/team").get_data(as_text=True)
+    assert "Remove someone from the studio" in page and "You can remove someone from the studio below." in page
+    for member in world.members:
+        assert f'action="/team/members/{member.id}/remove"' in page
+    assert f'action="/team/members/{world.captain.id}/remove"' not in page
+    assert "Everything they solved and every hint they used stays with the studio, so your TRP does not change" in page
+    assert page.count('name="nonce"') >= len(world.members) * 2, "every form carries the session token"
+
+
+def test_a_member_who_is_not_the_captain_sees_no_removal_at_all(world):
+    page = world.member_client.get("/team").get_data(as_text=True)
+    assert "/remove" not in page and "Remove someone from the studio" not in page
+
+
+def test_a_refusal_is_shown_inside_the_removal_card_and_not_in_the_save_your_changes_list(world):
+    assert remove(world.captain_client, world.captain.id).status_code == 303  # removing oneself is refused
+    page = world.captain_client.get("/team").get_data(as_text=True)
+    card = page.split('id="tm-rem-h"', 1)[1].split("</section>", 1)[0]
+    assert 'role="alert"' in card and "You cannot remove yourself." in card
+    assert "Fix these to save your changes" not in page, "it is not a failed save of the details form"
+
+
+def test_after_a_removal_the_captain_sees_the_notice_and_the_member_is_gone_from_the_list(world):
+    victim = world.members[0]
+    assert remove(world.captain_client, victim.id).status_code == 303
+    page = world.captain_client.get("/team").get_data(as_text=True)
+    assert "Their solves and hints stay with the studio." in page
+    assert f'action="/team/members/{victim.id}/remove"' not in page
