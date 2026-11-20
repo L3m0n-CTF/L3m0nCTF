@@ -32,7 +32,7 @@ The monitoring overlay spins up 8 core services (all hardened, unprivileged, non
 | **prometheus** | `prom/prometheus:v2.54.1` | `ops`, `internal`, `edge` | `127.0.0.1:9090` | Time-series metrics engine (7-day retention) |
 | **alertmanager** | `prom/alertmanager:v0.27.0` | `ops` | `127.0.0.1:9093` | Alert routing with Discord webhook integration |
 | **grafana** | `grafana/grafana:11.2.0` | `ops` | `127.0.0.1:3000` | Operations dashboards (anonymous access disabled) |
-| **loki** | `grafana/loki:3.1.1` | `ops` | Internal (3100) | Log aggregation engine (7-day retention) |
+| **loki** | `grafana/loki:3.1.1` | `ops` | Internal (3100) | Log aggregation engine (30-day retention since 20 Nov 2026: the copy of the activity ledger) |
 | **blackbox-exporter** | `prom/blackbox-exporter:v0.25.0` | `ops`, `edge`, `internal` | Internal (9115) | HTTP/TCP probing (`/readyz`, CTFtime feed) |
 | **nginx-exporter** | `nginx/nginx-prometheus-exporter:1.3.0` | `ops`, `edge` | Internal (9113) | Scraping Nginx `/__nginx_status` stub |
 | **mysqld-exporter** | `prom/mysqld-exporter:v0.15.1` | `ops`, `internal` | Internal (9104) | MariaDB thread, buffer, query metrics |

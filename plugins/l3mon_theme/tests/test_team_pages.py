@@ -580,10 +580,14 @@ def test_d3_studio_name_rules_enforced_by_guard(app):
         body = client.get("/team").get_data(as_text=True)
         nonce = nonce_in(body)
 
-        # 1. Good 2-character name
-        res = client.post("/team", data={"nonce": nonce, "name": "AB"})
+        # 1. Good 2-character name. A studio may be renamed once a day (studio_rules.py), so the two good names are tried on two studios: this one for the
+        #    32-character name below, a second one here.
+        uid2, tid2 = make_player_and_team(app, user_name="cap_guard_two", team_name="Anchor Two")
+        client_two = login_as_user(app, name="cap_guard_two", password=PASSWORD)
+        nonce_two = nonce_in(client_two.get("/team").get_data(as_text=True))
+        res = client_two.post("/team", data={"nonce": nonce_two, "name": "AB"})
         assert res.status_code == 303
-        t = Teams.query.filter_by(id=tid).first()
+        t = Teams.query.filter_by(id=tid2).first()
         assert t.name == "AB"
 
         # 2. Good 32-character name

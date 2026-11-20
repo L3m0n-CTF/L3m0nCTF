@@ -33,7 +33,7 @@ SLATE = ROOT / "deploy" / "nginx" / "snippets" / "slates" / "not-yet.html"
 #   internal metrics for the monitoring stack
 DECISIONS = {
     "/auth/google": "open", "/auth/google/callback": "open", "/auth/ctftime": "open", "/auth/ctftime/callback": "open",
-    "/l3mon/healthz": "open", "/readyz": "open", "/logout": "open", "/settings": "open", "/team": "open", "/team/members/<int:member_id>/captain": "open",
+    "/l3mon/healthz": "open", "/readyz": "open", "/logout": "open", "/settings": "open", "/team": "open", "/team/members/<int:member_id>/captain": "open", "/team/members/<int:member_id>/remove": "open",
     "/rules": "open", "/privacy": "open", "/favicon.ico": "open", "/favicon.svg": "open", "/art/<name>": "open",
     "/api/v1/l3mon/ticks": "open",  # the header's pulse (versions only); every page polls it, so a refusal would break the header
     # registration (the steps, the password reset, the studio-name check of the wizard): a player who is shut out of the programmes must still be able to finish signing up
@@ -46,12 +46,14 @@ DECISIONS = {
     "/api/v1/l3mon/scoreboard": "gated", "/api/v1/l3mon/scoreboard/rows": "gated",
     "/api/v1/l3mon/instances": "gated", "/api/v1/l3mon/instances/<challenge_id_param>/renew": "gated", "/api/v1/l3mon/instances/<challenge_id_param>": "gated",
     "/api/v1/l3mon/story": "gated", "/api/v1/l3mon/story/<slug>": "gated", "/api/v1/l3mon/story/<slug>/pic/<name>": "gated",
-    "/admin/l3mon/guard": "crew", "/admin/l3mon/release": "crew", "/admin/l3mon/scoring": "crew",
+    "/admin/l3mon/guard": "crew", "/admin/l3mon/release": "crew", "/admin/l3mon/scoring": "crew", "/admin/l3mon/activity": "crew",
     "/plugins/l3mon_guard/assets/<path:name>": "open", "/plugins/l3mon_release/assets/<path:name>": "open", "/plugins/l3mon_scoring/assets/<path:name>": "open",
     "/api/v1/l3mon/admin/guard/evidence": "crew", "/api/v1/l3mon/admin/guard/evidence/<evidence_id>": "crew",
     "/api/v1/l3mon/admin/instances": "crew", "/api/v1/l3mon/admin/instances/kill": "crew",
     "/api/v1/l3mon/admin/release": "crew", "/api/v1/l3mon/admin/programmes": "crew", "/api/v1/l3mon/admin/programmes/<int:programme_id>": "crew",
     "/api/v1/l3mon/admin/channels/<int:channel_id>": "crew",
+    "/api/v1/l3mon/admin/removals": "crew", "/api/v1/l3mon/admin/removals/<int:removal_id>/lift": "crew",
+    "/api/v1/l3mon/admin/activity": "crew", "/api/v1/l3mon/admin/activity/verify": "crew",
     "/api/v1/l3mon/admin/scoring": "crew", "/api/v1/l3mon/admin/scoring/revoke": "crew", "/api/v1/l3mon/admin/scoring/restore": "crew",
     "/api/v1/l3mon/admin/scoring/bonus": "crew", "/api/v1/l3mon/admin/scoring/recalculate": "crew",
 }

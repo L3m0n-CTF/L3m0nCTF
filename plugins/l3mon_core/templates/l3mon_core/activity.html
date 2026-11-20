@@ -1,0 +1,57 @@
+{% extends "admin/base.html" %}
+
+{% block stylesheets %}
+	<link rel="stylesheet" href="{{ request.script_root }}/plugins/l3mon_core/assets/activity.css">
+{% endblock %}
+
+{% block content %}
+	<div class="jumbotron">
+		<div class="container">
+			<h1>Activity log</h1>
+			<p class="lead mb-0">Everything the participants did: sign-ins, registrations, studio changes, hints, instances and the crew's own actions. The log cannot be edited; the chain check below says whether anything was changed or removed.</p>
+		</div>
+	</div>
+	<div class="container">
+		<noscript><div class="alert alert-warning">This page needs JavaScript to read the log.</div></noscript>
+		<div id="activity-app" data-api="{{ request.script_root }}/api/v1/l3mon/admin">
+			<div class="activity-bar">
+				<label for="filter-team">Studio number:
+					<input id="filter-team" type="text" inputmode="numeric" class="form-control d-inline-block w-auto" placeholder="Any studio">
+				</label>
+				<label for="filter-actor">Person number:
+					<input id="filter-actor" type="text" inputmode="numeric" class="form-control d-inline-block w-auto" placeholder="Anybody">
+				</label>
+				<label for="filter-kind">Kind:
+					<input id="filter-kind" list="kind-list" type="text" class="form-control d-inline-block w-auto" placeholder="Any kind, for example studio.rename">
+					<datalist id="kind-list">
+						<option value="auth.login.ok"><option value="auth.login.fail"><option value="auth.logout"><option value="auth.register"><option value="auth.register.fail">
+						<option value="auth.confirm.resend"><option value="auth.confirm.ok"><option value="auth.reset.request"><option value="account.update">
+						<option value="studio.create"><option value="studio.join"><option value="studio.leave"><option value="studio.remove"><option value="studio.removal.lift">
+						<option value="studio.join.refused"><option value="studio.rename"><option value="studio.rename.refused"><option value="studio.captain">
+						<option value="hint.unlock"><option value="instance.start"><option value="instance.renew"><option value="instance.stop">
+					</datalist>
+				</label>
+				<label for="filter-limit">Lines:
+					<select id="filter-limit" class="form-control d-inline-block w-auto">
+						<option value="100" selected>100</option><option value="250">250</option><option value="500">500 (most)</option>
+					</select>
+				</label>
+				<button id="btn-filter" class="btn btn-primary" type="button">Show</button>
+				<button id="btn-verify" class="btn btn-outline-secondary" type="button">Check the chain</button>
+				<button id="btn-export" class="btn btn-outline-secondary" type="button">Download these lines (CSV)</button>
+			</div>
+			<p id="activity-status" role="status" aria-live="polite">Loading…</p>
+			<p id="verify-status" role="status" aria-live="polite"></p>
+			<div id="activity-wrap"></div>
+
+			<h2 class="mt-4">Members removed from a studio</h2>
+			<p class="text-muted">A removed person cannot join the same studio again until the crew lets them back. Rows marked "recent solve or hint" had a solve or a hint unlock in the day before the removal.</p>
+			<p id="removals-status" role="status" aria-live="polite">Loading…</p>
+			<div id="removals-wrap"></div>
+		</div>
+	</div>
+{% endblock %}
+
+{% block scripts %}
+	<script defer src="{{ request.script_root }}/plugins/l3mon_core/assets/activity.js"></script>
+{% endblock %}

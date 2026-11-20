@@ -71,7 +71,7 @@
 - `deploy/ops/alertmanager/alertmanager.yml`: Alertmanager configuration routing alerts to Discord webhook via `/run/secrets/DISCORD_WEBHOOK_URL`.
 - `deploy/ops/alertmanager/alertmanager-nowebhook.yml`: Safe fallback configuration when `DISCORD_WEBHOOK_URL` is empty, keeping all alerts active in the API/UI while silencing external webhook dispatches.
 - `deploy/ops/blackbox/blackbox.yml`: Blackbox prober modules for HTTP status checks, regex matching on `/readyz`, and CTFtime feed verification with `Host: localhost`.
-- `deploy/ops/loki/local-config.yaml`: Loki 3.1.1 single-binary TSDB configuration with 7-day log retention and compactor.
+- `deploy/ops/loki/local-config.yaml`: Loki 3.1.1 single-binary TSDB configuration with 30-day log retention (720 h: the second copy of the activity ledger) and compactor.
 - `deploy/ops/promtail/promtail.yml`: Promtail log shipper configuration with regex token masking for authorization headers and reset tokens.
 - `deploy/ops/grafana/provisioning/datasources/datasources.yml`: Provisioning for Prometheus (default) and Loki datasources.
 - `deploy/ops/grafana/provisioning/dashboards/dashboards.yml`: Provisioning provider for operational dashboards in folder `Operations`.

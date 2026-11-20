@@ -44,6 +44,25 @@ def load(app):
     install_attempt_input(app)  # a flag attempt that is not text, or is far too long, is answered 400 (it was a server error)
     install_log_redaction()  # a submitted flag is not written to the application log
     install_player_locks(app)  # joining a studio and unlocking a hint wait for each other (the studio's row is locked first)
+
+    from CTFd.plugins.l3mon_core import activity
+
+    activity.install()  # the activity ledger: studio changes are seen wherever they come from, and a line follows the commit that made its action real
+
+    from CTFd.plugins.l3mon_core import studio_rules
+
+    studio_rules.install(app)  # a removed member cannot rejoin the studio; the rename policy on the API path (after player_locks, so the studio's row lock is held)
+
+    from CTFd.plugins import register_admin_plugin_menu_bar
+    from CTFd.plugins.l3mon_core.crew_api import bp as crew_activity_api, page_bp as crew_activity_page
+
+    app.register_blueprint(crew_activity_api)  # the crew's removals list, lift, and the ledger (administrator surface)
+    app.register_blueprint(crew_activity_page)  # and its page
+    register_admin_plugin_menu_bar("Activity log", "/admin/l3mon/activity")
+
+    from CTFd.plugins.l3mon_core.activity_hooks import install as install_activity_hooks
+
+    install_activity_hooks(app)  # sign-ins and outs, registrations, resends, resets, hint unlocks and instances are written to the ledger
     app.register_blueprint(l3mon)
 
     # The crew's Config page offers MajorLeagueCyber, which this event does not use: a stylesheet keeps its tab and its choice out of sight (the settings
