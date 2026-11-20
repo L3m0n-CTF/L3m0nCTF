@@ -20,9 +20,20 @@ from CTFd.plugins.l3mon_core.models import Activity
 from tests.helpers import create_ctfd, destroy_ctfd, gen_team
 
 
+def empty_the_ledger():
+    """CTFd's own test set-up signs the first administrator in, which the platform (rightly) records. These tests count lines and look at the chain from its first row,
+    so they start from an empty ledger: the delete trigger is put aside for a moment, as somebody with full database rights could."""
+    db.session.execute(text("DROP TRIGGER IF EXISTS l3mon_activity_no_delete"))
+    db.session.execute(text("DELETE FROM l3mon_activity"))
+    db.session.execute(text("CREATE TRIGGER l3mon_activity_no_delete BEFORE DELETE ON l3mon_activity BEGIN SELECT RAISE(ABORT, 'l3mon_activity is append-only'); END"))
+    db.session.commit()
+
+
 @pytest.fixture()
 def app():
     app = create_ctfd(enable_plugins=True, user_mode="teams")
+    with app.app_context():
+        empty_the_ledger()
     yield app
     destroy_ctfd(app)
 

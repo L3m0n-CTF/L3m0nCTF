@@ -495,6 +495,8 @@ def install(app):
 
             db.session.commit()
             clear_user_session(user_id=user.id)
+            if data:  # which fields changed, never their values (the ledger, docs/runbooks/17-activity-log.md)
+                activity.record("account.update", actor=user, team_id=user.team_id, target=f"user:{user.id}", detail={"fields": sorted(k for k in data if k != "confirm")})
 
             if email_changed and get_config("verify_emails"):
                 if can_send_mail():
@@ -536,6 +538,7 @@ def install(app):
             db.session.commit()
             update_user(user)  # Resets session hash, invalidating other devices (rule D2)
             clear_user_session(user_id=user.id)
+            activity.record("account.update", actor=user, team_id=user.team_id, target=f"user:{user.id}", detail={"fields": ["password"]})
             session[FLASH_NOTICE_KEY] = "settings-saved"
             return redirect("/settings", code=303)
 

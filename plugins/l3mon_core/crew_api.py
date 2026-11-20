@@ -10,7 +10,7 @@ The reader never sees the hashes (they are for the verifier).
 """
 import json
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, render_template, request
 
 from CTFd.models import Teams, Users, db
 from CTFd.plugins.l3mon_core import activity, audit, studio_rules
@@ -19,6 +19,7 @@ from CTFd.utils.decorators import admins_only
 from CTFd.utils.user import get_current_user
 
 bp = Blueprint("l3mon_core_admin", __name__, url_prefix="/api/v1/l3mon/admin")
+page_bp = Blueprint("l3mon_core_page", __name__, template_folder="templates")
 MAX_LINES = 500
 DEFAULT_LINES = 100
 
@@ -39,6 +40,13 @@ def _bad(message):
     response = jsonify({"success": False, "errors": {"": [message]}})
     response.status_code = 400
     return response
+
+
+@page_bp.route("/admin/l3mon/activity")
+@admins_only
+def activity_page():
+    """The crew's page: filter the ledger, check the chain, export, see the removals and lift one. The script is /plugins/l3mon_core/assets/activity.js."""
+    return render_template("l3mon_core/activity.html")
 
 
 @bp.route("/removals", methods=["GET"])

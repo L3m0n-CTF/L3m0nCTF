@@ -50,6 +50,14 @@ def record(action, target, detail="", actor=None, system=False) -> Audit:
         detail=_clip(detail, _LIMITS["detail"]),
     )
     db.session.add(line)
+    # One timeline: the crew's own actions also go to the activity ledger (a captain's action that uses the audit, such as a removal, already has its own line there).
+    if who is None or getattr(who, "type", None) == "admin":
+        try:
+            from CTFd.plugins.l3mon_core import activity
+
+            activity.queue("crew." + str(action), actor=who, target=target, detail={"detail": detail} if detail else None)
+        except Exception:  # an audit line must never fail because of the ledger
+            pass
     return line
 
 

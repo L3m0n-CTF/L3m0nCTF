@@ -46,7 +46,7 @@ DECISIONS = {
     "/api/v1/l3mon/scoreboard": "gated", "/api/v1/l3mon/scoreboard/rows": "gated",
     "/api/v1/l3mon/instances": "gated", "/api/v1/l3mon/instances/<challenge_id_param>/renew": "gated", "/api/v1/l3mon/instances/<challenge_id_param>": "gated",
     "/api/v1/l3mon/story": "gated", "/api/v1/l3mon/story/<slug>": "gated", "/api/v1/l3mon/story/<slug>/pic/<name>": "gated",
-    "/admin/l3mon/guard": "crew", "/admin/l3mon/release": "crew", "/admin/l3mon/scoring": "crew",
+    "/admin/l3mon/guard": "crew", "/admin/l3mon/release": "crew", "/admin/l3mon/scoring": "crew", "/admin/l3mon/activity": "crew",
     "/plugins/l3mon_guard/assets/<path:name>": "open", "/plugins/l3mon_release/assets/<path:name>": "open", "/plugins/l3mon_scoring/assets/<path:name>": "open",
     "/api/v1/l3mon/admin/guard/evidence": "crew", "/api/v1/l3mon/admin/guard/evidence/<evidence_id>": "crew",
     "/api/v1/l3mon/admin/instances": "crew", "/api/v1/l3mon/admin/instances/kill": "crew",
