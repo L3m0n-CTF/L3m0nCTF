@@ -194,6 +194,8 @@ def load_hosts_config(path: Optional[str] = None) -> list[dict]:
 _DOWN_KEY = "l3mon:instances:host_down:"
 # A capacity probe that TIMES OUT does not take a host down while the host answered within this many seconds (see get_capacity)
 STALE_CAPACITY_OK_SECONDS = 60.0
+# What a host has is asked for at most once per this many seconds per host (a player's list is read often)
+LIVE_IDS_CACHE_SECONDS = 5.0
 
 
 class CtfdCacheDownStore:
@@ -264,6 +266,7 @@ class HostCapacityTracker:
 
         self._lock = threading.RLock()
         self._cache: dict[str, dict] = {}
+        self._live_cache: dict[str, tuple[float, set]] = {}  # host -> (when asked, ids of its running instances)
         self._down_until: dict[str, float] = {}
         self._client_factory: Optional[Callable[[dict, str], InstancerClient]] = None
 
@@ -343,8 +346,34 @@ class HostCapacityTracker:
             return False
         return True
 
+    def live_instance_ids(self, host_name: str, now_ts: Optional[float] = None) -> Optional[set]:
+        """The ids of the instances that are running (or starting) on a host, from the host's own list; None when the host cannot say.
+
+        A crash, the memory limit or a reboot removes an instance from its host while the platform's row still says "running" (found on the real challenge
+        host, 21 Nov 2026). Asked once per host per LIVE_IDS_CACHE_SECONDS. A failed question returns None and changes nothing: it is not an instance that is
+        gone, and it is not a reason to mark the host down (the capacity probe does that).
+        """
+        ts = now_ts if now_ts is not None else self.now()
+        with self._lock:
+            cached = self._live_cache.get(host_name)
+            if cached and (ts - cached[0]) < LIVE_IDS_CACHE_SECONDS:
+                return cached[1]
+        try:
+            client = self.get_client_for_host(host_name)
+            if hasattr(client, "timeout"):
+                client.timeout = min(client.timeout, 6)
+            items = client.list_instances()
+        except Exception as e:
+            _log.warning("Could not read the instances of host '%s': %s", host_name, e)
+            return None
+        ids = {i["id"] for i in items if i.get("id") and i.get("state") in ("running", "starting")}
+        with self._lock:
+            self._live_cache[host_name] = (ts, ids)
+        return ids
+
     def reset_cache(self):
         with self._lock:
+            self._live_cache.clear()
             self._cache.clear()
             names = list(self._down_until)
             self._down_until.clear()

@@ -1006,3 +1006,100 @@ def test_a_refused_probe_still_marks_the_host_down_at_once():
     with pytest.raises(InstancerClientError):
         tracker.get_capacity("h1")
     assert tracker.is_host_down("h1") is True
+
+
+# ---------------------------------------------------------------------------
+# The platform's rows must follow what the host really has (real host, 21 Nov 2026)
+#
+# A crash, the memory limit or a reboot removes an instance from the host. The platform's own row kept saying "running" until its 45 minutes were up, and a
+# player pressing Start was handed that dead row back: the instance they were looking at answered nothing, and Start did nothing new.
+# ---------------------------------------------------------------------------
+
+def _age_rows(minutes: int):
+    for row in L3monInstance.query.all():
+        row.created_at = datetime.datetime.utcnow() - datetime.timedelta(minutes=minutes)
+    db.session.commit()
+
+
+def test_an_instance_that_is_gone_from_its_host_leaves_the_players_list_and_the_challenge_can_be_started_again():
+    app = create_ctfd(user_mode="teams", enable_plugins=True)
+    with app.app_context():
+        c_id, alice, _ = _setup_route_world(app)
+        h1 = MockAgentClient("h1", slots_total=50, slots_used=5)
+        tracker = _hosts_world(app, {"h1": h1})
+        try:
+            first = alice.post("/api/v1/l3mon/instances", json={"challenge_id": c_id})
+            assert first.status_code == 201
+            dead_id = first.get_json()["data"]["id"] if "id" in first.get_json()["data"] else L3monInstance.query.one().instance_id
+            _age_rows(5)
+            h1.started_instances.clear()  # the instance is gone from the host (a crash, the memory limit, a reboot)
+            tracker.reset_cache()
+            listed = alice.get("/api/v1/l3mon/instances").get_json()["data"]
+            assert listed["instances"] == [], f"a dead instance must not be listed as running: {listed}"
+            assert listed["limits"]["live"] == 0
+            again = alice.post("/api/v1/l3mon/instances", json={"challenge_id": c_id})
+            assert again.status_code == 201, "Start must start a NEW instance, not hand back the dead one: " + again.get_data(as_text=True)
+            assert h1.start_attempts == 2
+            assert L3monInstance.query.filter(L3monInstance.active_key != None).count() == 1  # noqa: E711
+            assert L3monInstance.query.filter_by(instance_id=dead_id).first().state == "expired"
+        finally:
+            set_host_tracker(None)
+            destroy_ctfd(app)
+
+
+def test_a_start_on_a_dead_record_starts_a_new_instance_without_the_list_being_read_first():
+    app = create_ctfd(user_mode="teams", enable_plugins=True)
+    with app.app_context():
+        c_id, alice, _ = _setup_route_world(app)
+        h1 = MockAgentClient("h1", slots_total=50, slots_used=5)
+        tracker = _hosts_world(app, {"h1": h1})
+        try:
+            assert alice.post("/api/v1/l3mon/instances", json={"challenge_id": c_id}).status_code == 201
+            _age_rows(5)
+            h1.started_instances.clear()
+            tracker.reset_cache()
+            again = alice.post("/api/v1/l3mon/instances", json={"challenge_id": c_id})
+            assert again.status_code == 201 and h1.start_attempts == 2, again.get_data(as_text=True)
+        finally:
+            set_host_tracker(None)
+            destroy_ctfd(app)
+
+
+def test_a_young_instance_is_never_judged_gone_because_the_hosts_answer_may_be_older_than_the_start():
+    app = create_ctfd(user_mode="teams", enable_plugins=True)
+    with app.app_context():
+        c_id, alice, _ = _setup_route_world(app)
+        h1 = MockAgentClient("h1", slots_total=50, slots_used=5)
+        tracker = _hosts_world(app, {"h1": h1})
+        try:
+            assert alice.post("/api/v1/l3mon/instances", json={"challenge_id": c_id}).status_code == 201
+            h1.started_instances.clear()  # the host has not got it in its list (yet, or any more), but the row was made a moment ago
+            tracker.reset_cache()
+            listed = alice.get("/api/v1/l3mon/instances").get_json()["data"]
+            assert len(listed["instances"]) == 1, "a row made seconds ago stays until it is old enough to be judged"
+        finally:
+            set_host_tracker(None)
+            destroy_ctfd(app)
+
+
+def test_when_the_host_cannot_list_its_instances_the_players_rows_are_left_alone():
+    app = create_ctfd(user_mode="teams", enable_plugins=True)
+    with app.app_context():
+        c_id, alice, _ = _setup_route_world(app)
+        h1 = MockAgentClient("h1", slots_total=50, slots_used=5)
+        tracker = _hosts_world(app, {"h1": h1})
+        try:
+            assert alice.post("/api/v1/l3mon/instances", json={"challenge_id": c_id}).status_code == 201
+            _age_rows(5)
+
+            def broken(team_id=None):
+                raise InstancerClientError(504, "timeout", "the host is slow")
+
+            h1.list_instances = broken
+            tracker.reset_cache()
+            listed = alice.get("/api/v1/l3mon/instances").get_json()["data"]
+            assert len(listed["instances"]) == 1, "a failed question is not an instance that is gone"
+            assert tracker.is_host_down("h1") is False
+        finally:
+            set_host_tracker(None)
+            destroy_ctfd(app)

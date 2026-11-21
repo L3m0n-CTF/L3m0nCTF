@@ -600,8 +600,10 @@ class InstanceManager:
         and wait for the full cooldown. Here the instance disappears from the player's list (the page offers Start again) and the team waits only
         CRASH_COOLDOWN_SECONDS. If Docker cannot be asked nothing is changed: a failed question is not a dead container.
         """
+        # RUNNING ones whose container died, and ERROR ones: after a reboot or a restart of the agent a record is rebuilt from Docker's labels as ERROR when its
+        # container is not running, and it would otherwise stay (with its stopped container and its network) for ever
         with self._lock:
-            candidates = [inst.id for inst in self._instances.values() if inst.state == InstanceState.RUNNING]
+            candidates = [inst.id for inst in self._instances.values() if inst.state in (InstanceState.RUNNING, InstanceState.ERROR)]
         if not candidates:
             return []
         try:

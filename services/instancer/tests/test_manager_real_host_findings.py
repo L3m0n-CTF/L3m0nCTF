@@ -204,3 +204,18 @@ def test_the_start_limit_comes_from_the_environment():
     for bad in ({"INSTANCER_MAX_CONCURRENT_STARTS": "0"}, {"INSTANCER_MAX_CONCURRENT_STARTS": "x"}, {"INSTANCER_START_WAIT_SECONDS": "-1"}):
         with pytest.raises(ValueError, match="INSTANCER_"):
             read_start_limits(bad)
+
+
+def test_after_a_host_reboot_the_instances_whose_containers_stopped_are_cleaned_up_not_kept_for_ever():
+    """Real host, 21 Nov 2026: after a reboot the instance containers (no restart policy, on purpose) were stopped, the agent rebuilt its records from Docker's
+    labels as state "error" and never touched them again: three dead records, three stopped containers and three networks stayed until somebody killed them
+    by hand, and the agent counted 0 slots used while it listed 3 instances. The liveness sweep now covers these records too."""
+    mgr, docker, clock = manager()
+    inst, _ = mgr.start_instance(team_id=1, challenge_id=1, slug="demo-web", flag=FLAG_EXAMPLE)
+    docker.containers[inst["id"]]["state"] = "exited"  # what a reboot does to a container with no restart policy
+    fresh = InstanceManager(manifest=load_manifest_from_string(MANIFEST_TOML, dev_mode=False), docker_client=docker, instance_domain="inst.example.com", time_fn=lambda: clock[0])
+    fresh.reconcile_from_docker()  # the agent starts again after the reboot
+    assert [i["state"] for i in fresh.list_instances()] == ["error"]
+    assert fresh.reap_dead() == [inst["id"]]
+    assert inst["id"] not in docker.containers and f"l3mon_inst_{inst['id']}" not in docker.networks
+    assert fresh.list_instances() == []

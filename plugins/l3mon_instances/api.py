@@ -61,6 +61,7 @@ def get_instances():
     now_ts = now_dt.timestamp()
     host_answers: dict[str, bool] = {}
     instances_out = []
+    freed = False
     for i in instances:
         d = i.to_dict()
         if i.host_name not in host_answers:
@@ -68,10 +69,16 @@ def get_instances():
             host_answers[i.host_name] = tracker.check_host(i.host_name, now_ts=now_ts)
         if not host_answers[i.host_name]:
             d["state"] = "error"
+        elif i.state in ("running", "starting") and _gone_from_host(tracker, i, now_dt):
+            _free_gone(i)  # the host does not have it any more: it is not listed, and Start makes a new one
+            freed = True
+            continue
         instances_out.append(d)
+    if freed:
+        db.session.commit()
 
     limits = {
-        "live": len(instances),
+        "live": len(instances_out),
         "max": MAX_TEAM_INSTANCES,
         "cooldown_seconds": COOLDOWN_SECONDS,
     }
@@ -79,6 +86,25 @@ def get_instances():
         "instances": instances_out,
         "limits": limits,
     })
+
+
+# A row younger than this is never judged "gone from its host": the host's list may be a few seconds older than the start that made the row
+INSTANCE_GRACE_SECONDS = 20
+
+
+def _gone_from_host(tracker, row, now_dt) -> bool:
+    """True when the host says it does not have this instance any more (a crash, the memory limit, a reboot). Never true on a failed question."""
+    if (now_dt - row.created_at).total_seconds() < INSTANCE_GRACE_SECONDS:
+        return False
+    live = tracker.live_instance_ids(row.host_name, now_ts=now_dt.timestamp())
+    return live is not None and row.instance_id not in live
+
+
+def _free_gone(row):
+    """The instance no longer exists on its host: free its key, so that the team can start this challenge again. Its state becomes "expired" (the states the
+    database allows are starting, running, stopping, expired and error; "expired" is the one for an instance that is no longer live)."""
+    row.state = "expired"
+    row.active_key = None
 
 
 def _free_if_expired(row, now_dt):
@@ -125,11 +151,16 @@ def start_instance():
     existing = L3monInstance.query.filter_by(active_key=active_key).first()
     if existing:
         if existing.expires_at > now_dt and existing.state in ("running", "starting"):
-            d = existing.to_dict()
             tracker = get_host_tracker()
-            if tracker.is_host_down(existing.host_name, now_ts=now_dt.timestamp()):
-                d["state"] = "error"
-            return envelope.ok(d, status=200)
+            if not tracker.is_host_down(existing.host_name, now_ts=now_dt.timestamp()) and _gone_from_host(tracker, existing, now_dt):
+                # the host does not have this instance any more: do not hand back a dead record, start a new instance
+                _free_gone(existing)
+                db.session.commit()
+            else:
+                d = existing.to_dict()
+                if tracker.is_host_down(existing.host_name, now_ts=now_dt.timestamp()):
+                    d["state"] = "error"
+                return envelope.ok(d, status=200)
         # It ran out its time (or ended) and nobody pressed Stop: free its key, or the new row below would collide with it, the new container
         # would be stopped as an orphan and the studio could never start this challenge again
         _free_if_expired(existing, now_dt)
