@@ -89,8 +89,19 @@ services:
       MANIFEST_PATH: /etc/instancer/challenges.toml
       INSTANCE_DOMAIN: "${INSTANCE_DOMAIN:-inst.l3m0nctf.xyz}"
       INSTANCER_TCP_HOST: "${CHALLENGE_HOST_TCP_NAME:-h1.inst.l3m0nctf.xyz}"
-      INSTANCER_TCP_PORT_START: "30000"
-      INSTANCER_TCP_PORT_COUNT: "200"
+      # The relay port range: the same two numbers for the agent, the router and the published ports (TCP_PORT_FIRST, TCP_PORT_LAST; at most 2000 ports).
+      # A host runs at most as many raw-TCP instances at once as it has ports, so size the range for the peak (docs/deploy/instancer.md, "Sizing a challenge
+      # host"), and open the same range in the cloud firewall for the event.
+      INSTANCER_TCP_PORT_START: "${TCP_PORT_FIRST:-30000}"
+      INSTANCER_TCP_PORT_END: "${TCP_PORT_LAST:-30199}"
+      # What this machine admits: written into /etc/l3mon/challenge-host.env by bootstrap.sh from the machine's real RAM (docs/deploy/instancer.md, "Sizing a
+      # challenge host"). The fallbacks are cautious on purpose: an agent that knows nothing of its machine must not admit 200 instances of any size.
+      INSTANCER_MAX_SLOTS: "${INSTANCER_MAX_SLOTS:-200}"
+      INSTANCER_MAX_MEM_MB: "${INSTANCER_MAX_MEM_MB:-4096}"
+      # How a burst of starts is handled, and how declared memory limits count (docs/deploy/instancer.md, "Sizing a challenge host"): the defaults are the safe ones
+      INSTANCER_MAX_CONCURRENT_STARTS: "${INSTANCER_MAX_CONCURRENT_STARTS:-8}"
+      INSTANCER_START_WAIT_SECONDS: "${INSTANCER_START_WAIT_SECONDS:-35}"
+      INSTANCER_MEM_OVERCOMMIT: "${INSTANCER_MEM_OVERCOMMIT:-1}"
       ROUTER_CONTAINER_NAME: l3mon-challenge-host-router-1
       INSTANCER_INSTANCE_POOL: "${INSTANCER_INSTANCE_POOL:-10.200.0.0/16}"
       INSTANCER_POOL_SUBNET_SIZE: "${INSTANCER_POOL_SUBNET_SIZE:-28}"
@@ -118,19 +129,19 @@ services:
         max-file: "3"
     ports:
       - "${HOST_PRIVATE_BIND_IP:-127.0.0.1}:${ROUTER_HTTP_PORT:-8080}:8090"
-      - "0.0.0.0:30000-30199:30000-30199"
+      - "0.0.0.0:${TCP_PORT_FIRST:-30000}-${TCP_PORT_LAST:-30199}:${TCP_PORT_FIRST:-30000}-${TCP_PORT_LAST:-30199}"
     secrets:
       - ROUTER_TOKEN
     environment:
       INSTANCER_URL: "http://agent:8300"
       ROUTER_TOKEN_FILE: /run/secrets/ROUTER_TOKEN
       INSTANCE_DOMAIN: "${INSTANCE_DOMAIN:-inst.l3m0nctf.xyz}"
-      POLL_INTERVAL: "2.0"
+      POLL_INTERVAL: "0.5"
       INSTANCER_INSTANCE_POOL: "${INSTANCER_INSTANCE_POOL:-10.200.0.0/16}"
       INSTANCER_POOL_SUBNET_SIZE: "${INSTANCER_POOL_SUBNET_SIZE:-28}"
       INSTANCER_TRUSTED_FORWARDERS: "${INSTANCER_TRUSTED_FORWARDERS:-}"
-      INSTANCER_TCP_PORT_START: "30000"
-      INSTANCER_TCP_PORT_COUNT: "200"
+      INSTANCER_TCP_PORT_START: "${TCP_PORT_FIRST:-30000}"
+      INSTANCER_TCP_PORT_END: "${TCP_PORT_LAST:-30199}"
     networks:
       - challenge_net
     depends_on:

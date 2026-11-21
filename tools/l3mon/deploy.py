@@ -234,6 +234,35 @@ def check_crew_only(path: str | None, items: list[Item]) -> None:
         items.append(Item(OK, "crew-only switch", f"{file}: the programme pages are open to players"))
 
 
+def check_instance_gate(env: dict, items: list[Item]) -> None:
+    """The crew-only gate on instance addresses (services/instancer/router/access_gate.py; docs/deploy/instancer.md, "The crew-only gate").
+
+    Only when the central router is on (overlay `instancer-central`). Mode `crew` (the default, and the strict one) needs the Cloudflare Access team name and the
+    tag of the crew application; without them the router refuses EVERY instance request, which this says before the start instead of leaving it to be found
+    out by the first person who clicks Start. Mode `open` is the event setting: it is named as what it is."""
+    if "instancer-central" not in {name.strip() for name in env.get("L3MON_OVERLAYS", "").split(",")}:
+        return
+    name = "instance addresses"
+    mode = (env.get("INSTANCE_ACCESS_MODE") or "crew").strip().lower()
+    if mode not in ("crew", "open"):
+        items.append(Item(BLOCKED, name, f"INSTANCE_ACCESS_MODE is {mode!r}: it must be `crew` or `open`"))
+        return
+    if mode == "open":
+        items.append(Item(TODO, name, "INSTANCE_ACCESS_MODE=open: the instance addresses are open to everybody. That is right for the event and wrong for a test round (set `crew`)"))
+        return
+    team = (env.get("INSTANCE_ACCESS_TEAM_DOMAIN") or "").strip().lower()
+    tags = [t.strip() for t in (env.get("INSTANCE_ACCESS_AUD") or "").split(",") if t.strip()]
+    problems = []
+    if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,62}\.cloudflareaccess\.com", team):
+        problems.append("INSTANCE_ACCESS_TEAM_DOMAIN must be the Cloudflare Access team name, <name>.cloudflareaccess.com, without https://")
+    if not tags or not all(re.fullmatch(r"[0-9a-f]{64}", t) for t in tags):
+        problems.append("INSTANCE_ACCESS_AUD must hold the application tag(s) of the crew application in Cloudflare Access: 64 hex characters each, separated by commas")
+    if problems:
+        items.append(Item(BLOCKED, name, "crew-only mode, and with this the router would refuse every instance request: " + "; ".join(problems)))
+    else:
+        items.append(Item(OK, name, f"crew only: a request needs a valid Cloudflare Access token of team {team} for one of {len(tags)} application tag(s)"))
+
+
 def check_environment(env: dict, items: list[Item]) -> None:
     if env.get("L3MON_ENV", "dev") != "production":
         items.append(Item(TODO, "environment", "L3MON_ENV is not `production`: start with `L3MON_ENV=production tools/compose.sh up -d --wait`"))
@@ -260,5 +289,6 @@ def run_checks(root: Path, event_file: Path | None = None, secrets_dir: Path | N
     check_admin_nets(admin_nets, root / "deploy" / "nginx" / "snippets" / "admin-nets.conf", items)
     check_cloudflare_list(root / "deploy" / "nginx" / "snippets" / "cloudflare-realip.conf", today or date.today(), items)
     check_crew_only(env.get("CREW_ONLY_FILE"), items)
+    check_instance_gate(env, items)
     check_environment(env, items)
     return items

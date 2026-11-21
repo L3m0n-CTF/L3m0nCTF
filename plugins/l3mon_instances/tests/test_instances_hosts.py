@@ -63,9 +63,13 @@ def set_default_test_host_tokens(monkeypatch):
 
 
 class MockAgentClient:
-    def __init__(self, host_name: str, slots_total: int = 50, slots_used: int = 0, should_fail: bool = False, fail_start: bool = False):
+    def __init__(self, host_name: str, slots_total: int = 50, slots_used: int = 0, should_fail: bool = False, fail_start: bool = False,
+                 busy_start: bool = False, timeout_start: str | None = None, probe_timeout: bool = False):
         self.host_name = host_name
         self.fail_start = fail_start  # capacity answers, every START fails (a host whose Docker is broken)
+        self.busy_start = busy_start  # capacity answers, every START is answered "busy, no capacity" (the agent is alive, working through a burst)
+        self.timeout_start = timeout_start  # "created": the instance IS created and then the call times out; "lost": nothing is created and the call times out
+        self.probe_timeout = probe_timeout  # the capacity probe times out (a slow host, not a dead one)
         self.slots_total = slots_total
         self.slots_used = slots_used
         self.should_fail = should_fail
@@ -79,8 +83,13 @@ class MockAgentClient:
     def stop_instance(self, instance_id: str) -> None:
         self.stopped_instances.append(instance_id)
 
+    def list_instances(self, team_id=None) -> list[dict]:
+        return [dict(i) for i in self.started_instances if team_id is None or i["team_id"] == team_id]
+
     def get_capacity(self) -> dict:
         self.capacity_probe_count += 1
+        if self.probe_timeout:
+            raise InstancerClientError(504, "timeout", f"Host {self.host_name} did not answer in time")
         if self.should_fail:
             raise InstancerClientError(503, "upstream_unavailable", f"Host {self.host_name} unreachable")
         return {
@@ -96,6 +105,10 @@ class MockAgentClient:
         self.start_attempts += 1
         if self.should_fail or self.fail_start:
             raise InstancerClientError(500, "docker_broken", f"Host {self.host_name} Docker daemon broken")
+        if self.busy_start:
+            raise InstancerClientError(503, "no_capacity", f"Host {self.host_name} busy starting other instances; retry in a few seconds", retry_after=5)
+        if self.timeout_start == "lost":
+            raise InstancerClientError(504, "timeout", f"Host {self.host_name} did not answer in time")
         inst_id = f"inst_{self.host_name}_{self.next_id}"
         self.next_id += 1
         now_ts = time.time()
@@ -114,6 +127,8 @@ class MockAgentClient:
             "renewals": 0,
         }
         self.started_instances.append(inst)
+        if self.timeout_start == "created":
+            raise InstancerClientError(504, "timeout", f"Host {self.host_name} did not answer in time")
         return inst
 
     def kill_instances(self, team_id=None, challenge_id=None) -> int:
@@ -866,6 +881,225 @@ def test_a_host_that_lost_its_token_gives_a_clear_503_on_renew_and_stop_not_a_cr
             assert r.status_code == 503, r.get_data(as_text=True)
             assert r.get_json()["error"] == "busy"
             assert alice.delete(f"/api/v1/l3mon/instances/{c_id}", json={}).status_code == 200
+        finally:
+            set_host_tracker(None)
+            destroy_ctfd(app)
+
+
+
+# ---------------------------------------------------------------------------
+# A burst of starts must not take the host down (real host, 21 Nov 2026)
+#
+# 80 teams starting at once took the real challenge host 28 s in all (the median start 16 s). The platform waited 10 s, called a timeout a host failure and
+# marked the only host down for 30 s: every start refused, every running instance shown as "error". A slow or busy host is alive.
+# ---------------------------------------------------------------------------
+
+def _hosts_world(app, clients: dict, weights=None):
+    hosts = [
+        {"name": n, "url": f"http://10.0.1.{10 + i}:8300", "router_url": f"http://10.0.1.{10 + i}:8090", "host": f"{n}.xyz", "weight": 1.0, "max_slots": 50}
+        for i, n in enumerate(clients)
+    ]
+    tracker = HostCapacityTracker(hosts=hosts)
+    tracker.set_client_factory(lambda h, tok: clients[h["name"]])
+    set_host_tracker(tracker)
+    return tracker
+
+
+def test_a_busy_answer_from_a_host_moves_the_start_to_the_other_host_and_does_not_mark_the_busy_one_down():
+    app = create_ctfd(user_mode="teams", enable_plugins=True)
+    with app.app_context():
+        c_id, alice, _ = _setup_route_world(app)
+        h1 = MockAgentClient("h1", slots_total=50, slots_used=5, busy_start=True)  # most free slots, so it is chosen first, and it answers "busy"
+        h2 = MockAgentClient("h2", slots_total=50, slots_used=20)
+        tracker = _hosts_world(app, {"h1": h1, "h2": h2})
+        try:
+            r = alice.post("/api/v1/l3mon/instances", json={"challenge_id": c_id})
+            assert r.status_code == 201, r.get_data(as_text=True)
+            assert "inst_h2_" in r.get_json()["data"]["url"]
+            assert tracker.is_host_down("h1") is False, "a host that answers 'busy' is alive: it must not be marked down"
+            assert h1.start_attempts == 1
+        finally:
+            set_host_tracker(None)
+            destroy_ctfd(app)
+
+
+def test_a_single_busy_host_tells_the_player_to_wait_and_stays_up_for_everybody_else():
+    app = create_ctfd(user_mode="teams", enable_plugins=True)
+    with app.app_context():
+        c_id, alice, _ = _setup_route_world(app)
+        h1 = MockAgentClient("h1", slots_total=50, slots_used=5, busy_start=True)
+        tracker = _hosts_world(app, {"h1": h1})
+        try:
+            r = alice.post("/api/v1/l3mon/instances", json={"challenge_id": c_id})
+            assert r.status_code == 503 and r.get_json()["error"] == "no_capacity", r.get_data(as_text=True)
+            assert r.get_json().get("retry_after"), "the player is told when to retry"
+            assert tracker.is_host_down("h1") is False
+            assert tracker.is_host_down("h1") is False
+            h1.busy_start = False  # the burst is over
+            r2 = alice.post("/api/v1/l3mon/instances", json={"challenge_id": c_id})
+            assert r2.status_code == 201, "the host was not taken down for 30 s: the next try works at once: " + r2.get_data(as_text=True)
+        finally:
+            set_host_tracker(None)
+            destroy_ctfd(app)
+
+
+def test_a_start_that_timed_out_but_landed_on_the_host_is_found_and_recorded_and_the_host_stays_up():
+    app = create_ctfd(user_mode="teams", enable_plugins=True)
+    with app.app_context():
+        c_id, alice, _ = _setup_route_world(app)
+        h1 = MockAgentClient("h1", slots_total=50, slots_used=5, timeout_start="created")
+        tracker = _hosts_world(app, {"h1": h1})
+        try:
+            r = alice.post("/api/v1/l3mon/instances", json={"challenge_id": c_id})
+            assert r.status_code == 201, r.get_data(as_text=True)
+            row = L3monInstance.query.filter_by(challenge_id=c_id).first()
+            assert row is not None and row.instance_id.startswith("inst_h1_") and row.host_name == "h1"
+            assert h1.start_attempts == 1, "the platform must not start a second instance after a timeout; it asks the host what it has"
+            assert tracker.is_host_down("h1") is False
+        finally:
+            set_host_tracker(None)
+            destroy_ctfd(app)
+
+
+def test_a_start_that_timed_out_and_did_not_land_is_busy_not_a_dead_host():
+    app = create_ctfd(user_mode="teams", enable_plugins=True)
+    with app.app_context():
+        c_id, alice, _ = _setup_route_world(app)
+        h1 = MockAgentClient("h1", slots_total=50, slots_used=5, timeout_start="lost")
+        tracker = _hosts_world(app, {"h1": h1})
+        try:
+            r = alice.post("/api/v1/l3mon/instances", json={"challenge_id": c_id})
+            assert r.status_code == 503 and r.get_json()["error"] == "busy", r.get_data(as_text=True)
+            assert tracker.is_host_down("h1") is False
+            assert L3monInstance.query.filter_by(challenge_id=c_id).first() is None, "nothing may be recorded for an instance that does not exist"
+        finally:
+            set_host_tracker(None)
+            destroy_ctfd(app)
+
+
+def test_a_capacity_probe_that_times_out_does_not_take_down_a_host_that_answered_a_moment_ago():
+    clients = {"h1": MockAgentClient("h1", slots_total=50, slots_used=5)}
+    clock = {"t": 1000.0}
+    tracker = HostCapacityTracker(hosts=[{"name": "h1", "url": "http://10.0.1.10:8300", "router_url": "http://10.0.1.10:8090", "host": "h1.xyz", "weight": 1.0, "max_slots": 50}])
+    tracker.set_client_factory(lambda h, tok: clients[h["name"]])
+    tracker.set_time_provider(lambda: clock["t"])
+    first = tracker.get_capacity("h1")
+    assert first["slots_free"] == 45
+    clients["h1"].probe_timeout = True
+    clock["t"] += 20  # the 5 s cache has expired; the host answered 20 s ago and is slow now
+    again = tracker.get_capacity("h1")
+    assert again["slots_total"] == 50, "the last known answer is used while the host is slow"
+    assert tracker.is_host_down("h1") is False
+    clock["t"] += 200  # a host that has said nothing for minutes is another matter
+    with pytest.raises(InstancerClientError):
+        tracker.get_capacity("h1")
+    assert tracker.is_host_down("h1") is True
+
+
+def test_a_refused_probe_still_marks_the_host_down_at_once():
+    clients = {"h1": MockAgentClient("h1", slots_total=50, slots_used=5)}
+    tracker = HostCapacityTracker(hosts=[{"name": "h1", "url": "http://10.0.1.10:8300", "router_url": "http://10.0.1.10:8090", "host": "h1.xyz", "weight": 1.0, "max_slots": 50}])
+    tracker.set_client_factory(lambda h, tok: clients[h["name"]])
+    tracker.get_capacity("h1")
+    clients["h1"].should_fail = True  # upstream_unavailable: connection refused / unreachable
+    tracker.reset_cache()
+    with pytest.raises(InstancerClientError):
+        tracker.get_capacity("h1")
+    assert tracker.is_host_down("h1") is True
+
+
+# ---------------------------------------------------------------------------
+# The platform's rows must follow what the host really has (real host, 21 Nov 2026)
+#
+# A crash, the memory limit or a reboot removes an instance from the host. The platform's own row kept saying "running" until its 45 minutes were up, and a
+# player pressing Start was handed that dead row back: the instance they were looking at answered nothing, and Start did nothing new.
+# ---------------------------------------------------------------------------
+
+def _age_rows(minutes: int):
+    for row in L3monInstance.query.all():
+        row.created_at = datetime.datetime.utcnow() - datetime.timedelta(minutes=minutes)
+    db.session.commit()
+
+
+def test_an_instance_that_is_gone_from_its_host_leaves_the_players_list_and_the_challenge_can_be_started_again():
+    app = create_ctfd(user_mode="teams", enable_plugins=True)
+    with app.app_context():
+        c_id, alice, _ = _setup_route_world(app)
+        h1 = MockAgentClient("h1", slots_total=50, slots_used=5)
+        tracker = _hosts_world(app, {"h1": h1})
+        try:
+            first = alice.post("/api/v1/l3mon/instances", json={"challenge_id": c_id})
+            assert first.status_code == 201
+            dead_id = first.get_json()["data"]["id"] if "id" in first.get_json()["data"] else L3monInstance.query.one().instance_id
+            _age_rows(5)
+            h1.started_instances.clear()  # the instance is gone from the host (a crash, the memory limit, a reboot)
+            tracker.reset_cache()
+            listed = alice.get("/api/v1/l3mon/instances").get_json()["data"]
+            assert listed["instances"] == [], f"a dead instance must not be listed as running: {listed}"
+            assert listed["limits"]["live"] == 0
+            again = alice.post("/api/v1/l3mon/instances", json={"challenge_id": c_id})
+            assert again.status_code == 201, "Start must start a NEW instance, not hand back the dead one: " + again.get_data(as_text=True)
+            assert h1.start_attempts == 2
+            assert L3monInstance.query.filter(L3monInstance.active_key != None).count() == 1  # noqa: E711
+            assert L3monInstance.query.filter_by(instance_id=dead_id).first().state == "expired"
+        finally:
+            set_host_tracker(None)
+            destroy_ctfd(app)
+
+
+def test_a_start_on_a_dead_record_starts_a_new_instance_without_the_list_being_read_first():
+    app = create_ctfd(user_mode="teams", enable_plugins=True)
+    with app.app_context():
+        c_id, alice, _ = _setup_route_world(app)
+        h1 = MockAgentClient("h1", slots_total=50, slots_used=5)
+        tracker = _hosts_world(app, {"h1": h1})
+        try:
+            assert alice.post("/api/v1/l3mon/instances", json={"challenge_id": c_id}).status_code == 201
+            _age_rows(5)
+            h1.started_instances.clear()
+            tracker.reset_cache()
+            again = alice.post("/api/v1/l3mon/instances", json={"challenge_id": c_id})
+            assert again.status_code == 201 and h1.start_attempts == 2, again.get_data(as_text=True)
+        finally:
+            set_host_tracker(None)
+            destroy_ctfd(app)
+
+
+def test_a_young_instance_is_never_judged_gone_because_the_hosts_answer_may_be_older_than_the_start():
+    app = create_ctfd(user_mode="teams", enable_plugins=True)
+    with app.app_context():
+        c_id, alice, _ = _setup_route_world(app)
+        h1 = MockAgentClient("h1", slots_total=50, slots_used=5)
+        tracker = _hosts_world(app, {"h1": h1})
+        try:
+            assert alice.post("/api/v1/l3mon/instances", json={"challenge_id": c_id}).status_code == 201
+            h1.started_instances.clear()  # the host has not got it in its list (yet, or any more), but the row was made a moment ago
+            tracker.reset_cache()
+            listed = alice.get("/api/v1/l3mon/instances").get_json()["data"]
+            assert len(listed["instances"]) == 1, "a row made seconds ago stays until it is old enough to be judged"
+        finally:
+            set_host_tracker(None)
+            destroy_ctfd(app)
+
+
+def test_when_the_host_cannot_list_its_instances_the_players_rows_are_left_alone():
+    app = create_ctfd(user_mode="teams", enable_plugins=True)
+    with app.app_context():
+        c_id, alice, _ = _setup_route_world(app)
+        h1 = MockAgentClient("h1", slots_total=50, slots_used=5)
+        tracker = _hosts_world(app, {"h1": h1})
+        try:
+            assert alice.post("/api/v1/l3mon/instances", json={"challenge_id": c_id}).status_code == 201
+            _age_rows(5)
+
+            def broken(team_id=None):
+                raise InstancerClientError(504, "timeout", "the host is slow")
+
+            h1.list_instances = broken
+            tracker.reset_cache()
+            listed = alice.get("/api/v1/l3mon/instances").get_json()["data"]
+            assert len(listed["instances"]) == 1, "a failed question is not an instance that is gone"
+            assert tracker.is_host_down("h1") is False
         finally:
             set_host_tracker(None)
             destroy_ctfd(app)

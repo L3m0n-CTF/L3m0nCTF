@@ -63,11 +63,26 @@ def test_the_platform_runs_only_the_router_and_never_a_docker_socket(fleet):
             assert "docker.sock" not in str(vol.get("source", "")) + str(vol.get("target", "")), f"{name} mounts the Docker socket"
 
 
+def test_the_instance_addresses_are_crew_only_unless_the_event_opens_them(fleet):
+    """Owner's instruction of 21 Nov 2026 (STRICT): during the test rounds only the crew may reach instances. The router's gate (services/instancer/router/
+    access_gate.py) defaults to "crew" and a deployment that sets nothing gets the strict mode; the event setting is explicit."""
+    env = render(["instancer-central"], extra_env=fleet["env"])["services"]["router"]["environment"]
+    assert env["INSTANCE_ACCESS_MODE"] == "crew", "the default must be the strict mode"
+    assert env["INSTANCE_ACCESS_TEAM_DOMAIN"] == "" and env["INSTANCE_ACCESS_AUD"] == ""
+    opened = render(["instancer-central"], extra_env={**fleet["env"], "INSTANCE_ACCESS_MODE": "open"})["services"]["router"]["environment"]
+    assert opened["INSTANCE_ACCESS_MODE"] == "open"
+    given = render(["instancer-central"], extra_env={**fleet["env"], "INSTANCE_ACCESS_TEAM_DOMAIN": "crew-team.cloudflareaccess.com", "INSTANCE_ACCESS_AUD": "abc"})["services"]["router"]["environment"]
+    assert given["INSTANCE_ACCESS_TEAM_DOMAIN"] == "crew-team.cloudflareaccess.com" and given["INSTANCE_ACCESS_AUD"] == "abc"
+
+
 def test_the_router_publishes_no_port_and_knows_the_instance_domain(fleet):
     router = render(["instancer-central"], extra_env=fleet["env"])["services"]["router"]
     assert not router.get("ports"), "only nginx, on the private network, talks to the central router; players reach raw TCP challenges on the challenge host itself"
     assert router["environment"]["INSTANCE_DOMAIN"] == "l3m0nctf.xyz"
     assert router["environment"]["ROUTER_HOSTS_PATH"] == "/etc/l3mon/hosts.json"
+    # a new instance is reachable only once both routers have polled for its route: found on the real host (21 Nov 2026) that with 2 s per hop a player who
+    # opened the address at once got 404 or "connection refused" for up to 4 s; at half a second the wait is about one second at most
+    assert float(router["environment"]["POLL_INTERVAL"]) <= 1.0
     assert router.get("read_only") is True and router.get("cap_drop") == ["ALL"], "hardened like every other service"
 
 

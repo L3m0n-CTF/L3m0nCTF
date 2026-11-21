@@ -138,7 +138,9 @@ configure_user_and_dirs() {
   run_cmd chown "${SERVICE_USER}:${SERVICE_USER}" "${CONFIG_DIR}"
 
   if [[ ! -f "${MANIFEST_FILE}" ]]; then
-    write_file "${MANIFEST_FILE}" "# L3m0nCTF challenge manifest placeholder" "0600"
+    # 0644, not 0600: the agent container runs as uid 10001 and reads this file through a bind mount (a 0600 file of another owner is unreadable there);
+    # it holds no secret, and the folder is 0700 so no other user of the machine can reach it
+    write_file "${MANIFEST_FILE}" "# L3m0nCTF challenge manifest placeholder" "0644"
     run_cmd chown "${SERVICE_USER}:${SERVICE_USER}" "${MANIFEST_FILE}"
   fi
 }
@@ -170,7 +172,8 @@ configure_docker_daemon() {
     "max-file": "3"
   },
   "no-new-privileges": true,
-  "live-restore": true
+  "live-restore": true,
+  "userland-proxy": false
 }
 EOF
 )
@@ -193,6 +196,18 @@ configure_env_file() {
   echo "--- [6/10] Writing Challenge Host Environment (/etc/l3mon/challenge-host.env) ---"
   local env_file="${L3MON_ENV_FILE:-/etc/l3mon/challenge-host.env}"
   local host_bind_ip="${CHALLENGE_HOST_PRIVATE_IP:-10.0.1.10}"
+  # What the agent may admit. The operator can give both figures; otherwise the memory ceiling is derived from this machine's RAM: all of it except 1536 MB
+  # for the system, Docker, the agent, the router and the socket proxy, and then a tenth of what is left for kernel buffers. (Found on the real host: the
+  # agent had fixed figures, 200 instances and 16384 MB, and admitted against them on an 8 GB machine.)
+  local total_mb derived_mb max_mem_mb max_slots
+  total_mb="$(awk '/^MemTotal:/ {printf "%d", $2/1024}' /proc/meminfo 2>/dev/null || true)"
+  if [[ "${total_mb:-0}" -gt 2048 ]]; then
+    derived_mb=$(( (total_mb - 1536) * 9 / 10 ))
+  else
+    derived_mb=512
+  fi
+  max_mem_mb="${INSTANCER_MAX_MEM_MB:-${derived_mb}}"
+  max_slots="${INSTANCER_MAX_SLOTS:-200}"
   local env_content
   env_content=$(cat <<EOF
 # L3m0nCTF Challenge Host Environment
@@ -201,6 +216,10 @@ INSTANCER_POOL_SUBNET_SIZE="${POOL_SUBNET_SIZE}"
 PLATFORM_VM_IP="${PLATFORM_VM_IP}"
 INSTANCER_TRUSTED_FORWARDERS="${PLATFORM_VM_IP}"
 HOST_PRIVATE_BIND_IP="${host_bind_ip}"
+INSTANCER_MAX_MEM_MB="${max_mem_mb}"
+INSTANCER_MAX_SLOTS="${max_slots}"
+TCP_PORT_FIRST="${TCP_PORT_FIRST:-30000}"
+TCP_PORT_LAST="${TCP_PORT_LAST:-30199}"
 EOF
 )
   write_file "${env_file}" "${env_content}" "0600"
@@ -362,7 +381,7 @@ verify_pool_activation() {
 print_next_steps() {
   echo "--- [10/10] Bootstrap Complete ---"
   echo "Next steps on challenge host:"
-  echo "1. Place deployment tokens in /etc/l3mon/secrets (mode 0600, root-only)."
+  echo "1. Place deployment tokens in /etc/l3mon/secrets (the folder 0700, each token file 0644: the containers run as uid 10001 and 10002 and could not read a 0600 file)."
   echo "2. Populate /etc/l3mon/challenges.toml with challenge manifests."
   echo "3. Run: docker compose --env-file /etc/l3mon/challenge-host.env -f deploy/compose/compose.challenge-host.yml up -d"
   echo "4. Add host to platform hosts.json with public_tcp_host and router_url."

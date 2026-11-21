@@ -5,11 +5,79 @@ import json
 import logging
 import os
 import re
+import socket
 import time
 import urllib.parse
 from typing import Optional
 
 _log = logging.getLogger("l3mon.instancer.router")
+
+
+def without_access_credentials(name: str, value: str):
+    """(name, value) with Cloudflare Access's credentials taken out, or None if nothing is left of the header.
+
+    The crew gate (access_gate.py) reads the Access token; the challenge must never receive it: a challenge could replay a crew member's token against
+    crew.l3m0nctf.xyz. All headers Cf-Access-* go, and every cookie whose name starts with CF_ (CF_Authorization, CF_AppSession, CF_Binding: Access's own).
+    The challenge's own cookies are kept.
+    """
+    lower = name.lower().strip()
+    if lower.startswith("cf-access-"):
+        return None
+    if lower == "cookie":
+        kept = [part.strip() for part in value.split(";") if part.strip() and not part.strip().startswith("CF_")]
+        return (name, "; ".join(kept)) if kept else None
+    return name, value
+
+
+# One attempt to connect to an instance. An address that answers nothing (an instance that was just stopped has no network any more) must not hold a visitor
+# for the 30 s idle timeout that this used to wait.
+BACKEND_CONNECT_TIMEOUT = 3.0
+# A NEW instance (its route says when it was started) may still be starting its server: the container exists before the challenge has opened its port.
+# Within this time after the start the router keeps trying instead of closing the player's connection (found on the real host, 21 Nov 2026).
+READY_GRACE_SECONDS = 20.0
+READY_RETRY_DELAY = 0.25
+
+
+async def connect_to_instance(route: dict, ip: str, port: int, connect_timeout: float):
+    """Open a connection to an instance, giving an instance that was started a moment ago time to open its port. An older instance, or a route
+    without a start time, gets one attempt: refusing at once is right for a container that is gone."""
+    created = route.get("created_at")
+    grace_end = float(created) + READY_GRACE_SECONDS if isinstance(created, (int, float)) and not isinstance(created, bool) else 0.0
+    while True:
+        try:
+            return await asyncio.wait_for(asyncio.open_connection(ip, port), timeout=connect_timeout)
+        except (OSError, asyncio.TimeoutError):
+            if time.time() + READY_RETRY_DELAY >= grace_end:
+                raise
+            await asyncio.sleep(READY_RETRY_DELAY)
+
+
+def local_address_towards(url: str, attempts: int = 30, delay: float = 1.0) -> str:
+    """The address this machine itself uses to reach the host named in `url`: the router's address on the trusted network (the one the agent is on).
+
+    The host router is attached to the private network of every instance it serves, so that it can reach the instance. If it listened on every address
+    (0.0.0.0) it would also listen there, and a player with code execution inside an instance could connect to it: to the 200 TCP relay ports (the other
+    teams' TCP instances) and to the HTTP port (any instance whose id they knew). Listening only on this address leaves the instance networks nothing to
+    connect to. It is found the way the kernel would pick a source address for a connection to the agent: no packet is sent.
+    A name that does not resolve is an error, never a fallback to 0.0.0.0 (a router that cannot tell where it is must not guess "everywhere").
+    """
+    parsed = urllib.parse.urlparse(url)
+    host = parsed.hostname
+    if not host:
+        raise ValueError(f"cannot choose a listen address: no host in {url!r}")
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    last: Exception | None = None
+    for attempt in range(max(1, attempts)):
+        try:
+            infos = socket.getaddrinfo(host, port, socket.AF_INET, socket.SOCK_DGRAM)
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+                s.connect(infos[0][4])
+                return s.getsockname()[0]
+        except OSError as e:
+            last = e
+            if attempt + 1 < attempts:
+                time.sleep(delay)
+    raise ValueError(f"cannot choose a listen address: {host!r} does not resolve ({last})")
 
 _ID_PATTERN = re.compile(r"^[0-9a-f]{32}\Z")
 _HOP_BY_HOP = {
@@ -288,6 +356,8 @@ class InstanceRouter:
         hosts: Optional[list[dict]] = None,
         pool_subnet_size: int = 24,
         trusted_forwarders: Optional[list[str] | str] = None,
+        listen_addr: str = "0.0.0.0",
+        access_gate=None,
     ):
         if not (1024 <= tcp_port_start <= 65535):
             raise ValueError(f"INSTANCER_TCP_PORT_START must be between 1024 and 65535, got {tcp_port_start}")
@@ -362,6 +432,10 @@ class InstanceRouter:
         self.pool_subnet_size = pool_subnet_size
         self.tcp_connect_timeout = tcp_connect_timeout
         self.allow_loopback_for_tests = allow_loopback_for_tests
+        # where the relay listeners bind (the HTTP listener is started by main.py with the same address); see local_address_towards
+        self.listen_addr = listen_addr
+        # the crew-only gate of the central router (services/instancer/router/access_gate.py); None = no gate (a host router, which only the central router reaches)
+        self.access_gate = access_gate
 
         # Hop 2 trusted central router forwarders for X-L3mon-Client-IP extraction
         self.trusted_forwarders: list[ipaddress.IPv4Network | ipaddress.IPv6Network] = []
@@ -787,13 +861,14 @@ class InstanceRouter:
                 try:
                     server = await asyncio.start_server(
                         lambda r, w, port=p: self.handle_tcp_client(r, w, port),
-                        "0.0.0.0",
+                        self.listen_addr,
                         p,
                     )
                     self._tcp_listeners[p] = server
                     self._tcp_routes[p] = route
                     _log.info(
-                        "Started TCP relay listener on 0.0.0.0:%d -> %s:%s (instance: %s)",
+                        "Started TCP relay listener on %s:%d -> %s:%s (instance: %s)",
+                        self.listen_addr,
                         p,
                         route.get("target_ip"),
                         route.get("target_port"),
@@ -875,10 +950,7 @@ class InstanceRouter:
 
         try:
             try:
-                backend_reader, backend_writer = await asyncio.wait_for(
-                    asyncio.open_connection(target_ip, target_port),
-                    timeout=self.tcp_connect_timeout,
-                )
+                backend_reader, backend_writer = await connect_to_instance(route, target_ip, target_port, self.tcp_connect_timeout)
             except Exception as e:
                 self._tcp_metrics_connect_failures += 1
                 _log.warning("TCP connect failure to target %s:%s: %s", target_ip, target_port, e)
@@ -1056,6 +1128,20 @@ class InstanceRouter:
             "# TYPE instancer_router_routes_total gauge",
             f"instancer_router_routes_total {len(self._routes)}",
         ]
+        gate = self.access_gate
+        if gate is not None:
+            lines += [
+                "# HELP instancer_router_access_gate_open 1 if the crew gate is in mode open (the event), 0 if it is shut to everybody but the crew.",
+                "# TYPE instancer_router_access_gate_open gauge",
+                f"instancer_router_access_gate_open {1 if gate.mode == 'open' else 0}",
+                "# HELP instancer_router_access_gate_configured 1 if the gate has what it needs to tell the crew from everybody else (always 1 in mode open).",
+                "# TYPE instancer_router_access_gate_configured gauge",
+                f"instancer_router_access_gate_configured {1 if gate.configured else 0}",
+                "# HELP instancer_router_access_refusals_total Instance requests refused by the crew gate, by reason.",
+                "# TYPE instancer_router_access_refusals_total counter",
+            ]
+            for reason, count in sorted(gate.refusals.items()):
+                lines.append(f'instancer_router_access_refusals_total{{reason="{reason}"}} {count}')
         return "\n".join(lines) + "\n" + self.format_tcp_metrics_prometheus()
 
     async def forward_stream(
@@ -1112,10 +1198,7 @@ class InstanceRouter:
         try:
             async def _do_forward():
                 nonlocal backend_writer
-                reader, writer = await asyncio.wait_for(
-                    asyncio.open_connection(target_ip, target_port),
-                    timeout=IDLE_TIMEOUT_SECONDS,
-                )
+                reader, writer = await connect_to_instance(route, target_ip, target_port, BACKEND_CONNECT_TIMEOUT)
                 backend_writer = writer
 
                 # Strip hop-by-hop, Content-Length, and incoming X-L3mon-Client-IP
@@ -1123,7 +1206,9 @@ class InstanceRouter:
                 for k, v in client_headers:
                     kl = k.lower().strip()
                     if kl not in _HOP_BY_HOP and kl != "content-length" and kl != "x-l3mon-client-ip":
-                        fwd_headers.append((k.strip(), v.strip()))
+                        cleaned = without_access_credentials(k, v)
+                        if cleaned is not None:
+                            fwd_headers.append((cleaned[0].strip(), cleaned[1].strip()))
 
                 # Central router forwarding to Hop 2 sets trusted X-L3mon-Client-IP
                 if self.is_central or (route and route.get("host_name")):

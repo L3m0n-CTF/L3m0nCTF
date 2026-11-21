@@ -67,7 +67,13 @@ services:
       ROUTER_HOSTS_PATH: /etc/l3mon/hosts.json
       L3MON_HOST_SECRETS_DIR: /run/host-secrets
       INSTANCE_DOMAIN: "${INSTANCE_DOMAIN:?INSTANCE_DOMAIN must be set (for example l3m0nctf.xyz); it must equal the challenge hosts' INSTANCE_DOMAIN}"
-      POLL_INTERVAL: "2.0"
+      POLL_INTERVAL: "0.5"
+      # The crew-only gate on instance addresses (services/instancer/router/access_gate.py, docs/deploy/instancer.md "The crew-only gate"). "crew" = only people
+      # that Cloudflare Access let in through the crew application (a token the router checks itself); "open" = everybody (the event). An unset or incomplete
+      # crew configuration refuses every instance request: the gate never falls back to open.
+      INSTANCE_ACCESS_MODE: "${INSTANCE_ACCESS_MODE:-crew}"
+      INSTANCE_ACCESS_TEAM_DOMAIN: "${INSTANCE_ACCESS_TEAM_DOMAIN:-}"
+      INSTANCE_ACCESS_AUD: "${INSTANCE_ACCESS_AUD:-}"
     networks:
       - instancer
 

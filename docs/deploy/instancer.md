@@ -67,6 +67,8 @@ The instancer provides three overlay configurations. **Never run the development
 ## 3. Configuration & Secrets
 
 ### 3.1 Secrets
+**File permissions.** The agent and the router run as uid 10001 and 10002 and read their token through a bind mount, which keeps the file's own permissions: a `0600` file owned by another user is unreadable there. Token files are therefore `0644` inside a `0700` folder (the folder keeps every other user of the machine out). The manifest, which holds no secret, is `0644` as well. (Both runbooks said `0600` before 21 Nov 2026; found on the real challenge host.)
+
 Secrets are generated using `python -m l3mon secrets generate --dir ../.secrets` and mounted via Docker secrets into `/run/secrets/`:
 
 | Secret Name | Secret File Path | Consumed By | Purpose |
@@ -89,14 +91,26 @@ Set in environment or `deploy/compose/generated/compose.env`:
 | `INSTANCER_MANIFEST_FILE` | `../../config/instancer/challenges.example.toml` | `/etc/l3mon/challenges.toml` | Path to challenge manifest file |
 | `INSTANCE_DOMAIN` | `localhost:8090` | Required (e.g. `inst.l3m0nctf.xyz`) | Wildcard domain routing suffix |
 | `INSTANCER_INSTANCE_POOL` | `10.200.0.0/16,172.16.0.0/12` | `10.200.0.0/16` | Valid network CIDR pool for instance containers |
-| `INSTANCER_TCP_PORT_START` | `30000` | `30000` | Start of TCP relay port range |
-| `INSTANCER_TCP_PORT_COUNT` | `200` | `200` | Number of allocated TCP relay ports |
+| `INSTANCER_TCP_PORT_START` | `30000` | `30000` | First port of the TCP relay range |
+| `INSTANCER_TCP_PORT_END` | `30199` | `30199` | Last port of the range (at most 2000 ports in all). `INSTANCER_TCP_PORT_COUNT` is still read when no END is given; both must agree. A host runs at most as many raw-TCP instances at once as it has ports |
+| `TCP_PORT_FIRST` / `TCP_PORT_LAST` | `30000` / `30199` | sized for the peak | What `compose.challenge-host.yml` publishes and gives the agent and the router as START and END, written to `challenge-host.env` by `bootstrap.sh`. Open the same range in the cloud firewall for the event |
 | `INSTANCER_TCP_MAX_CONNS_PER_IP`| `60` | `60` | Max concurrent TCP connections per client IP |
 | `INSTANCER_TCP_MAX_TOTAL_CONNS` | `2000` | `2000` | Global TCP relay connection ceiling |
 | `INSTANCER_TCP_RATE_LIMIT_BPS` | `2097152` (2 MB/s) | `2097152` | Token bucket rate limit per client connection |
 | `INSTANCER_TCP_RATE_LIMIT_BURST`| `4194304` (4 MB) | `4194304` | Token bucket burst allowance |
-| `ROUTER_BIND_HOST` | `127.0.0.1` | `0.0.0.0` | IP interface where router listens |
+| `ROUTER_BIND_HOST` | `127.0.0.1` | `0.0.0.0` | The address the HOST publishes the router's ports on (a compose setting, not read by the router) |
+| `ROUTER_LISTEN_ADDR` | `auto` | `auto` | The address the router PROCESS listens on. `auto` = its address on the network of the agent. A host router must never listen on `0.0.0.0` (see "What an instance can reach" below). The central router, which has a hosts file, defaults to `0.0.0.0` |
 | `ROUTER_HTTP_PORT` | `8090` | `8090` | External TCP port for HTTP router |
+| `POLL_INTERVAL` | `0.5` | `0.5` | Seconds between a router's polls for routes. A new instance is reachable once the host router and then the central router have polled: about one second at most |
+| `INSTANCER_MAX_SLOTS` | `200` | from the sizing | The most instances this host admits at once |
+| `INSTANCER_MAX_MEM_MB` | `16384` | written by `bootstrap.sh` from the machine's RAM | The most memory, in MB, that the declared limits of the running instances may add up to. A start that would pass it is refused with `no_capacity` ("Host memory capacity reached"). Before 21 Nov 2026 this figure was fixed at 16384 and nothing could set it |
+| `INSTANCER_MEM_OVERCOMMIT` | `1` | `1` until each challenge's real memory has been measured | A declared `mem_mb` counts as `mem_mb / factor` against `INSTANCER_MAX_MEM_MB` (1 to 8). Real use is far below the declared limit for a small web challenge (about 20 MB of 128), so counting it in full admits about a hundred instances to a 16 GB host that really holds several hundred |
+| `INSTANCER_MAX_CONCURRENT_STARTS` | `8` | `8` | How many starts work on Docker at the same moment. The rest wait their turn |
+| `INSTANCER_START_WAIT_SECONDS` | `35` | `35` | How long a start may wait for its turn before the agent answers "busy, retry in a few seconds" (`no_capacity`, retry 5). Keep it below the platform's start timeout |
+| `L3MON_INSTANCER_START_TIMEOUT` | `45` | `45` | The platform's timeout for a start call (other calls keep 10 s, capacity probes 6 s). A timeout is reported as "timeout", never as a dead host |
+| `INSTANCE_ACCESS_MODE` | `crew` | `crew` until the event, then `open` | The crew-only gate on instance addresses (central router only; see "The crew-only gate") |
+| `INSTANCE_ACCESS_TEAM_DOMAIN` | | `<name>.cloudflareaccess.com` | The Cloudflare Access team name that issues the tokens |
+| `INSTANCE_ACCESS_AUD` | | 64 hex characters, comma-separated for several | The application tag(s) of the crew application in Cloudflare Access |
 
 ---
 
@@ -176,6 +190,129 @@ It runs only the **central router** (hop 1, no published port), gives CTFd the h
 **Security note: instance pages are on a sibling name of the platform (the owner's choice of 19 Nov 2026), so they are the same *site* as the platform though not the same *origin*.** What protects the platform: (1) its session cookie is `__Host-session` (`Secure; HttpOnly; Path=/`, no `Domain`; checked live on 19 Nov with `curl -sI https://play.l3m0nctf.xyz/login`), and a browser refuses to let any other origin or a `Domain` cookie overwrite, shadow or delete a `__Host-` cookie, so a challenge page cannot fix or replace a player's session; (2) the Same-Origin Policy keeps a challenge page from reading anything of the platform (different host name), and the platform sends no cross-origin permission headers; (3) every state-changing request to CTFd carries a CSRF token that lives in the session, which a challenge page cannot read; (4) nginx rewrites any `Domain` attribute a challenge sends to its own host name. What is **not** closed: a challenge page's own JavaScript can still write many cookies for the whole zone (`document.cookie` with `Domain=l3m0nctf.xyz`), enough to make the platform refuse a request from that visitor's browser (a request header that is too large) until the cookies are cleared. The victim must open that player's instance address, which is a random 32-character name. The complete fix is a second registrable domain for the instances (about two dollars a year; `INSTANCE_DOMAIN` on the platform and the hosts, a wildcard record and a certificate for it; **no code change**, the nginx block matches the 32 hex characters whatever the domain is). Decide before the event; for the test days the same domain is fine.
 
 Rollback is removing `instancer-central` from `L3MON_OVERLAYS` and recreating: the player experience (the board, flags, scoring) does not depend on it.
+
+---
+
+## 4a. What an instance can reach (and the proof)
+
+A player who gets code execution inside their own instance (that is the point of a pwn challenge) must not be able to reach anything else. `services/instancer/tools/real_host_proof.py` checks this, and the limits, on a REAL challenge host (not a fake Docker): authentication, bad input, the web flow, the container as Docker created it (read back from the daemon), isolation from inside an instance, lifecycle, TCP, resource limits, crash recovery, agent and router restarts, concurrency, kill-all, and leftovers. `services/instancer/tools/real_host_prepare.sh` builds the sample challenges (including a deliberately misbehaving one) and writes the test manifest. Run it before every event and after every change to the instancer, the router or the host set-up:
+
+```bash
+bash services/instancer/tools/real_host_prepare.sh
+python3 services/instancer/tools/real_host_proof.py --agent http://<private ip>:8300 --router http://<private ip>:8080 --tcp-host <private ip>
+python3 services/instancer/tools/real_host_proof.py --only expiry,capacity,leaks      # the long ones: the TTL, and filling the host to its memory ceiling
+```
+
+What the first run on the real host (21 Nov 2026) found, and what was done:
+
+| Found | Why it matters | Fixed |
+|---|---|---|
+| From inside team A's instance the router answered on its address on A's network: its HTTP port (a request with another instance's id as `Host` returned that instance's page) and all 200 TCP relay ports (team B's TCP instance answered) | The host router is attached to the private network of every instance, so a player with code execution in any instance could attack every TCP instance (the 200 ports are guessable) and any instance whose id they knew | The router listens only on its address on the trusted network (`ROUTER_LISTEN_ADDR=auto`, `local_address_towards` in `router.py`); proved again on the host |
+| 200 `docker-proxy` processes held 1731 MiB (8.5 MiB each) of an 8 GB machine before any challenge ran | 22 per cent of the machine, gone | `"userland-proxy": false` in `daemon.json` (the kernel forwards the ports); `bootstrap.sh` writes it; memory used fell from 1967 MiB to 727 MiB |
+| The agent ran on fixed ceilings (200 instances, 16384 MB) that nobody could set | It would have admitted instances well past the machine's memory | `INSTANCER_MAX_SLOTS` / `INSTANCER_MAX_MEM_MB`; admission refuses at the memory ceiling; `bootstrap.sh` derives it from the machine's RAM |
+| A container that died (a crash, the memory limit) stayed "running" until its TTL | The player saw a live instance that answered nothing and could only stop it and wait the full 60 s cooldown | A liveness sweep every 5 s tears it down; the team may start again after 10 s |
+| The relay listened, and web requests were routed, before the challenge had opened its port | A player who connected in the first second got an instant close (TCP) or a 502 (web) | The router keeps trying for 20 s after the start of an instance (`READY_GRACE_SECONDS`) |
+| A request to an instance that had just stopped hung for the 30 s idle timeout before the 404 | | One short connect timeout of 3 s (`BACKEND_CONNECT_TIMEOUT`) for an instance that is not new |
+| Routes were polled every 2 s per hop | A new instance answered 404 or "connection refused" for up to 4 s | `POLL_INTERVAL` 0.5 |
+| The runbooks said token and manifest files must be `0600` | The containers run as uid 10001 and 10002 and cannot read such a file | `0644` inside a `0700` folder |
+
+Known limits, not changed: the router does not carry WebSocket upgrades (`Upgrade` is a hop-by-hop header and is dropped), so a web challenge that needs a WebSocket does not work; the agent accepts a request body of any size from the platform (it is private and needs the token).
+
+---
+
+## 4b. The crew-only gate (instance addresses during a test round)
+
+**Why.** Owner's instruction of 21 Nov 2026, in capitals: while challenges are being tested, only the people the admins approved on `crew.l3m0nctf.xyz` may reach them. Instance addresses are `<32 hex>.l3m0nctf.xyz`, a name that the crew host's Cloudflare Access rule does not cover, so they need a gate of their own.
+
+**How it works.** Cloudflare Access (the service that guards the crew host) puts a signed token (a JWT, RS256) on every request it lets through. The central router checks that token itself, before it looks up the instance (`services/instancer/router/access_gate.py`), so the gate does not depend on the Cloudflare dashboard being set up right:
+
+- Mode `crew` (the default) lets a request through only with a valid token for one of the crew application's tags (`INSTANCE_ACCESS_AUD`) of the team `INSTANCE_ACCESS_TEAM_DOMAIN`. Everybody else gets the same `403` for every name, so an outsider cannot even tell whether an instance exists.
+- It **fails closed**: with the team name or the tag missing, or the signing keys unreachable and none known, it refuses everything. It never falls back to open.
+- RS256 only (not `none`, not HS256 with the public key as the secret); keys under 2048 bits are not trusted; expired, not-yet-valid, wrong-issuer and wrong-application tokens are refused. The keys come from `https://<team>.cloudflareaccess.com/cdn-cgi/access/certs`, are cached for an hour, are refreshed when a token names an unknown key (at most once a minute) and keep working for up to a day if Cloudflare cannot be reached.
+- The token and the `CF_` cookies are removed before a request is forwarded to a challenge: a challenge must never be able to replay a crew member's token against the crew host.
+- Metrics on the router: `instancer_router_access_gate_open`, `instancer_router_access_gate_configured`, `instancer_router_access_refusals_total{reason}`.
+- `l3mon deploy check` BLOCKS a deployment that has the central router on, mode `crew`, and no team name or tag, and says "TODO" when the mode is `open`.
+
+**The Cloudflare side (owner, once).** In Cloudflare Zero Trust, Access, Applications: add the hostname `*.l3m0nctf.xyz` to the crew application (so the policy is literally the crew policy), and add a Bypass application for each name that must stay public (`play`, `www`, the apex), because the most specific hostname wins. Then copy the crew application's Audience tag into `INSTANCE_ACCESS_AUD`. Add the wildcard DNS record last. Until then nothing is reachable at all, which is the strict state.
+
+**TCP instances** are not behind Cloudflare. For a test round the firewall rule `l3mon-chal-allow-tcp-relays` (TCP 30000-30199 from the whole internet) is DISABLED, and TCP instances are tried from inside the cloud network or through an IAP tunnel. Enable the rule again for the event.
+
+**For the event:** set `INSTANCE_ACCESS_MODE=open` in `production.env` and restart the router (`tools/compose.sh up -d router`). Nothing else changes.
+
+---
+
+## 4c. Sizing a challenge host
+
+The figure that matters is real memory per instance, which must be MEASURED for each real challenge, because it is far below the declared limit for a small web app and far above it for a heavy one. `pack_test.py` and `real_host_proof.py --only capacity` measure it. Measured on `l3mon-chal` (4 vCPU, 8 GB, 21 Nov 2026) with the repository's sample web challenge (Python `http.server`, declared limit 64 MB):
+
+- 90 instances held 1991 MB of host memory in all: **22 MB each** (including the router, the agent and one Docker network per instance), against 64 MB declared.
+- The agent admitted exactly the 90 that fit its ceiling of 5772 MB (64 MB declared each) and refused the next with `no_capacity`, a reason and a retry time.
+- A single start takes about 0.6 s; 24 simultaneous starts took 8.8 s (about 2.7 starts a second); stopping 90 instances took 28 s.
+
+**A burst of starts** (the opening minutes of the event). Measured on the same host with 80 teams starting at the same instant: the whole burst took 28-32 s (2.5-2.9 starts a second, which is how fast Docker does the network work of a start: about 0.8 s of Docker calls per start, spread over a network, an attach of the router, a create and a start), the median start waited 16 s, and 55 of 80 would have been slower than the platform's old 10 s timeout. Three things were wrong and are fixed:
+
+- the agent's HTTP server kept Python's listen queue of 5 and **reset 13 of the 80 requests** (now 512; all 80 succeed);
+- the platform treated a timeout as a dead host and **marked the only host down for 30 s** (refusing every start and showing every running instance as "error"). Now a start has a 45 s timeout; a timeout, or a "busy" answer, never marks a host down; after a timeout the platform asks the host whether the instance landed and records it if so; a "busy" start is tried on the other host, or the player is told to retry in 5 s; a capacity probe that times out keeps the last answer for up to 60 s;
+- starts are limited to 8 on Docker at the same moment, so a burst queues in the agent instead of piling hundreds of calls on the daemon.
+
+More starts a second needs more vCPUs or more hosts: a second host doubles it. Size the number of hosts for the opening burst, not only for how many instances run at once.
+
+`INSTANCER_MAX_MEM_MB` is checked against the DECLARED limits (the safe direction), so set `mem_mb` in the manifest to what the challenge really needs with some room, not to a round number.
+
+### What happens when something fails (all tried on the real host, 21 Nov 2026)
+
+| Failure | What happens |
+|---|---|
+| An instance crashes or is killed for memory | the agent drops it within 5 s; the player's page stops listing it; Start makes a new one after 10 s (not the 60 s stop cooldown) |
+| The challenge host reboots | the stack, the registry and the isolation firewall come back by themselves; the instances' containers are stopped (no restart policy, on purpose), the agent's liveness sweep removes them and their networks within seconds; the platform stops listing them; players Start again |
+| The agent or the router restarts | the agent rebuilds its records from Docker's labels (same ids, same expiry); the router polls routes again within a second; TCP relay ports come back |
+| 80 teams start at once | all succeed (they queue: 28-32 s for the last one); the platform waits up to 45 s, never marks the host down for a slow or busy answer |
+| A host answers `no_capacity` (memory ceiling or busy) | the start goes to the other host, or the player is told to retry in a few seconds |
+| The crew gate cannot reach Cloudflare for its keys | keys already known keep working for a day; with none known, instance addresses are refused (fails closed) |
+
+### Sizing for 878 players in 446 teams (the plan, and what is measured and what is not)
+
+**Measured on the real host (`l3mon-chal`, 4 vCPU / 8 GB):** real memory per instance, about 20 MiB for a small Flask web challenge and about 1.2 MiB for a socat pwn service (about 22 MB and about 5 MB of host memory each once the network and router share are counted); 90 instances running together held 1991 MB; starting is about 0.8 s of Docker work per instance and a 4 vCPU host does 2.5-2.9 starts a second; stopping 90 took 28 s; a reboot brings the stack back by itself.
+
+**The plan** (peak assumption: every team has 2 live instances, one web and one pwn, about 900 in all; the quota is 3 per team, so the absolute worst case is about 1300):
+
+| What | Needs | Why |
+|---|---|---|
+| Challenge hosts | **2 hosts, 8 vCPU and 16 GB each** (`e2-custom-8-16384`, about 0.27 US dollars an hour each) | memory: 450 web x 22 MB + 450 pwn x 5 MB is about 12 GB over two hosts, and the quota's worst case (about 1300) still fits in the 2 x 13 GB usable; CPU: an instance is held to 0.25 of a core and only a fraction are busy at once; the opening burst of about 450 starts clears in about 45 s at 5 starts a second per host |
+| TCP relay ports | `TCP_PORT_FIRST=30000`, `TCP_PORT_LAST=31999` on each host (2000 ports) and the same range in the cloud firewall | the range was 200 ports: at most 200 raw-TCP instances per host |
+| `INSTANCER_MAX_SLOTS` | 600 per host | the old default of 200 |
+| `INSTANCER_MAX_MEM_MB` | what `bootstrap.sh` writes (RAM minus 1536 MB, less a tenth: 13000 for 16 GB) | the ceiling |
+| `mem_mb` per challenge | the measured real use with headroom (for example 64 for a small Flask challenge, not 128), or `INSTANCER_MEM_OVERCOMMIT=2` once measured | admission counts declared limits |
+| `hosts.json` | both hosts, `max_slots` matching | the scheduler spreads starts by free slots |
+| Platform VM | **16 vCPU / 32 GB** for the event, set back down afterwards; `CTFD_WORKERS` to about twice the vCPU count; MariaDB `innodb_buffer_pool_size` 4-8 GB (it is 384 MB now) | the platform costs about 37 ms of one core per request at the event mix (measured on a laptop in October): 0.25 requests a second per player, so 878 players all online need about 8 cores before the cloud cores' own speed is counted; 16 gives room |
+| Cloud quota | **64 vCPUs** (it is 32 across all regions, and 16 + 2 x 8 is exactly 32) | a quota increase is a request that takes hours to days: ask now |
+
+**Not measured, and what would measure it:** the platform under the event's real mix on cloud cores (only the October laptop figure exists): the rehearsal of 27 November with a load script that signs in several hundred players, polls, and submits flags; and the instances under real play (a pwn exploit loop on 50 teams at once). The numbers above are what the plan rests on until then. **Equal service** is protected by the per-team quota (3), the 60 s cooldown, the per-address limits (100 requests a second with a burst of 200, enough for a lab behind one address) and an admission that answers `no_capacity` with a reason and a retry time instead of failing: it is violated only if capacity runs out, so capacity must be sized above the peak, not at it.
+
+---
+
+## 4d. What a challenge must look like to run as an instance (author checklist)
+
+The instancer runs every instance as a normal user (uid 10001) on a read-only root file system, with no capabilities, no outbound network, one container, and the flag in the environment variable `FLAG`. That is what makes it safe to give a player code execution inside it. A challenge that was written for a plain `docker compose up` often needs a small change. Tested on the real host with the owner's own challenges and reference solvers (21 Nov 2026):
+
+| The challenge does | Under the instancer | What to do |
+|---|---|---|
+| Reads the flag from `FLAG` and only serves it (Turing Gate, Deep Index) | runs as delivered | nothing |
+| Writes files into its own directory at start (Delos Console writes two files into `/app`) | dies at start: the root file system is read-only and the user is not root | make the file names links, at build time, to `/tmp` (`RUN ln -s /tmp/<name> /app/<name>`). The code and the layout stay the same |
+| Writes the flag file from `FLAG` in an entry-point that runs as root (Zero Cool, Jarvis Override) | the writes fail, **silently** (`2>/dev/null`), and the instance serves the baked placeholder flag | the entry-point writes it under `/tmp` (`cd /tmp` for a binary that reads `flag.txt` from its working directory; a build-time link `/app/flag.txt -> /tmp/flag.txt` for one that reads an absolute path). Do not bake a flag into the image |
+| Needs `NET_ADMIN`, runs `iptables`, runs as root (UPI Sandbox Bypass) | refused by the safety checks | not supported: the platform keeps these off on purpose |
+| Is two or more containers, or a fixed subnet (UPI Sandbox Bypass; the three Ollama challenges need a model container each) | not supported: one container per instance | merge into one container, or run the shared part as one shared service outside the instancer |
+| Needs outbound network access, such as DNS to the player's own server (UPI Sandbox Bypass) | not supported: instance networks have no way out, by design | no per-challenge egress exists; see the open decisions in `docs/remaining-work.md` |
+| Needs a WebSocket | not supported (the router drops `Upgrade`) | use plain requests |
+
+Things to know when adapting:
+
+- `/tmp` is a RAM-backed file system of 64 MB that counts against the instance's memory limit (`mem_mb`): fill it and the instance is killed for memory. Give a challenge that writes much to `/tmp` a larger `mem_mb`.
+- A pwn challenge is often sensitive to its CPU quota; check it with the quota you will set (the Zero Cool exploit works at `cpus = 0.25`).
+- Check the adaptation with the author's own reference solver against the live instance, for two teams with different flags: each solve must return that team's flag. `services/instancer/tools/real_host_proof.py` shows how to start instances; the owner challenge run of 21 Nov 2026 used `/etc/hosts` entries for the instance names.
+- Images are built in CI and pulled by digest. Never build on a challenge host: its isolation firewall drops traffic to `169.254.169.254`, which is also Google's DNS resolver, so a build on Docker's default network cannot resolve any name (and a build on the host network could reach the metadata address).
+
+Measured real memory per instance on the real host: Turing Gate, Deep Index and Delos Console about 20 MiB each (declared 128 MB); Zero Cool and Jarvis Override about 1.2 MiB (declared 64 MB).
 
 ---
 

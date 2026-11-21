@@ -12,6 +12,8 @@ _log = logging.getLogger("l3mon.instancer")
 
 MAX_INSTANCES_PER_TEAM = 3
 COOLDOWN_SECONDS = 60
+# After an instance DIED on its own (a crash, the memory limit): the team may start it again after this short wait, not after the full stop cooldown.
+CRASH_COOLDOWN_SECONDS = 10
 MIN_RENEW_INTERVAL_SECONDS = 60
 ABSOLUTE_LIFETIME_SECONDS = 3 * 3600  # 3 hours
 
@@ -127,6 +129,9 @@ class InstanceManager:
         time_fn: Optional[Callable[[], float]] = None,
         host_name: str = "default",
         agent_mode: bool = False,
+        max_concurrent_starts: int = 8,
+        start_wait_seconds: float = 25.0,
+        mem_overcommit: float = 1.0,
     ):
         if not (1024 <= tcp_port_start <= 65535):
             raise ValueError(f"INSTANCER_TCP_PORT_START must be between 1024 and 65535, got {tcp_port_start}")
@@ -151,6 +156,14 @@ class InstanceManager:
         self.host_name = host_name
         self.agent_mode = agent_mode
         self._lock = threading.Lock()
+        # Only this many starts work on Docker at the same moment (the rest wait their turn, at most start_wait_seconds, then are told "busy, retry in a few
+        # seconds"). Found on the real host (21 Nov 2026): 80 starts at once took 28 s in all because Docker does network work one piece at a time; the
+        # median start waited 16 s and 55 of 80 were slower than the platform's 10 s timeout.
+        self.start_wait_seconds = start_wait_seconds
+        # A declared memory limit counts as limit / mem_overcommit against max_mem_mb. 1.0 counts it in full (the safe way); a higher factor is for a host whose
+        # challenges have been MEASURED to use far less than they declare (docs/deploy/instancer.md, "Sizing a challenge host")
+        self.mem_overcommit = max(1.0, float(mem_overcommit))
+        self._start_slots = threading.BoundedSemaphore(max(1, int(max_concurrent_starts)))
 
         # State storage
         self._instances: dict[str, InstanceRecord] = {}  # instance_id -> record
@@ -273,6 +286,11 @@ class InstanceManager:
             total_active = len([inst for inst in self._instances.values() if inst.state in (InstanceState.RUNNING, InstanceState.STARTING)])
             if total_active >= self.max_slots:
                 raise CapacityError(retry_after=30, message="Host slot capacity reached")
+            # The memory the running instances may use (their declared limits) plus this one must fit the ceiling of this machine
+            # (INSTANCER_MAX_MEM_MB). Found on the real host: only the slot count was checked, so 200 instances of 64 MB or more could be admitted
+            # on a machine that has 8 GB.
+            if (self._active_mem_mb() + spec.mem_mb) / self.mem_overcommit > self.max_mem_mb:
+                raise CapacityError(retry_after=30, message="Host memory capacity reached")
 
             # 5. Allocate resources
             inst_id = secrets.token_hex(16).lower()  # 32 lowercase hex characters
@@ -312,11 +330,8 @@ class InstanceManager:
             self._team_index.setdefault(team_id, set()).add(inst_id)
             self._challenge_index[key] = inst_id
 
-        # Network creation and Docker calls OUTSIDE self._lock
-        net_name = f"l3mon_inst_{inst_id}"
-        try:
-            self.docker.create_network(net_name, internal=True, labels={"l3mon.instance": inst_id})
-        except Exception as e:
+        # Wait for a turn on Docker (see max_concurrent_starts). A start that waits too long gives its reservation back and is told to retry.
+        if not self._start_slots.acquire(timeout=self.start_wait_seconds):
             with self._lock:
                 self._instances.pop(inst_id, None)
                 if team_id in self._team_index:
@@ -325,118 +340,135 @@ class InstanceManager:
                     self._challenge_index.pop(key, None)
                 if allocated_tcp_port is not None:
                     self._allocated_tcp_ports.discard(allocated_tcp_port)
-            raise InstancerError(f"Failed to create network: {e}")
-
-        # Attach router to network
+            raise CapacityError(retry_after=5, message="Host busy starting other instances; retry in a few seconds")
         try:
-            self.docker.connect_network(net_name, self.router_container_name)
-        except Exception as e:
-            _log.warning("Could not connect router container '%s' to network '%s': %s", self.router_container_name, net_name, e)
-
-        # Build Docker container spec
-        container_labels = {
-            "l3mon.instance": inst_id,
-            "l3mon.team_id": str(team_id),
-            "l3mon.challenge_id": str(challenge_id),
-            "l3mon.slug": slug,
-            "l3mon.created_at": str(now),
-            "l3mon.expires_at": str(expires_at),
-            "l3mon.protocol": spec.protocol,
-            "l3mon.port": str(spec.port),
-            "l3mon.renewals": "0",
-        }
-        if allocated_tcp_port is not None:
-            container_labels["l3mon.tcp_port"] = str(allocated_tcp_port)
-
-        container_spec = {
-            "Image": spec.image,
-            "User": "10001:10001",
-            "Env": [f"FLAG={flag}"],
-            "Labels": container_labels,
-            "HostConfig": {
-                "NetworkMode": net_name,
-                "Privileged": False,
-                "CapDrop": ["ALL"],
-                "CapAdd": [],
-                "SecurityOpt": ["no-new-privileges:true"],
-                "ReadonlyRootfs": spec.read_only,
-                "Init": True,
-                "RestartPolicy": {"Name": "no"},
-                "Binds": [],
-                "VolumesFrom": [],
-                "Devices": [],
-                "NanoCpus": int(spec.cpus * 1_000_000_000),
-                "Memory": spec.mem_mb * 1024 * 1024,
-                "PidsLimit": spec.pids,
-                "PortBindings": {},
-                "Tmpfs": {"/tmp": "rw,noexec,nosuid,size=64m"},
-                "LogConfig": {"Type": "json-file", "Config": {"max-size": "10m", "max-file": "3"}},
-                "Ulimits": [{"Name": "nofile", "Soft": 1024, "Hard": 2048}],
-            },
-        }
-
-        # Security verification
-        try:
-            assert_safe(container_spec, dev_mode=self.dev_mode)
-        except Exception:
+            # Network creation and Docker calls OUTSIDE self._lock
+            net_name = f"l3mon_inst_{inst_id}"
             try:
-                self.docker.disconnect_network(net_name, self.router_container_name)
+                self.docker.create_network(net_name, internal=True, labels={"l3mon.instance": inst_id})
+            except Exception as e:
+                with self._lock:
+                    self._instances.pop(inst_id, None)
+                    if team_id in self._team_index:
+                        self._team_index[team_id].discard(inst_id)
+                    if self._challenge_index.get(key) == inst_id:
+                        self._challenge_index.pop(key, None)
+                    if allocated_tcp_port is not None:
+                        self._allocated_tcp_ports.discard(allocated_tcp_port)
+                raise InstancerError(f"Failed to create network: {e}")
+
+            # Attach router to network
+            try:
+                self.docker.connect_network(net_name, self.router_container_name)
+            except Exception as e:
+                _log.warning("Could not connect router container '%s' to network '%s': %s", self.router_container_name, net_name, e)
+
+            # Build Docker container spec
+            container_labels = {
+                "l3mon.instance": inst_id,
+                "l3mon.team_id": str(team_id),
+                "l3mon.challenge_id": str(challenge_id),
+                "l3mon.slug": slug,
+                "l3mon.created_at": str(now),
+                "l3mon.expires_at": str(expires_at),
+                "l3mon.protocol": spec.protocol,
+                "l3mon.port": str(spec.port),
+                "l3mon.renewals": "0",
+            }
+            if allocated_tcp_port is not None:
+                container_labels["l3mon.tcp_port"] = str(allocated_tcp_port)
+
+            container_spec = {
+                "Image": spec.image,
+                "User": "10001:10001",
+                "Env": [f"FLAG={flag}"],
+                "Labels": container_labels,
+                "HostConfig": {
+                    "NetworkMode": net_name,
+                    "Privileged": False,
+                    "CapDrop": ["ALL"],
+                    "CapAdd": [],
+                    "SecurityOpt": ["no-new-privileges:true"],
+                    "ReadonlyRootfs": spec.read_only,
+                    "Init": True,
+                    "RestartPolicy": {"Name": "no"},
+                    "Binds": [],
+                    "VolumesFrom": [],
+                    "Devices": [],
+                    "NanoCpus": int(spec.cpus * 1_000_000_000),
+                    "Memory": spec.mem_mb * 1024 * 1024,
+                    "PidsLimit": spec.pids,
+                    "PortBindings": {},
+                    "Tmpfs": {"/tmp": "rw,noexec,nosuid,size=64m"},
+                    "LogConfig": {"Type": "json-file", "Config": {"max-size": "10m", "max-file": "3"}},
+                    "Ulimits": [{"Name": "nofile", "Soft": 1024, "Hard": 2048}],
+                },
+            }
+
+            # Security verification
+            try:
+                assert_safe(container_spec, dev_mode=self.dev_mode)
+            except Exception:
+                try:
+                    self.docker.disconnect_network(net_name, self.router_container_name)
+                except Exception:
+                    pass
+                try:
+                    self.docker.remove_network(net_name)
+                except Exception:
+                    pass
+                with self._lock:
+                    self._instances.pop(inst_id, None)
+                    if team_id in self._team_index:
+                        self._team_index[team_id].discard(inst_id)
+                    if self._challenge_index.get(key) == inst_id:
+                        self._challenge_index.pop(key, None)
+                    if allocated_tcp_port is not None:
+                        self._allocated_tcp_ports.discard(allocated_tcp_port)
+                raise
+
+            # Create and start container
+            name = inst_id
+            try:
+                real_cid = self.docker.create_container(container_spec, name=name)
+                self.docker.start_container(real_cid)
+            except Exception as e:
+                # Cleanup on failure
+                try:
+                    self.docker.remove_container(name)
+                except Exception:
+                    pass
+                try:
+                    self.docker.disconnect_network(net_name, self.router_container_name)
+                    self.docker.remove_network(net_name)
+                except Exception:
+                    pass
+                with self._lock:
+                    self._instances.pop(inst_id, None)
+                    if team_id in self._team_index:
+                        self._team_index[team_id].discard(inst_id)
+                    if self._challenge_index.get(key) == inst_id:
+                        self._challenge_index.pop(key, None)
+                    if allocated_tcp_port is not None:
+                        self._allocated_tcp_ports.discard(allocated_tcp_port)
+                raise InstancerError(f"Failed to create/start container: {e}")
+
+            # Retrieve target IP
+            target_ip = None
+            try:
+                cinfo = self.docker.list_containers(label_filter={"l3mon.instance": inst_id})
+                if cinfo:
+                    target_ip = cinfo[0].get("ip")
             except Exception:
                 pass
-            try:
-                self.docker.remove_network(net_name)
-            except Exception:
-                pass
+
             with self._lock:
-                self._instances.pop(inst_id, None)
-                if team_id in self._team_index:
-                    self._team_index[team_id].discard(inst_id)
-                if self._challenge_index.get(key) == inst_id:
-                    self._challenge_index.pop(key, None)
-                if allocated_tcp_port is not None:
-                    self._allocated_tcp_ports.discard(allocated_tcp_port)
-            raise
-
-        # Create and start container
-        name = inst_id
-        try:
-            real_cid = self.docker.create_container(container_spec, name=name)
-            self.docker.start_container(real_cid)
-        except Exception as e:
-            # Cleanup on failure
-            try:
-                self.docker.remove_container(name)
-            except Exception:
-                pass
-            try:
-                self.docker.disconnect_network(net_name, self.router_container_name)
-                self.docker.remove_network(net_name)
-            except Exception:
-                pass
-            with self._lock:
-                self._instances.pop(inst_id, None)
-                if team_id in self._team_index:
-                    self._team_index[team_id].discard(inst_id)
-                if self._challenge_index.get(key) == inst_id:
-                    self._challenge_index.pop(key, None)
-                if allocated_tcp_port is not None:
-                    self._allocated_tcp_ports.discard(allocated_tcp_port)
-            raise InstancerError(f"Failed to create/start container: {e}")
-
-        # Retrieve target IP
-        target_ip = None
-        try:
-            cinfo = self.docker.list_containers(label_filter={"l3mon.instance": inst_id})
-            if cinfo:
-                target_ip = cinfo[0].get("ip")
-        except Exception:
-            pass
-
-        with self._lock:
-            record.state = InstanceState.RUNNING
-            record.target_ip = target_ip
-            record.container_id = real_cid
-            return record.to_dict(self.instance_domain, self.tcp_host), True
+                record.state = InstanceState.RUNNING
+                record.target_ip = target_ip
+                record.container_id = real_cid
+                return record.to_dict(self.instance_domain, self.tcp_host), True
+        finally:
+            self._start_slots.release()
 
     def get_instance(self, instance_id: str) -> Optional[dict]:
         with self._lock:
@@ -479,7 +511,17 @@ class InstanceManager:
 
             return record.to_dict(self.instance_domain, self.tcp_host)
 
-    def stop_instance(self, instance_id: str) -> bool:
+    def _active_mem_mb(self) -> float:
+        """The declared memory limits of the live instances, in MB. The caller holds the lock. (Counted against the ceiling as limit / mem_overcommit.)"""
+        total = 0
+        for inst in self._instances.values():
+            if inst.state in (InstanceState.RUNNING, InstanceState.STARTING):
+                spec = self.manifest.get(inst.slug)
+                if spec:
+                    total += spec.mem_mb
+        return total
+
+    def stop_instance(self, instance_id: str, cooldown_seconds: int = COOLDOWN_SECONDS) -> bool:
         """Stop and tear down an instance. Idempotent."""
         with self._lock:
             record = self._instances.get(instance_id)
@@ -493,7 +535,7 @@ class InstanceManager:
 
             # Set cooldown for (team_id, challenge_id)
             key = (record.team_id, record.challenge_id)
-            self._cooldowns[key] = now + COOLDOWN_SECONDS
+            self._cooldowns[key] = now + cooldown_seconds
 
             if record.allocated_tcp_port is not None:
                 self._allocated_tcp_ports.discard(record.allocated_tcp_port)
@@ -555,15 +597,37 @@ class InstanceManager:
                 reaped.append(iid)
         return reaped
 
+    def reap_dead(self) -> list[str]:
+        """Tear down the instances whose container is no longer running (it crashed, or the memory limit killed it, or someone removed it).
+
+        Found on the real host: such an instance stayed "running" until its TTL, so the player saw a live instance that answered nothing and could only stop it
+        and wait for the full cooldown. Here the instance disappears from the player's list (the page offers Start again) and the team waits only
+        CRASH_COOLDOWN_SECONDS. If Docker cannot be asked nothing is changed: a failed question is not a dead container.
+        """
+        # RUNNING ones whose container died, and ERROR ones: after a reboot or a restart of the agent a record is rebuilt from Docker's labels as ERROR when its
+        # container is not running, and it would otherwise stay (with its stopped container and its network) for ever
+        with self._lock:
+            candidates = [inst.id for inst in self._instances.values() if inst.state in (InstanceState.RUNNING, InstanceState.ERROR)]
+        if not candidates:
+            return []
+        try:
+            listed = self.docker.list_containers(label_filter={"l3mon.instance": None})
+        except Exception as e:
+            _log.warning("Liveness sweep skipped, Docker did not answer: %s", e)
+            return []
+        alive = {c.get("labels", {}).get("l3mon.instance") for c in listed if c.get("state") in ("running", "created", "restarting")}
+        reaped = []
+        for iid in candidates:
+            if iid not in alive and self.stop_instance(iid, cooldown_seconds=CRASH_COOLDOWN_SECONDS):
+                _log.warning("Instance %s was not running any more (crashed or killed); torn down", iid)
+                reaped.append(iid)
+        return reaped
+
     def get_capacity(self) -> dict:
         with self._lock:
             active = [inst for inst in self._instances.values() if inst.state in (InstanceState.RUNNING, InstanceState.STARTING)]
             slots_used = len(active)
-            mem_mb_used = 0
-            for inst in active:
-                spec = self.manifest.get(inst.slug)
-                if spec:
-                    mem_mb_used += spec.mem_mb
+            mem_mb_used = int(round(self._active_mem_mb() / self.mem_overcommit))  # as counted against the ceiling
 
             return {
                 "host_name": self.host_name,
@@ -587,6 +651,7 @@ class InstanceManager:
                         "target_ip": inst.target_ip,
                         "target_port": inst.internal_port,
                         "port": inst.allocated_tcp_port,
+                        "created_at": inst.created_at,
                         "max_body_bytes": inst.max_body_bytes,
                         "response_timeout_seconds": inst.response_timeout_seconds,
                     })
