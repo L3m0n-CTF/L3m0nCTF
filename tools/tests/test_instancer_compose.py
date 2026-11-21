@@ -268,6 +268,14 @@ def test_challenge_host_compose_properties():
     assert agent_sub_size == "28" and router_sub_size == "28"
     assert "INSTANCER_TRUSTED_FORWARDERS" in router.get("environment", {})
 
+    # 6. The ceilings of THIS machine reach the agent (found on the real host on 21 Nov 2026: it ran on fixed figures, 200 instances and 16 GB, on an 8 GB
+    #    machine), and the router never listens on every address: it is attached to the network of every instance, so it must listen only on its address
+    #    on the trusted network (ROUTER_LISTEN_ADDR "auto", the default), see services/instancer/tests/test_router_listen_address.py
+    agent_env = agent.get("environment", {})
+    assert agent_env.get("INSTANCER_MAX_SLOTS") and agent_env.get("INSTANCER_MAX_MEM_MB"), "the agent must get INSTANCER_MAX_SLOTS and INSTANCER_MAX_MEM_MB"
+    assert router.get("environment", {}).get("ROUTER_LISTEN_ADDR", "auto") == "auto"
+    assert float(router.get("environment", {}).get("POLL_INTERVAL")) <= 1.0, "the relay port of a new TCP instance must appear within about a second"
+
     # 5. Logging rotation explicitly configured on all services
     for sname, sdef in services.items():
         logging_opts = sdef.get("logging", {}).get("options", {})

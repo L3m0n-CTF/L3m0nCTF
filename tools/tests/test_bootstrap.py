@@ -201,6 +201,33 @@ def test_bootstrap_non_default_subnet_size():
     assert 'INSTANCER_POOL_SUBNET_SIZE="26"' in res.stdout
 
 
+def test_bootstrap_turns_the_userland_proxy_off():
+    """Measured on the real challenge VM on 21 Nov 2026: the host router publishes 200 TCP relay ports (30000-30199), and Docker starts one docker-proxy
+    process for each of them: 203 processes holding 1731 MiB (8.5 MiB each) of an 8 GB machine before a single challenge ran (22 per cent of the machine).
+    With the proxy off the kernel forwards the ports (iptables rules) and no process exists. live-restore must stay on so a Docker restart keeps instances."""
+    bash_cmd = get_bash_cmd()
+    res = subprocess.run([bash_cmd, "deploy/challenge-host/bootstrap.sh"], cwd=str(ROOT), capture_output=True, text=True, timeout=15)
+    assert res.returncode == 0
+    assert '"userland-proxy": false' in res.stdout, res.stdout[-1500:]
+    assert '"live-restore": true' in res.stdout
+
+
+def test_bootstrap_writes_the_memory_ceiling_for_the_agent_into_the_env_file():
+    """The agent admitted instances against a fixed 16384 MB whatever the machine had (real host, 21 Nov 2026). bootstrap.sh now writes INSTANCER_MAX_MEM_MB
+    (and INSTANCER_MAX_SLOTS) into challenge-host.env: from the machine's RAM unless the operator gives it, never more than the machine can hold."""
+    bash_cmd = get_bash_cmd()
+    given = subprocess.run([bash_cmd, "deploy/challenge-host/bootstrap.sh"], cwd=str(ROOT), capture_output=True, text=True, timeout=15,
+                           env={**os.environ, "INSTANCER_MAX_MEM_MB": "5000", "INSTANCER_MAX_SLOTS": "90"})
+    assert given.returncode == 0
+    assert 'INSTANCER_MAX_MEM_MB="5000"' in given.stdout and 'INSTANCER_MAX_SLOTS="90"' in given.stdout, given.stdout[-1200:]
+    derived = subprocess.run([bash_cmd, "deploy/challenge-host/bootstrap.sh"], cwd=str(ROOT), capture_output=True, text=True, timeout=15)
+    import re
+    m = re.search(r'INSTANCER_MAX_MEM_MB="(\d+)"', derived.stdout)
+    assert m, derived.stdout[-1200:]
+    assert 512 <= int(m.group(1)) <= 1_048_576
+    assert re.search(r'INSTANCER_MAX_SLOTS="\d+"', derived.stdout)
+
+
 def test_bootstrap_firewall_only_mode():
     """Verify --firewall-only mode configures only firewall rules with iptables."""
     with tempfile.TemporaryDirectory() as stub_dir:

@@ -12,6 +12,8 @@ _log = logging.getLogger("l3mon.instancer")
 
 MAX_INSTANCES_PER_TEAM = 3
 COOLDOWN_SECONDS = 60
+# After an instance DIED on its own (a crash, the memory limit): the team may start it again after this short wait, not after the full stop cooldown.
+CRASH_COOLDOWN_SECONDS = 10
 MIN_RENEW_INTERVAL_SECONDS = 60
 ABSOLUTE_LIFETIME_SECONDS = 3 * 3600  # 3 hours
 
@@ -273,6 +275,11 @@ class InstanceManager:
             total_active = len([inst for inst in self._instances.values() if inst.state in (InstanceState.RUNNING, InstanceState.STARTING)])
             if total_active >= self.max_slots:
                 raise CapacityError(retry_after=30, message="Host slot capacity reached")
+            # The memory the running instances may use (their declared limits) plus this one must fit the ceiling of this machine
+            # (INSTANCER_MAX_MEM_MB). Found on the real host: only the slot count was checked, so 200 instances of 64 MB or more could be admitted
+            # on a machine that has 8 GB.
+            if self._active_mem_mb() + spec.mem_mb > self.max_mem_mb:
+                raise CapacityError(retry_after=30, message="Host memory capacity reached")
 
             # 5. Allocate resources
             inst_id = secrets.token_hex(16).lower()  # 32 lowercase hex characters
@@ -479,7 +486,17 @@ class InstanceManager:
 
             return record.to_dict(self.instance_domain, self.tcp_host)
 
-    def stop_instance(self, instance_id: str) -> bool:
+    def _active_mem_mb(self) -> int:
+        """The declared memory limits of the live instances, in MB. The caller holds the lock."""
+        total = 0
+        for inst in self._instances.values():
+            if inst.state in (InstanceState.RUNNING, InstanceState.STARTING):
+                spec = self.manifest.get(inst.slug)
+                if spec:
+                    total += spec.mem_mb
+        return total
+
+    def stop_instance(self, instance_id: str, cooldown_seconds: int = COOLDOWN_SECONDS) -> bool:
         """Stop and tear down an instance. Idempotent."""
         with self._lock:
             record = self._instances.get(instance_id)
@@ -493,7 +510,7 @@ class InstanceManager:
 
             # Set cooldown for (team_id, challenge_id)
             key = (record.team_id, record.challenge_id)
-            self._cooldowns[key] = now + COOLDOWN_SECONDS
+            self._cooldowns[key] = now + cooldown_seconds
 
             if record.allocated_tcp_port is not None:
                 self._allocated_tcp_ports.discard(record.allocated_tcp_port)
@@ -555,15 +572,35 @@ class InstanceManager:
                 reaped.append(iid)
         return reaped
 
+    def reap_dead(self) -> list[str]:
+        """Tear down the instances whose container is no longer running (it crashed, or the memory limit killed it, or someone removed it).
+
+        Found on the real host: such an instance stayed "running" until its TTL, so the player saw a live instance that answered nothing and could only stop it
+        and wait for the full cooldown. Here the instance disappears from the player's list (the page offers Start again) and the team waits only
+        CRASH_COOLDOWN_SECONDS. If Docker cannot be asked nothing is changed: a failed question is not a dead container.
+        """
+        with self._lock:
+            candidates = [inst.id for inst in self._instances.values() if inst.state == InstanceState.RUNNING]
+        if not candidates:
+            return []
+        try:
+            listed = self.docker.list_containers(label_filter={"l3mon.instance": None})
+        except Exception as e:
+            _log.warning("Liveness sweep skipped, Docker did not answer: %s", e)
+            return []
+        alive = {c.get("labels", {}).get("l3mon.instance") for c in listed if c.get("state") in ("running", "created", "restarting")}
+        reaped = []
+        for iid in candidates:
+            if iid not in alive and self.stop_instance(iid, cooldown_seconds=CRASH_COOLDOWN_SECONDS):
+                _log.warning("Instance %s was not running any more (crashed or killed); torn down", iid)
+                reaped.append(iid)
+        return reaped
+
     def get_capacity(self) -> dict:
         with self._lock:
             active = [inst for inst in self._instances.values() if inst.state in (InstanceState.RUNNING, InstanceState.STARTING)]
             slots_used = len(active)
-            mem_mb_used = 0
-            for inst in active:
-                spec = self.manifest.get(inst.slug)
-                if spec:
-                    mem_mb_used += spec.mem_mb
+            mem_mb_used = self._active_mem_mb()
 
             return {
                 "host_name": self.host_name,
@@ -587,6 +624,7 @@ class InstanceManager:
                         "target_ip": inst.target_ip,
                         "target_port": inst.internal_port,
                         "port": inst.allocated_tcp_port,
+                        "created_at": inst.created_at,
                         "max_body_bytes": inst.max_body_bytes,
                         "response_timeout_seconds": inst.response_timeout_seconds,
                     })

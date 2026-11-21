@@ -343,3 +343,33 @@ def test_the_crew_only_switch_file_must_exist_when_the_settings_name_it_and_a_mi
     assert statuses(items)["crew-only switch"] == deploy.TODO and "rehearsal" in next(i.detail for i in items if i.name == "crew-only switch"), "left on is a thing to know before an event"
     switch.write_text("this is not a switch\n", encoding="utf-8")
     assert "crew-only switch" in blocked(run(world))
+
+
+AUD = "0123456789abcdef" * 4  # an application tag of Cloudflare Access: 64 hex characters
+
+
+def test_the_crew_only_gate_on_instance_addresses_must_be_set_up_when_the_central_router_is_on(tmp_path):
+    """Owner's instruction of 21 Nov 2026 (STRICT): during a test round only the crew may reach instances. The gate fails closed, so a deployment without its
+    settings would refuse every instance request: the check says so before the start, and says plainly when the gate is open (the event setting)."""
+    world = make_deployment(tmp_path)
+    assert "instance addresses" not in statuses(run(world)), "without the central overlay there is no instance address and nothing to say"
+    world["env"]["L3MON_OVERLAYS"] = "identity,ops,instancer-central"
+    assert "instance addresses" in blocked(run(world)), "crew mode (the default) without a team name and an application tag"
+    world["env"]["INSTANCE_ACCESS_TEAM_DOMAIN"] = "crew-team.cloudflareaccess.com"
+    assert "instance addresses" in blocked(run(world)), "still no application tag"
+    world["env"]["INSTANCE_ACCESS_AUD"] = "not-a-tag"
+    assert "instance addresses" in blocked(run(world)), "an application tag is 64 hex characters"
+    world["env"]["INSTANCE_ACCESS_AUD"] = AUD
+    items = run(world)
+    assert statuses(items)["instance addresses"] == deploy.OK and "crew" in next(i.detail for i in items if i.name == "instance addresses")
+    world["env"]["INSTANCE_ACCESS_AUD"] = AUD + "," + AUD[::-1]
+    assert statuses(run(world))["instance addresses"] == deploy.OK, "several applications are allowed"
+    world["env"]["INSTANCE_ACCESS_TEAM_DOMAIN"] = "https://crew-team.cloudflareaccess.com/"
+    assert "instance addresses" in blocked(run(world)), "the team name is a host name, not a link"
+    world["env"]["INSTANCE_ACCESS_TEAM_DOMAIN"] = "crew-team.example.com"
+    assert "instance addresses" in blocked(run(world)), "only a cloudflareaccess.com name is a Cloudflare Access team"
+    world["env"]["INSTANCE_ACCESS_MODE"] = "open"
+    items = run(world)
+    assert statuses(items)["instance addresses"] == deploy.TODO and "everybody" in next(i.detail for i in items if i.name == "instance addresses")
+    world["env"]["INSTANCE_ACCESS_MODE"] = "maybe"
+    assert "instance addresses" in blocked(run(world))

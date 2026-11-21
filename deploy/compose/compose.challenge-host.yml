@@ -91,6 +91,10 @@ services:
       INSTANCER_TCP_HOST: "${CHALLENGE_HOST_TCP_NAME:-h1.inst.l3m0nctf.xyz}"
       INSTANCER_TCP_PORT_START: "30000"
       INSTANCER_TCP_PORT_COUNT: "200"
+      # What this machine admits: written into /etc/l3mon/challenge-host.env by bootstrap.sh from the machine's real RAM (docs/deploy/instancer.md, "Sizing a
+      # challenge host"). The fallbacks are cautious on purpose: an agent that knows nothing of its machine must not admit 200 instances of any size.
+      INSTANCER_MAX_SLOTS: "${INSTANCER_MAX_SLOTS:-200}"
+      INSTANCER_MAX_MEM_MB: "${INSTANCER_MAX_MEM_MB:-4096}"
       ROUTER_CONTAINER_NAME: l3mon-challenge-host-router-1
       INSTANCER_INSTANCE_POOL: "${INSTANCER_INSTANCE_POOL:-10.200.0.0/16}"
       INSTANCER_POOL_SUBNET_SIZE: "${INSTANCER_POOL_SUBNET_SIZE:-28}"
@@ -125,7 +129,7 @@ services:
       INSTANCER_URL: "http://agent:8300"
       ROUTER_TOKEN_FILE: /run/secrets/ROUTER_TOKEN
       INSTANCE_DOMAIN: "${INSTANCE_DOMAIN:-inst.l3m0nctf.xyz}"
-      POLL_INTERVAL: "2.0"
+      POLL_INTERVAL: "0.5"
       INSTANCER_INSTANCE_POOL: "${INSTANCER_INSTANCE_POOL:-10.200.0.0/16}"
       INSTANCER_POOL_SUBNET_SIZE: "${INSTANCER_POOL_SUBNET_SIZE:-28}"
       INSTANCER_TRUSTED_FORWARDERS: "${INSTANCER_TRUSTED_FORWARDERS:-}"

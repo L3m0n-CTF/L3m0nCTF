@@ -6,7 +6,8 @@ import logging
 import os
 import sys
 
-from services.instancer.router.router import MAX_BODY_BYTES, InstanceRouter, extract_instance_id
+from services.instancer.router.access_gate import AccessGate
+from services.instancer.router.router import MAX_BODY_BYTES, InstanceRouter, extract_instance_id, local_address_towards
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 _log = logging.getLogger("l3mon.instancer.router")
@@ -89,7 +90,17 @@ def parse_router_config(env: dict | None = None) -> dict:
 
     hosts_path = e.get("ROUTER_HOSTS_PATH", "").strip() or None
 
+    # Where the router listens. A host router is attached to the private network of every instance it serves, so it must listen ONLY on its address on the
+    # trusted network ("auto": the address used to reach the agent), never on 0.0.0.0: see local_address_towards. The central router (it has a hosts file)
+    # is on the platform's own network and attached to no instance network.
+    listen_addr = e.get("ROUTER_LISTEN_ADDR", "").strip() or ("0.0.0.0" if hosts_path else "auto")
+
     return {
+        "listen_addr": listen_addr,
+        # the crew-only gate of the central router (access_gate.py): "crew" unless the event has opened the instances to everybody
+        "access_mode": e.get("INSTANCE_ACCESS_MODE", "crew").strip().lower() or "crew",
+        "access_team_domain": e.get("INSTANCE_ACCESS_TEAM_DOMAIN", "").strip(),
+        "access_aud": e.get("INSTANCE_ACCESS_AUD", "").strip(),
         "port": port,
         "instance_domain": instance_domain,
         "instancer_url": instancer_url,
@@ -108,6 +119,39 @@ def parse_router_config(env: dict | None = None) -> dict:
         "trusted_forwarders": trusted_forwarders,
         "hosts_path": hosts_path,
     }
+
+
+def resolve_listen_addr(cfg: dict) -> str:
+    """The configured listen address as an IP: 'auto' becomes the router's address on the network of the agent."""
+    value = str(cfg["listen_addr"]).strip()
+    if value == "auto":
+        return local_address_towards(cfg["instancer_url"])
+    try:
+        ipaddress.ip_address(value)
+    except ValueError:
+        raise ValueError(f"ROUTER_LISTEN_ADDR must be 'auto' or an IP address, got {value!r}") from None
+    return value
+
+
+def build_access_gate(cfg: dict) -> AccessGate:
+    """The crew-only gate from the configuration. An unknown mode is an error; a mode "crew" without its settings gives a gate that refuses everything."""
+    gate = AccessGate(
+        mode=cfg["access_mode"],
+        team_domain=cfg["access_team_domain"],
+        audiences=[a for a in cfg["access_aud"].split(",") if a.strip()],
+    )
+    if gate.mode == "open":
+        _log.warning("INSTANCE_ACCESS_MODE=open: instance addresses are open to everybody (the event setting)")
+    elif gate.configured:
+        _log.info("Crew-only gate on instance addresses: Cloudflare Access team %s, %d application tag(s)", gate.team_domain, len(gate.audiences))
+    else:
+        _log.error("INSTANCE_ACCESS_MODE=crew but INSTANCE_ACCESS_TEAM_DOMAIN (<name>.cloudflareaccess.com) or INSTANCE_ACCESS_AUD is missing or wrong: "
+                   "EVERY instance request will be refused until both are set")
+    return gate
+
+
+async def start_http_listener(router: InstanceRouter, host: str, port: int) -> asyncio.AbstractServer:
+    return await asyncio.start_server(lambda r, w: handle_client(r, w, router), host, port)
 
 
 def _read_int_env(name: str, default: int) -> int:
@@ -136,6 +180,7 @@ async def _refuse(writer: asyncio.StreamWriter, status: int, text: str) -> None:
         "OK" if status == 200
         else "Bad Request" if status == 400
         else "Unauthorized" if status == 401
+        else "Forbidden" if status == 403
         else "Not Found" if status == 404
         else "Request Timeout" if status == 408
         else "Payload Too Large" if status == 413
@@ -269,6 +314,14 @@ async def _serve_one(reader, writer, router, header_timeout, body_timeout, clien
         await _refuse(writer, 404, "Instance not found or invalid host\n")
         return client_ip
 
+    # The crew gate comes BEFORE anything is looked up: an outsider gets the same 403 for every name, so cannot learn whether an instance exists.
+    if router.access_gate is not None:
+        allowed, reason = await router.access_gate.check(headers_list)
+        if not allowed:
+            _log.info("Instance request refused by the crew gate (%s) from %s", reason, client_ip)
+            await _refuse(writer, 403, "Forbidden: these addresses are open to the organising crew only for now\n")
+            return client_ip
+
     route = router.get_route(inst_id)
     if not route or route.get("protocol") != "http":
         await _refuse(writer, 404, "Instance not found\n")
@@ -386,7 +439,17 @@ async def main():
             # fail loud at start, instead of a router that runs but never learns the routes of that host
             raise ValueError("Listed host(s) without a router token: " + "; ".join(missing))
 
+    # a central router (hosts file found on disk rather than in the environment) listens on every address of the platform's own network
+    if hosts and cfg["listen_addr"] == "auto":
+        cfg["listen_addr"] = "0.0.0.0"
+    listen_addr = resolve_listen_addr(cfg)
+
+    # only the central router faces visitors (through nginx); a host router is reached by the central router alone and has no gate
+    access_gate = build_access_gate(cfg) if hosts else None
+
     router = InstanceRouter(
+        access_gate=access_gate,
+        listen_addr=listen_addr,
         instance_domain=cfg["instance_domain"],
         instancer_url=cfg["instancer_url"],
         router_token=router_token,
@@ -411,12 +474,8 @@ async def main():
     else:
         asyncio.create_task(router.poll_routes_loop())
 
-    server = await asyncio.start_server(
-        lambda r, w: handle_client(r, w, router),
-        "0.0.0.0",
-        cfg["port"],
-    )
-    _log.info("Instance Router listening for HTTP on 0.0.0.0:%d (domain: %s)", cfg["port"], cfg["instance_domain"])
+    server = await start_http_listener(router, listen_addr, cfg["port"])
+    _log.info("Instance Router listening for HTTP on %s:%d (domain: %s)", listen_addr, cfg["port"], cfg["instance_domain"])
 
     async with server:
         await server.serve_forever()

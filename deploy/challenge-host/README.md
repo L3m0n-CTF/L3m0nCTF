@@ -111,7 +111,9 @@ chmod 0700 /etc/l3mon/secrets
 # Generate strong random tokens
 openssl rand -hex 32 > /etc/l3mon/secrets/INSTANCER_TOKEN
 openssl rand -hex 32 > /etc/l3mon/secrets/ROUTER_TOKEN
-chmod 0600 /etc/l3mon/secrets/*
+# 0644 on the files inside the 0700 folder: the agent and the router run as uid 10001 and 10002 and read their token through a bind mount,
+# which keeps the file's own permissions (a 0600 file is unreadable there). The folder keeps every other user of the machine out.
+chmod 0644 /etc/l3mon/secrets/*
 ```
 
 ### Step 3: Start Challenge Host Services

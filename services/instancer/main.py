@@ -27,14 +27,40 @@ def _read_secret(name: str, default: str = "") -> str:
     return os.getenv(name, default).strip()
 
 
+def read_capacity_limits(env=None) -> tuple[int, int]:
+    """(slots, memory in MB) this host admits: INSTANCER_MAX_SLOTS and INSTANCER_MAX_MEM_MB. Defaults 200 and 16384 (the old fixed figures).
+
+    Set both from the machine's real size (docs/deploy/instancer.md, "Sizing a challenge host"): the memory figure is the sum of the declared limits of the
+    instances that may run at once, and must leave room for the system, Docker and the router.
+    """
+    e = os.environ if env is None else env
+
+    def one(name: str, default: int, low: int, high: int) -> int:
+        raw = str(e.get(name, "")).strip()
+        if not raw:
+            return default
+        try:
+            value = int(raw)
+        except ValueError:
+            raise ValueError(f"{name} must be a whole number, got {raw!r}") from None
+        if not (low <= value <= high):
+            raise ValueError(f"{name} must be between {low} and {high}, got {value}")
+        return value
+
+    return one("INSTANCER_MAX_SLOTS", 200, 1, 5000), one("INSTANCER_MAX_MEM_MB", 16384, 64, 1_048_576)
+
+
 def run_reaper_loop(manager: InstanceManager, interval: int = 5):
-    """Periodically check and reap expired containers."""
+    """Periodically reap expired containers, then the ones that died."""
     while True:
         try:
             time.sleep(interval)
             reaped = manager.reap_expired()
             if reaped:
                 _log.info("Reaped %d expired container(s): %s", len(reaped), reaped)
+            dead = manager.reap_dead()
+            if dead:
+                _log.info("Tore down %d instance(s) whose container had died: %s", len(dead), dead)
         except Exception as e:
             _log.error("Error in reaper loop: %s", e)
 
@@ -65,8 +91,12 @@ def main():
     tcp_port_start = int(os.getenv("INSTANCER_TCP_PORT_START", "30000"))
     tcp_port_count = int(os.getenv("INSTANCER_TCP_PORT_COUNT", "200"))
     router_container_name = os.getenv("ROUTER_CONTAINER_NAME", "l3mon-router-1")
+    max_slots, max_mem_mb = read_capacity_limits()
+    _log.info("Admission ceilings: %d instances, %d MB of declared memory", max_slots, max_mem_mb)
 
     manager = InstanceManager(
+        max_slots=max_slots,
+        max_mem_mb=max_mem_mb,
         manifest=manifest,
         docker_client=docker,
         instance_domain=instance_domain,
