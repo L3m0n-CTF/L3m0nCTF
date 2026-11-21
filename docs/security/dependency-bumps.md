@@ -118,6 +118,8 @@ Cost of the two switches: Cloudflare opens somewhat more connections to our serv
 
 The reviewed identifiers are in [`deploy/compose/accepted-advisories.txt`](../../deploy/compose/accepted-advisories.txt); the CI job `third-party-images` fails on any other fixable HIGH or CRITICAL finding. When upstream publishes a rebuilt image: update the digest, run the scan, the integration tests and the restore drill, and remove the identifiers it fixes.
 
+**2026-11-21:** the scan turned red on the same pinned nginx digest (Alpine 3.24.2) because of one more fixable HIGH advisory, **libxml2 CVE-2026-86144** (libxml2 2.13.9-r2, fixed in 2.13.9-r3). Checked on the pinned image instead of assumed: libxml2 is required by the image's optional `nginx-module-njs` and XSLT filter module (`apk info -r libxml2`); `ldd /usr/sbin/nginx` lists no xml library, so the nginx binary does not link it; and neither our configuration nor the image's has a `load_module` line, so the dynamic modules on disk (`ngx_http_xslt_filter_module.so`, `ngx_http_js_module.so`, ...) are never loaded. Same class as the libxslt entries of 2026-11-14. Accepted with the same deadline as the nginx 1.30.7 advisories, **2026-11-25**: when the image is updated, change the digest, run the scan, the integration tests and the restore drill, and remove these identifiers.
+
 ## How to repeat this
 
 ```bash

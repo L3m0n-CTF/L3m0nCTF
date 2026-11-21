@@ -77,7 +77,8 @@ async def test_an_instance_that_never_opens_its_port_is_given_up_on_after_the_gr
     status, _, _ = await router.handle_http_request("GET", "/", {"Host": f"{IID}.{DOMAIN}"}, b"")
     took = time.time() - t0
     assert status == 502
-    assert 0.9 <= took < 4, f"waited {took:.1f} s: it must wait the grace period (1 s here) and then answer 502"
+    # it keeps trying until one retry delay (0.25 s) before the end of the grace period, so a grace of 1 s means 0.75 s or more of waiting
+    assert 0.6 <= took < 4, f"waited {took:.1f} s: it must wait out the grace period (1 s here) and then answer 502"
 
 
 @pytest.mark.asyncio
