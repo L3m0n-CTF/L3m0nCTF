@@ -290,6 +290,8 @@ def test_challenge_host_compose_properties():
     #    on the trusted network (ROUTER_LISTEN_ADDR "auto", the default), see services/instancer/tests/test_router_listen_address.py
     agent_env = agent.get("environment", {})
     assert agent_env.get("INSTANCER_MAX_SLOTS") and agent_env.get("INSTANCER_MAX_MEM_MB"), "the agent must get INSTANCER_MAX_SLOTS and INSTANCER_MAX_MEM_MB"
+    # and the knobs for a burst and for measured challenges can be turned from the host's env file (defaults: 8 starts at a time, wait 35 s, no overcommit)
+    assert agent_env.get("INSTANCER_MAX_CONCURRENT_STARTS") == "8" and agent_env.get("INSTANCER_START_WAIT_SECONDS") == "35" and agent_env.get("INSTANCER_MEM_OVERCOMMIT") == "1"
     assert router.get("environment", {}).get("ROUTER_LISTEN_ADDR", "auto") == "auto"
     assert float(router.get("environment", {}).get("POLL_INTERVAL")) <= 1.0, "the relay port of a new TCP instance must appear within about a second"
 

@@ -51,6 +51,21 @@ def read_capacity_limits(env=None) -> tuple[int, int]:
     return one("INSTANCER_MAX_SLOTS", 200, 1, 5000), one("INSTANCER_MAX_MEM_MB", 16384, 64, 1_048_576)
 
 
+def read_mem_overcommit(env=None) -> float:
+    """INSTANCER_MEM_OVERCOMMIT (default 1.0, at most 8): a declared memory limit counts as limit / factor against INSTANCER_MAX_MEM_MB."""
+    e = os.environ if env is None else env
+    raw = str(e.get("INSTANCER_MEM_OVERCOMMIT", "")).strip()
+    if not raw:
+        return 1.0
+    try:
+        value = float(raw)
+    except ValueError:
+        raise ValueError(f"INSTANCER_MEM_OVERCOMMIT must be a number, got {raw!r}") from None
+    if not (1.0 <= value <= 8.0):
+        raise ValueError(f"INSTANCER_MEM_OVERCOMMIT must be between 1 and 8, got {value}")
+    return value
+
+
 def read_start_limits(env=None) -> tuple[int, float]:
     """(concurrent starts, seconds a start may wait for its turn): INSTANCER_MAX_CONCURRENT_STARTS (default 8) and INSTANCER_START_WAIT_SECONDS (default 35).
 
@@ -119,6 +134,7 @@ def main():
 
     max_concurrent_starts, start_wait_seconds = read_start_limits()
     manager = InstanceManager(
+        mem_overcommit=read_mem_overcommit(),
         max_concurrent_starts=max_concurrent_starts,
         start_wait_seconds=start_wait_seconds,
         max_slots=max_slots,

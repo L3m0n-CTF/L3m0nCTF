@@ -104,6 +104,7 @@ Set in environment or `deploy/compose/generated/compose.env`:
 | `POLL_INTERVAL` | `0.5` | `0.5` | Seconds between a router's polls for routes. A new instance is reachable once the host router and then the central router have polled: about one second at most |
 | `INSTANCER_MAX_SLOTS` | `200` | from the sizing | The most instances this host admits at once |
 | `INSTANCER_MAX_MEM_MB` | `16384` | written by `bootstrap.sh` from the machine's RAM | The most memory, in MB, that the declared limits of the running instances may add up to. A start that would pass it is refused with `no_capacity` ("Host memory capacity reached"). Before 21 Nov 2026 this figure was fixed at 16384 and nothing could set it |
+| `INSTANCER_MEM_OVERCOMMIT` | `1` | `1` until each challenge's real memory has been measured | A declared `mem_mb` counts as `mem_mb / factor` against `INSTANCER_MAX_MEM_MB` (1 to 8). Real use is far below the declared limit for a small web challenge (about 20 MB of 128), so counting it in full admits about a hundred instances to a 16 GB host that really holds several hundred |
 | `INSTANCER_MAX_CONCURRENT_STARTS` | `8` | `8` | How many starts work on Docker at the same moment. The rest wait their turn |
 | `INSTANCER_START_WAIT_SECONDS` | `35` | `35` | How long a start may wait for its turn before the agent answers "busy, retry in a few seconds" (`no_capacity`, retry 5). Keep it below the platform's start timeout |
 | `L3MON_INSTANCER_START_TIMEOUT` | `45` | `45` | The platform's timeout for a start call (other calls keep 10 s, capacity probes 6 s). A timeout is reported as "timeout", never as a dead host |
@@ -257,6 +258,36 @@ The figure that matters is real memory per instance, which must be MEASURED for 
 More starts a second needs more vCPUs or more hosts: a second host doubles it. Size the number of hosts for the opening burst, not only for how many instances run at once.
 
 `INSTANCER_MAX_MEM_MB` is checked against the DECLARED limits (the safe direction), so set `mem_mb` in the manifest to what the challenge really needs with some room, not to a round number.
+
+### What happens when something fails (all tried on the real host, 21 Nov 2026)
+
+| Failure | What happens |
+|---|---|
+| An instance crashes or is killed for memory | the agent drops it within 5 s; the player's page stops listing it; Start makes a new one after 10 s (not the 60 s stop cooldown) |
+| The challenge host reboots | the stack, the registry and the isolation firewall come back by themselves; the instances' containers are stopped (no restart policy, on purpose), the agent's liveness sweep removes them and their networks within seconds; the platform stops listing them; players Start again |
+| The agent or the router restarts | the agent rebuilds its records from Docker's labels (same ids, same expiry); the router polls routes again within a second; TCP relay ports come back |
+| 80 teams start at once | all succeed (they queue: 28-32 s for the last one); the platform waits up to 45 s, never marks the host down for a slow or busy answer |
+| A host answers `no_capacity` (memory ceiling or busy) | the start goes to the other host, or the player is told to retry in a few seconds |
+| The crew gate cannot reach Cloudflare for its keys | keys already known keep working for a day; with none known, instance addresses are refused (fails closed) |
+
+### Sizing for 878 players in 446 teams (the plan, and what is measured and what is not)
+
+**Measured on the real host (`l3mon-chal`, 4 vCPU / 8 GB):** real memory per instance, about 20 MiB for a small Flask web challenge and about 1.2 MiB for a socat pwn service (about 22 MB and about 5 MB of host memory each once the network and router share are counted); 90 instances running together held 1991 MB; starting is about 0.8 s of Docker work per instance and a 4 vCPU host does 2.5-2.9 starts a second; stopping 90 took 28 s; a reboot brings the stack back by itself.
+
+**The plan** (peak assumption: every team has 2 live instances, one web and one pwn, about 900 in all; the quota is 3 per team, so the absolute worst case is about 1300):
+
+| What | Needs | Why |
+|---|---|---|
+| Challenge hosts | **2 hosts, 8 vCPU and 16 GB each** (`e2-custom-8-16384`, about 0.27 US dollars an hour each) | memory: 450 web x 22 MB + 450 pwn x 5 MB is about 12 GB over two hosts, and the quota's worst case (about 1300) still fits in the 2 x 13 GB usable; CPU: an instance is held to 0.25 of a core and only a fraction are busy at once; the opening burst of about 450 starts clears in about 45 s at 5 starts a second per host |
+| TCP relay ports | `TCP_PORT_FIRST=30000`, `TCP_PORT_LAST=31999` on each host (2000 ports) and the same range in the cloud firewall | the range was 200 ports: at most 200 raw-TCP instances per host |
+| `INSTANCER_MAX_SLOTS` | 600 per host | the old default of 200 |
+| `INSTANCER_MAX_MEM_MB` | what `bootstrap.sh` writes (RAM minus 1536 MB, less a tenth: 13000 for 16 GB) | the ceiling |
+| `mem_mb` per challenge | the measured real use with headroom (for example 64 for a small Flask challenge, not 128), or `INSTANCER_MEM_OVERCOMMIT=2` once measured | admission counts declared limits |
+| `hosts.json` | both hosts, `max_slots` matching | the scheduler spreads starts by free slots |
+| Platform VM | **16 vCPU / 32 GB** for the event, set back down afterwards; `CTFD_WORKERS` to about twice the vCPU count; MariaDB `innodb_buffer_pool_size` 4-8 GB (it is 384 MB now) | the platform costs about 37 ms of one core per request at the event mix (measured on a laptop in October): 0.25 requests a second per player, so 878 players all online need about 8 cores before the cloud cores' own speed is counted; 16 gives room |
+| Cloud quota | **64 vCPUs** (it is 32 across all regions, and 16 + 2 x 8 is exactly 32) | a quota increase is a request that takes hours to days: ask now |
+
+**Not measured, and what would measure it:** the platform under the event's real mix on cloud cores (only the October laptop figure exists): the rehearsal of 27 November with a load script that signs in several hundred players, polls, and submits flags; and the instances under real play (a pwn exploit loop on 50 teams at once). The numbers above are what the plan rests on until then. **Equal service** is protected by the per-team quota (3), the 60 s cooldown, the per-address limits (100 requests a second with a burst of 200, enough for a lab behind one address) and an admission that answers `no_capacity` with a reason and a retry time instead of failing: it is violated only if capacity runs out, so capacity must be sized above the peak, not at it.
 
 ---
 

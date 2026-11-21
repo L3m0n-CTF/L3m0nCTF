@@ -219,3 +219,28 @@ def test_after_a_host_reboot_the_instances_whose_containers_stopped_are_cleaned_
     assert fresh.reap_dead() == [inst["id"]]
     assert inst["id"] not in docker.containers and f"l3mon_inst_{inst['id']}" not in docker.networks
     assert fresh.list_instances() == []
+
+
+def test_the_memory_ceiling_can_count_declared_limits_with_an_overcommit_factor():
+    """Real memory is far below the declared limit (a Flask challenge: about 20 MB of a declared 128). Counting every declared limit in full would admit only
+    about a hundred instances to a 16 GB host that really holds several hundred. INSTANCER_MEM_OVERCOMMIT (default 1: count in full, the safe way) lets
+    the operator count a declared limit as limit / factor, once the real use of each challenge has been measured."""
+    docker = MockDockerClient()
+    mgr = InstanceManager(manifest=load_manifest_from_string(MANIFEST_TOML, dev_mode=False), docker_client=docker, instance_domain="inst.example.com",
+                          max_mem_mb=600, mem_overcommit=2.0)
+    for team in range(1, 5):  # four instances of 256 MB declared = 1024 MB declared = 512 MB counted at a factor of 2: they fit 600
+        mgr.start_instance(team_id=team, challenge_id=1, slug="demo-web", flag=FLAG_EXAMPLE)
+    with pytest.raises(CapacityError, match="memory"):
+        mgr.start_instance(team_id=5, challenge_id=1, slug="demo-web", flag=FLAG_EXAMPLE)  # 5 x 128 = 640 counted > 600
+    cap = mgr.get_capacity()
+    assert cap["mem_mb_used"] == 512 and cap["mem_mb_free"] == 88, cap
+
+
+def test_the_overcommit_factor_defaults_to_one_and_comes_from_the_environment():
+    from services.instancer.main import read_mem_overcommit
+
+    assert read_mem_overcommit({}) == 1.0
+    assert read_mem_overcommit({"INSTANCER_MEM_OVERCOMMIT": "2.5"}) == 2.5
+    for bad in ({"INSTANCER_MEM_OVERCOMMIT": "0.5"}, {"INSTANCER_MEM_OVERCOMMIT": "x"}, {"INSTANCER_MEM_OVERCOMMIT": "20"}):
+        with pytest.raises(ValueError, match="INSTANCER_MEM_OVERCOMMIT"):
+            read_mem_overcommit(bad)

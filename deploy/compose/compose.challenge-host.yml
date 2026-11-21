@@ -98,6 +98,10 @@ services:
       # challenge host"). The fallbacks are cautious on purpose: an agent that knows nothing of its machine must not admit 200 instances of any size.
       INSTANCER_MAX_SLOTS: "${INSTANCER_MAX_SLOTS:-200}"
       INSTANCER_MAX_MEM_MB: "${INSTANCER_MAX_MEM_MB:-4096}"
+      # How a burst of starts is handled, and how declared memory limits count (docs/deploy/instancer.md, "Sizing a challenge host"): the defaults are the safe ones
+      INSTANCER_MAX_CONCURRENT_STARTS: "${INSTANCER_MAX_CONCURRENT_STARTS:-8}"
+      INSTANCER_START_WAIT_SECONDS: "${INSTANCER_START_WAIT_SECONDS:-35}"
+      INSTANCER_MEM_OVERCOMMIT: "${INSTANCER_MEM_OVERCOMMIT:-1}"
       ROUTER_CONTAINER_NAME: l3mon-challenge-host-router-1
       INSTANCER_INSTANCE_POOL: "${INSTANCER_INSTANCE_POOL:-10.200.0.0/16}"
       INSTANCER_POOL_SUBNET_SIZE: "${INSTANCER_POOL_SUBNET_SIZE:-28}"

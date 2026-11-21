@@ -131,6 +131,7 @@ class InstanceManager:
         agent_mode: bool = False,
         max_concurrent_starts: int = 8,
         start_wait_seconds: float = 25.0,
+        mem_overcommit: float = 1.0,
     ):
         if not (1024 <= tcp_port_start <= 65535):
             raise ValueError(f"INSTANCER_TCP_PORT_START must be between 1024 and 65535, got {tcp_port_start}")
@@ -159,6 +160,9 @@ class InstanceManager:
         # seconds"). Found on the real host (21 Nov 2026): 80 starts at once took 28 s in all because Docker does network work one piece at a time; the
         # median start waited 16 s and 55 of 80 were slower than the platform's 10 s timeout.
         self.start_wait_seconds = start_wait_seconds
+        # A declared memory limit counts as limit / mem_overcommit against max_mem_mb. 1.0 counts it in full (the safe way); a higher factor is for a host whose
+        # challenges have been MEASURED to use far less than they declare (docs/deploy/instancer.md, "Sizing a challenge host")
+        self.mem_overcommit = max(1.0, float(mem_overcommit))
         self._start_slots = threading.BoundedSemaphore(max(1, int(max_concurrent_starts)))
 
         # State storage
@@ -285,7 +289,7 @@ class InstanceManager:
             # The memory the running instances may use (their declared limits) plus this one must fit the ceiling of this machine
             # (INSTANCER_MAX_MEM_MB). Found on the real host: only the slot count was checked, so 200 instances of 64 MB or more could be admitted
             # on a machine that has 8 GB.
-            if self._active_mem_mb() + spec.mem_mb > self.max_mem_mb:
+            if (self._active_mem_mb() + spec.mem_mb) / self.mem_overcommit > self.max_mem_mb:
                 raise CapacityError(retry_after=30, message="Host memory capacity reached")
 
             # 5. Allocate resources
@@ -507,8 +511,8 @@ class InstanceManager:
 
             return record.to_dict(self.instance_domain, self.tcp_host)
 
-    def _active_mem_mb(self) -> int:
-        """The declared memory limits of the live instances, in MB. The caller holds the lock."""
+    def _active_mem_mb(self) -> float:
+        """The declared memory limits of the live instances, in MB. The caller holds the lock. (Counted against the ceiling as limit / mem_overcommit.)"""
         total = 0
         for inst in self._instances.values():
             if inst.state in (InstanceState.RUNNING, InstanceState.STARTING):
@@ -623,7 +627,7 @@ class InstanceManager:
         with self._lock:
             active = [inst for inst in self._instances.values() if inst.state in (InstanceState.RUNNING, InstanceState.STARTING)]
             slots_used = len(active)
-            mem_mb_used = self._active_mem_mb()
+            mem_mb_used = int(round(self._active_mem_mb() / self.mem_overcommit))  # as counted against the ceiling
 
             return {
                 "host_name": self.host_name,
