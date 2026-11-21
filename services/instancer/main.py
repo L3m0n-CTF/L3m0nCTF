@@ -51,6 +51,29 @@ def read_capacity_limits(env=None) -> tuple[int, int]:
     return one("INSTANCER_MAX_SLOTS", 200, 1, 5000), one("INSTANCER_MAX_MEM_MB", 16384, 64, 1_048_576)
 
 
+def read_start_limits(env=None) -> tuple[int, float]:
+    """(concurrent starts, seconds a start may wait for its turn): INSTANCER_MAX_CONCURRENT_STARTS (default 8) and INSTANCER_START_WAIT_SECONDS (default 35).
+
+    The wait must stay below the platform's own timeout for a start (L3MON_INSTANCER_START_TIMEOUT, 45 s), so that the player is told "busy" by the agent
+    rather than meeting a timeout of the platform.
+    """
+    e = os.environ if env is None else env
+
+    def one(name: str, default, low, high, cast):
+        raw = str(e.get(name, "")).strip()
+        if not raw:
+            return default
+        try:
+            value = cast(raw)
+        except ValueError:
+            raise ValueError(f"{name} must be a number, got {raw!r}") from None
+        if not (low <= value <= high):
+            raise ValueError(f"{name} must be between {low} and {high}, got {value}")
+        return value
+
+    return one("INSTANCER_MAX_CONCURRENT_STARTS", 8, 1, 64, int), one("INSTANCER_START_WAIT_SECONDS", 35, 1, 600, float)
+
+
 def run_reaper_loop(manager: InstanceManager, interval: int = 5):
     """Periodically reap expired containers, then the ones that died."""
     while True:
@@ -94,7 +117,10 @@ def main():
     max_slots, max_mem_mb = read_capacity_limits()
     _log.info("Admission ceilings: %d instances, %d MB of declared memory", max_slots, max_mem_mb)
 
+    max_concurrent_starts, start_wait_seconds = read_start_limits()
     manager = InstanceManager(
+        max_concurrent_starts=max_concurrent_starts,
+        start_wait_seconds=start_wait_seconds,
         max_slots=max_slots,
         max_mem_mb=max_mem_mb,
         manifest=manifest,

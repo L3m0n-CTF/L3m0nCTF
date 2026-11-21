@@ -20,6 +20,8 @@ _log = logging.getLogger("l3mon.instancer.server")
 
 class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
     daemon_threads = True
+    # Python's default listen queue is 5: on the real host 13 of 80 simultaneous start requests were reset by the agent (21 Nov 2026)
+    request_queue_size = 512
 
 
 class InstancerAPIHandler(BaseHTTPRequestHandler):

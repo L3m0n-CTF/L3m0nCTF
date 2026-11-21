@@ -106,3 +106,101 @@ def test_when_docker_cannot_be_asked_the_sweep_changes_nothing():
     docker.list_containers = broken
     assert mgr.reap_dead() == []
     assert [i["id"] for i in mgr.list_instances()] == [inst["id"]]
+
+
+# ---------------------------------------------------------------------------------------------------------------------------------------------------
+# A burst of starts (real host, 21 Nov 2026: 80 teams starting at the same instant)
+#   - 13 of 80 requests were reset by the agent: its HTTP server kept Python's default listen backlog of 5;
+#   - the 80 starts took 27.7 s in all (about 2.9 a second), the median start 16 s, and 55 of 80 were slower than the platform's 10 s timeout.
+# The queue is deep now, and the work that Docker does for starts is limited to a few at a time, so that a burst makes the last start wait its turn
+# instead of piling hundreds of Docker calls on the daemon at once; a start that has waited too long is told "busy, retry in a few seconds".
+# ---------------------------------------------------------------------------------------------------------------------------------------------------
+import threading
+import time as _time
+
+from services.instancer.server import ThreadedHTTPServer
+
+
+def test_the_agents_http_server_has_a_deep_listen_queue():
+    assert ThreadedHTTPServer.request_queue_size >= 256, "Python's default of 5 reset 13 of 80 simultaneous requests on the real host"
+
+
+class SlowDocker(MockDockerClient):
+    """A Docker that takes a while for each call and records how many calls run at the same moment."""
+
+    def __init__(self, delay=0.05):
+        super().__init__()
+        self.delay, self.running, self.peak = delay, 0, 0
+        self._lock = threading.Lock()
+
+    def _slow(self):
+        with self._lock:
+            self.running += 1
+            self.peak = max(self.peak, self.running)
+        _time.sleep(self.delay)
+        with self._lock:
+            self.running -= 1
+
+    def create_network(self, name, internal=True, labels=None):
+        self._slow()
+        return super().create_network(name, internal, labels)
+
+    def start_container(self, container_id):
+        self._slow()
+        return super().start_container(container_id)
+
+
+def slow_manager(limit, wait, delay=0.05):
+    docker = SlowDocker(delay)
+    mgr = InstanceManager(manifest=load_manifest_from_string(MANIFEST_TOML, dev_mode=False), docker_client=docker, instance_domain="inst.example.com",
+                          max_concurrent_starts=limit, start_wait_seconds=wait)
+    return mgr, docker
+
+
+def test_only_a_few_starts_work_on_docker_at_the_same_moment():
+    mgr, docker = slow_manager(limit=3, wait=30)
+    results = []
+
+    def go(i):
+        results.append(mgr.start_instance(team_id=i + 1, challenge_id=1, slug="demo-web", flag=FLAG_EXAMPLE)[1])
+
+    threads = [threading.Thread(target=go, args=(i,)) for i in range(20)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert len(results) == 20 and all(results), "every start in the burst must succeed, each in its turn"
+    assert docker.peak <= 3, f"{docker.peak} Docker calls ran at once; the limit is 3"
+    assert len(docker.containers) == 20
+
+
+def test_a_start_that_waited_too_long_is_told_busy_and_leaves_nothing_behind():
+    mgr, docker = slow_manager(limit=1, wait=0.2, delay=0.6)  # one at a time, each takes 0.6 s: the second waits more than the 0.2 s it may
+    outcome = {}
+
+    def first():
+        outcome["first"] = mgr.start_instance(team_id=1, challenge_id=1, slug="demo-web", flag=FLAG_EXAMPLE)
+
+    t = threading.Thread(target=first)
+    t.start()
+    _time.sleep(0.15)  # the first is on Docker now
+    with pytest.raises(CapacityError, match="busy") as e:
+        mgr.start_instance(team_id=2, challenge_id=1, slug="demo-web", flag=FLAG_EXAMPLE)
+    assert e.value.retry_after >= 1
+    t.join()
+    assert "first" in outcome
+    assert [i["team_id"] for i in mgr.list_instances()] == [1], "the refused start must not leave a record, a network, or a TCP port behind"
+    assert len(docker.containers) == 1 and len(docker.networks) == 1
+    # and the team that was told "busy" can start as soon as there is room (no cooldown was set)
+    again, created = mgr.start_instance(team_id=2, challenge_id=1, slug="demo-web", flag=FLAG_EXAMPLE)
+    assert created
+
+
+def test_the_start_limit_comes_from_the_environment():
+    from services.instancer.main import read_start_limits
+
+    assert read_start_limits({}) == (8, 35)
+    assert read_start_limits({"INSTANCER_MAX_CONCURRENT_STARTS": "4", "INSTANCER_START_WAIT_SECONDS": "10"}) == (4, 10)
+    for bad in ({"INSTANCER_MAX_CONCURRENT_STARTS": "0"}, {"INSTANCER_MAX_CONCURRENT_STARTS": "x"}, {"INSTANCER_START_WAIT_SECONDS": "-1"}):
+        with pytest.raises(ValueError, match="INSTANCER_"):
+            read_start_limits(bad)

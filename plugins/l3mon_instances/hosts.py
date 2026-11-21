@@ -192,6 +192,8 @@ def load_hosts_config(path: Optional[str] = None) -> list[dict]:
 
 
 _DOWN_KEY = "l3mon:instances:host_down:"
+# A capacity probe that TIMES OUT does not take a host down while the host answered within this many seconds (see get_capacity)
+STALE_CAPACITY_OK_SECONDS = 60.0
 
 
 class CtfdCacheDownStore:
@@ -371,10 +373,29 @@ class HostCapacityTracker:
         host = self.get_host(host_name)
         client = self.get_client_for_host(host_name)
         if hasattr(client, "timeout"):
-            client.timeout = min(client.timeout, 3)  # a capacity probe is a health check: do not hold a player's request for 10 s
+            client.timeout = min(client.timeout, 6)  # a capacity probe is a health check: do not hold a player's request for 10 s
         try:
             resp = client.get_capacity()
         except Exception as e:
+            # A host that is SLOW is not a host that is DEAD. On the real challenge host (21 Nov 2026) a burst of 80 starts kept the agent busy for half a minute,
+            # and a probe that timed out then took the only host down for 30 s: every start refused, every running instance shown as "error". When the probe
+            # TIMED OUT and the host answered within the last STALE_CAPACITY_OK_SECONDS, the last known answer stands. A refused connection, an error, or a
+            # host that has been silent for longer is a failure as before.
+            stale = getattr(e, "error_code", None) == "timeout"
+            with self._lock:
+                last = self._cache.get(host_name)
+            if stale and last and (ts - last["timestamp"]) <= STALE_CAPACITY_OK_SECONDS:
+                _log.warning("Capacity probe of host '%s' timed out; using its answer of %.0f s ago", host_name, ts - last["timestamp"])
+                effective_used = last["slots_used"] + last["optimistic_slots"]
+                return {
+                    "host_name": host_name,
+                    "slots_total": last["slots_total"],
+                    "slots_used": effective_used,
+                    "slots_free": max(0, last["slots_total"] - effective_used),
+                    "mem_mb_total": last.get("mem_mb_total", 0),
+                    "mem_mb_used": last.get("mem_mb_used", 0),
+                    "mem_mb_free": max(0, last.get("mem_mb_total", 0) - last.get("mem_mb_used", 0)),
+                }
             self.mark_host_down(host_name, ts)
             raise e
 
@@ -406,8 +427,10 @@ class HostCapacityTracker:
                 "mem_mb_free": max(0, mem_mb_total - mem_mb_used),
             }
 
-    def select_host_for_start(self, slug: Optional[str] = None, now_ts: Optional[float] = None) -> dict:
+    def select_host_for_start(self, slug: Optional[str] = None, now_ts: Optional[float] = None, exclude: Optional[set] = None) -> dict:
         """Select the least-loaded host for starting a new instance.
+
+        `exclude` names hosts to skip for THIS start only (a host that has just answered "busy" is alive: it is passed over for this request, not marked down).
 
         Applies:
         - Down penalty exclusion (30s)
@@ -420,6 +443,8 @@ class HostCapacityTracker:
         candidates = []
         for host in self._hosts:
             name = host["name"]
+            if exclude and name in exclude:
+                continue
             if self.is_host_down(name, ts):
                 continue
 

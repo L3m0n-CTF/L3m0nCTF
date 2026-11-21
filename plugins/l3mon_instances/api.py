@@ -168,13 +168,15 @@ def start_instance():
     chosen_host = None
     client = None
     inst_data = None
+    busy_hosts: set[str] = set()  # hosts that answered "busy" during THIS request: alive, passed over for now, never marked down
+    busy_retry_after = None
 
     for attempt in range(2):
         try:
-            chosen_host = tracker.select_host_for_start(slug=prog.slug, now_ts=now_ts)
+            chosen_host = tracker.select_host_for_start(slug=prog.slug, now_ts=now_ts, exclude=busy_hosts)
         except InstancerClientError as e:
             if e.error_code == "no_capacity":
-                return envelope.fail("no_capacity", 503, e.message, retry_after=e.retry_after or 30)
+                return envelope.fail("no_capacity", 503, e.message, retry_after=busy_retry_after or e.retry_after or 30)
             return envelope.fail("busy", 503, e.message)
 
         client = tracker.get_client_for_host(chosen_host["name"])
@@ -203,6 +205,24 @@ def start_instance():
             if e.error_code in ("internal_error", "invalid_request"):
                 _log.error("Start instance failed inside the instancer on host %s for challenge %s: %s", chosen_host["name"], challenge_id, e)
                 return envelope.fail("start_failed", 503, "This challenge could not be started just now. Try again in a minute; if it keeps failing, tell the crew.")
+
+            # The host answered "busy" (it is working through a burst of starts, or is at its memory ceiling): it is ALIVE. Pass it over for this request and
+            # try another host; never mark it down (found on the real host, 21 Nov 2026: that turned a slow minute into a 30 second outage for everybody).
+            if e.error_code == "no_capacity":
+                busy_hosts.add(chosen_host["name"])
+                busy_retry_after = e.retry_after
+                if attempt == 0:
+                    continue
+                return envelope.fail("no_capacity", 503, e.message, retry_after=e.retry_after or 30)
+
+            # The host did not answer in time: it is SLOW, not dead, and the instance may have been created all the same. Ask the host what it has for this team
+            # before anything else is done: a second start would be a second instance. Never mark the host down for a slow answer.
+            if e.error_code == "timeout":
+                _log.warning("Start instance timed out on host %s for challenge %s; asking the host whether it landed", chosen_host["name"], challenge_id)
+                inst_data = _find_started_instance(client, team.id, challenge_id)
+                if inst_data:
+                    break
+                return envelope.fail("busy", 503, "The challenge servers are busy right now. Try again in a minute; if it keeps failing, tell the crew.")
 
             # Host failure (connection error, 5xx server error, or capacity issue)
             _log.warning("Start instance failed on host %s: %s (attempt %d)", chosen_host["name"], e, attempt + 1)
@@ -277,6 +297,17 @@ def start_instance():
         return envelope.fail("busy", 503, "Could not register instance.")
 
     return envelope.ok(instance_row.to_dict(), status=201)
+
+
+def _find_started_instance(client, team_id: int, challenge_id: int):
+    """The instance a host has for this team and challenge, if a start that timed out landed all the same; None if it did not, or the host cannot say."""
+    try:
+        for inst in client.list_instances(team_id=team_id):
+            if inst.get("challenge_id") == challenge_id and inst.get("state") in ("running", "starting") and inst.get("id"):
+                return inst
+    except Exception as e:
+        _log.warning("Could not ask the host whether a timed-out start landed: %s", e)
+    return None
 
 
 @bp.route("/instances/<challenge_id_param>/renew", methods=["POST"])

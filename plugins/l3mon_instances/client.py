@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import socket
 import ssl
 import urllib.error
 import urllib.request
@@ -29,6 +30,22 @@ def get_instancer_token() -> str:
     return os.getenv("INSTANCER_TOKEN", "").strip()
 
 
+# A start takes as long as Docker takes, and in a burst (a hundred teams clicking Start in the same second) that is tens of seconds: on the real challenge host 80
+# simultaneous starts took 28 s in all, the median 16 s (21 Nov 2026). The agent answers "busy" itself after 35 s, so 45 s leaves it room to do so.
+DEFAULT_START_TIMEOUT_SECONDS = 45
+
+
+def get_start_timeout() -> float:
+    """L3MON_INSTANCER_START_TIMEOUT (seconds) or 45. A value that is not a positive number falls back to the default: it must not break starts."""
+    try:
+        value = float(os.getenv("L3MON_INSTANCER_START_TIMEOUT", "").strip())
+        if value > 0:
+            return value
+    except ValueError:
+        pass
+    return DEFAULT_START_TIMEOUT_SECONDS
+
+
 def get_instancer_url() -> str:
     return os.getenv("INSTANCER_URL", "http://instancer:8300").rstrip("/")
 
@@ -43,13 +60,14 @@ class InstancerClientError(Exception):
 
 
 class InstancerClient:
-    def __init__(self, base_url: Optional[str] = None, token: Optional[str] = None, timeout: int = 10, ca_cert: Optional[str] = None):
+    def __init__(self, base_url: Optional[str] = None, token: Optional[str] = None, timeout: int = 10, ca_cert: Optional[str] = None, start_timeout: Optional[float] = None):
         self.base_url = (base_url or get_instancer_url()).rstrip("/")
         self.token = token or get_instancer_token()
         self.timeout = timeout
+        self.start_timeout = start_timeout if start_timeout is not None else get_start_timeout()
         self.ca_cert = ca_cert
 
-    def _request(self, method: str, path: str, body: Optional[dict] = None) -> tuple[int, dict]:
+    def _request(self, method: str, path: str, body: Optional[dict] = None, timeout: Optional[float] = None) -> tuple[int, dict]:
         if _override_client is not None:
             return _override_client.request(method, path, body)
 
@@ -69,7 +87,7 @@ class InstancerClient:
 
         req = urllib.request.Request(url, data=data, headers=headers, method=method)
         try:
-            kwargs = {"timeout": self.timeout}
+            kwargs = {"timeout": timeout if timeout is not None else self.timeout}
             if ssl_context is not None:
                 kwargs["context"] = ssl_context
             with urllib.request.urlopen(req, **kwargs) as resp:
@@ -94,7 +112,14 @@ class InstancerClient:
             error_code = parsed.get("error", "upstream_error")
             message = parsed.get("message", str(e))
             raise InstancerClientError(e.code, error_code, message, retry_after=retry_after)
+        except (socket.timeout, TimeoutError) as e:
+            # a slow host is not a dead host: its own kind of error, so that the caller does not mark the host down for a slow answer
+            _log.warning("Instancer request timed out: %s %s", method, path)
+            raise InstancerClientError(504, "timeout", f"The challenge instancer did not answer in time: {e}")
         except Exception as e:
+            if isinstance(getattr(e, "reason", None), (socket.timeout, TimeoutError)):
+                _log.warning("Instancer request timed out: %s %s", method, path)
+                raise InstancerClientError(504, "timeout", f"The challenge instancer did not answer in time: {e}")
             _log.error("Instancer request failed: %s", e)
             raise InstancerClientError(503, "upstream_unavailable", f"Could not reach challenge instancer: {e}")
 
@@ -107,7 +132,7 @@ class InstancerClient:
         }
         if ttl_seconds is not None:
             body["ttl_seconds"] = ttl_seconds
-        status, data = self._request("POST", "/v1/instances", body=body)
+        status, data = self._request("POST", "/v1/instances", body=body, timeout=self.start_timeout)
         return data.get("instance", {})
 
     def get_instance(self, instance_id: str) -> Optional[dict]:

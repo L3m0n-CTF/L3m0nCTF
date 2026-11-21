@@ -104,6 +104,9 @@ Set in environment or `deploy/compose/generated/compose.env`:
 | `POLL_INTERVAL` | `0.5` | `0.5` | Seconds between a router's polls for routes. A new instance is reachable once the host router and then the central router have polled: about one second at most |
 | `INSTANCER_MAX_SLOTS` | `200` | from the sizing | The most instances this host admits at once |
 | `INSTANCER_MAX_MEM_MB` | `16384` | written by `bootstrap.sh` from the machine's RAM | The most memory, in MB, that the declared limits of the running instances may add up to. A start that would pass it is refused with `no_capacity` ("Host memory capacity reached"). Before 21 Nov 2026 this figure was fixed at 16384 and nothing could set it |
+| `INSTANCER_MAX_CONCURRENT_STARTS` | `8` | `8` | How many starts work on Docker at the same moment. The rest wait their turn |
+| `INSTANCER_START_WAIT_SECONDS` | `35` | `35` | How long a start may wait for its turn before the agent answers "busy, retry in a few seconds" (`no_capacity`, retry 5). Keep it below the platform's start timeout |
+| `L3MON_INSTANCER_START_TIMEOUT` | `45` | `45` | The platform's timeout for a start call (other calls keep 10 s, capacity probes 6 s). A timeout is reported as "timeout", never as a dead host |
 | `INSTANCE_ACCESS_MODE` | `crew` | `crew` until the event, then `open` | The crew-only gate on instance addresses (central router only; see "The crew-only gate") |
 | `INSTANCE_ACCESS_TEAM_DOMAIN` | | `<name>.cloudflareaccess.com` | The Cloudflare Access team name that issues the tokens |
 | `INSTANCE_ACCESS_AUD` | | 64 hex characters, comma-separated for several | The application tag(s) of the crew application in Cloudflare Access |
@@ -244,6 +247,14 @@ The figure that matters is real memory per instance, which must be MEASURED for 
 - 90 instances held 1991 MB of host memory in all: **22 MB each** (including the router, the agent and one Docker network per instance), against 64 MB declared.
 - The agent admitted exactly the 90 that fit its ceiling of 5772 MB (64 MB declared each) and refused the next with `no_capacity`, a reason and a retry time.
 - A single start takes about 0.6 s; 24 simultaneous starts took 8.8 s (about 2.7 starts a second); stopping 90 instances took 28 s.
+
+**A burst of starts** (the opening minutes of the event). Measured on the same host with 80 teams starting at the same instant: the whole burst took 28-32 s (2.5-2.9 starts a second, which is how fast Docker does the network work of a start: about 0.8 s of Docker calls per start, spread over a network, an attach of the router, a create and a start), the median start waited 16 s, and 55 of 80 would have been slower than the platform's old 10 s timeout. Three things were wrong and are fixed:
+
+- the agent's HTTP server kept Python's listen queue of 5 and **reset 13 of the 80 requests** (now 512; all 80 succeed);
+- the platform treated a timeout as a dead host and **marked the only host down for 30 s** (refusing every start and showing every running instance as "error"). Now a start has a 45 s timeout; a timeout, or a "busy" answer, never marks a host down; after a timeout the platform asks the host whether the instance landed and records it if so; a "busy" start is tried on the other host, or the player is told to retry in 5 s; a capacity probe that times out keeps the last answer for up to 60 s;
+- starts are limited to 8 on Docker at the same moment, so a burst queues in the agent instead of piling hundreds of calls on the daemon.
+
+More starts a second needs more vCPUs or more hosts: a second host doubles it. Size the number of hosts for the opening burst, not only for how many instances run at once.
 
 `INSTANCER_MAX_MEM_MB` is checked against the DECLARED limits (the safe direction), so set `mem_mb` in the manifest to what the challenge really needs with some room, not to a round number.
 
