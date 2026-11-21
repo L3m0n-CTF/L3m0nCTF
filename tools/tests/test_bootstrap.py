@@ -228,6 +228,17 @@ def test_bootstrap_writes_the_memory_ceiling_for_the_agent_into_the_env_file():
     assert re.search(r'INSTANCER_MAX_SLOTS="\d+"', derived.stdout)
 
 
+def test_bootstrap_writes_the_relay_port_range_into_the_env_file():
+    """TCP_PORT_FIRST / TCP_PORT_LAST are what compose.challenge-host.yml publishes and what the agent and router listen on (a host runs at most as many
+    raw-TCP instances at once as it has ports). Default 30000-30199; the operator widens it for the event."""
+    bash_cmd = get_bash_cmd()
+    default = subprocess.run([bash_cmd, "deploy/challenge-host/bootstrap.sh"], cwd=str(ROOT), capture_output=True, text=True, timeout=15)
+    assert 'TCP_PORT_FIRST="30000"' in default.stdout and 'TCP_PORT_LAST="30199"' in default.stdout, default.stdout[-1200:]
+    wide = subprocess.run([bash_cmd, "deploy/challenge-host/bootstrap.sh"], cwd=str(ROOT), capture_output=True, text=True, timeout=15,
+                          env={**os.environ, "TCP_PORT_FIRST": "30000", "TCP_PORT_LAST": "30999"})
+    assert 'TCP_PORT_LAST="30999"' in wide.stdout, wide.stdout[-1200:]
+
+
 def test_bootstrap_firewall_only_mode():
     """Verify --firewall-only mode configures only firewall rules with iptables."""
     with tempfile.TemporaryDirectory() as stub_dir:

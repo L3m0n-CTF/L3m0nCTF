@@ -91,8 +91,9 @@ Set in environment or `deploy/compose/generated/compose.env`:
 | `INSTANCER_MANIFEST_FILE` | `../../config/instancer/challenges.example.toml` | `/etc/l3mon/challenges.toml` | Path to challenge manifest file |
 | `INSTANCE_DOMAIN` | `localhost:8090` | Required (e.g. `inst.l3m0nctf.xyz`) | Wildcard domain routing suffix |
 | `INSTANCER_INSTANCE_POOL` | `10.200.0.0/16,172.16.0.0/12` | `10.200.0.0/16` | Valid network CIDR pool for instance containers |
-| `INSTANCER_TCP_PORT_START` | `30000` | `30000` | Start of TCP relay port range |
-| `INSTANCER_TCP_PORT_COUNT` | `200` | `200` | Number of allocated TCP relay ports |
+| `INSTANCER_TCP_PORT_START` | `30000` | `30000` | First port of the TCP relay range |
+| `INSTANCER_TCP_PORT_END` | `30199` | `30199` | Last port of the range (at most 2000 ports in all). `INSTANCER_TCP_PORT_COUNT` is still read when no END is given; both must agree. A host runs at most as many raw-TCP instances at once as it has ports |
+| `TCP_PORT_FIRST` / `TCP_PORT_LAST` | `30000` / `30199` | sized for the peak | What `compose.challenge-host.yml` publishes and gives the agent and the router as START and END, written to `challenge-host.env` by `bootstrap.sh`. Open the same range in the cloud firewall for the event |
 | `INSTANCER_TCP_MAX_CONNS_PER_IP`| `60` | `60` | Max concurrent TCP connections per client IP |
 | `INSTANCER_TCP_MAX_TOTAL_CONNS` | `2000` | `2000` | Global TCP relay connection ceiling |
 | `INSTANCER_TCP_RATE_LIMIT_BPS` | `2097152` (2 MB/s) | `2097152` | Token bucket rate limit per client connection |
@@ -245,6 +246,31 @@ The figure that matters is real memory per instance, which must be MEASURED for 
 - A single start takes about 0.6 s; 24 simultaneous starts took 8.8 s (about 2.7 starts a second); stopping 90 instances took 28 s.
 
 `INSTANCER_MAX_MEM_MB` is checked against the DECLARED limits (the safe direction), so set `mem_mb` in the manifest to what the challenge really needs with some room, not to a round number.
+
+---
+
+## 4d. What a challenge must look like to run as an instance (author checklist)
+
+The instancer runs every instance as a normal user (uid 10001) on a read-only root file system, with no capabilities, no outbound network, one container, and the flag in the environment variable `FLAG`. That is what makes it safe to give a player code execution inside it. A challenge that was written for a plain `docker compose up` often needs a small change. Tested on the real host with the owner's own challenges and reference solvers (21 Nov 2026):
+
+| The challenge does | Under the instancer | What to do |
+|---|---|---|
+| Reads the flag from `FLAG` and only serves it (Turing Gate, Deep Index) | runs as delivered | nothing |
+| Writes files into its own directory at start (Delos Console writes two files into `/app`) | dies at start: the root file system is read-only and the user is not root | make the file names links, at build time, to `/tmp` (`RUN ln -s /tmp/<name> /app/<name>`). The code and the layout stay the same |
+| Writes the flag file from `FLAG` in an entry-point that runs as root (Zero Cool, Jarvis Override) | the writes fail, **silently** (`2>/dev/null`), and the instance serves the baked placeholder flag | the entry-point writes it under `/tmp` (`cd /tmp` for a binary that reads `flag.txt` from its working directory; a build-time link `/app/flag.txt -> /tmp/flag.txt` for one that reads an absolute path). Do not bake a flag into the image |
+| Needs `NET_ADMIN`, runs `iptables`, runs as root (UPI Sandbox Bypass) | refused by the safety checks | not supported: the platform keeps these off on purpose |
+| Is two or more containers, or a fixed subnet (UPI Sandbox Bypass; the three Ollama challenges need a model container each) | not supported: one container per instance | merge into one container, or run the shared part as one shared service outside the instancer |
+| Needs outbound network access, such as DNS to the player's own server (UPI Sandbox Bypass) | not supported: instance networks have no way out, by design | no per-challenge egress exists; see the open decisions in `docs/remaining-work.md` |
+| Needs a WebSocket | not supported (the router drops `Upgrade`) | use plain requests |
+
+Things to know when adapting:
+
+- `/tmp` is a RAM-backed file system of 64 MB that counts against the instance's memory limit (`mem_mb`): fill it and the instance is killed for memory. Give a challenge that writes much to `/tmp` a larger `mem_mb`.
+- A pwn challenge is often sensitive to its CPU quota; check it with the quota you will set (the Zero Cool exploit works at `cpus = 0.25`).
+- Check the adaptation with the author's own reference solver against the live instance, for two teams with different flags: each solve must return that team's flag. `services/instancer/tools/real_host_proof.py` shows how to start instances; the owner challenge run of 21 Nov 2026 used `/etc/hosts` entries for the instance names.
+- Images are built in CI and pulled by digest. Never build on a challenge host: its isolation firewall drops traffic to `169.254.169.254`, which is also Google's DNS resolver, so a build on Docker's default network cannot resolve any name (and a build on the host network could reach the metadata address).
+
+Measured real memory per instance on the real host: Turing Gate, Deep Index and Delos Console about 20 MiB each (declared 128 MB); Zero Cool and Jarvis Override about 1.2 MiB (declared 64 MB).
 
 ---
 

@@ -216,6 +216,23 @@ def test_production_overlay_fails_without_instance_pool():
     assert "INSTANCER_INSTANCE_POOL must be set in production" in combined, f"Expected error text not found in: {combined}"
 
 
+def test_challenge_host_tcp_range_is_configurable_and_agent_router_and_published_ports_agree():
+    """Sized for 878 players in 446 teams (21 Nov 2026): the relay range was fixed at 200 ports, which caps a host at 200 raw-TCP instances at once.
+    TCP_PORT_FIRST and TCP_PORT_LAST widen it, and the published ports, the agent and the router must all say the same thing."""
+    ch_file = ROOT / "deploy" / "compose" / "compose.challenge-host.yml"
+    env = {k: v for k, v in os.environ.items() if not k.startswith(("TCP_PORT", "INSTANCER_TCP"))}
+    env.update({"TCP_PORT_FIRST": "30000", "TCP_PORT_LAST": "30999"})
+    res = subprocess.run(["docker", "compose", "-f", str(ch_file), "config", "--format", "json"], cwd=str(ROOT), capture_output=True, text=True, env=env, timeout=60)
+    assert res.returncode == 0, res.stderr
+    services = json.loads(res.stdout)["services"]
+    relay = [p for p in services["router"]["ports"] if int(p.get("target", 0)) in range(30000, 31000)]
+    assert len(relay) == 1000, f"expected the 1000 relay ports 30000-30999, got {len(relay)}"
+    for name in ("agent", "router"):
+        e = services[name]["environment"]
+        assert e["INSTANCER_TCP_PORT_START"] == "30000" and e["INSTANCER_TCP_PORT_END"] == "30999", (name, e)
+        assert "INSTANCER_TCP_PORT_COUNT" not in e, "one source of truth: START and END, not a COUNT that could disagree"
+
+
 def test_challenge_host_compose_properties():
     """Validates deploy/compose/compose.challenge-host.yml standalone configuration."""
     ch_file = ROOT / "deploy" / "compose" / "compose.challenge-host.yml"

@@ -218,6 +218,8 @@ INSTANCER_TRUSTED_FORWARDERS="${PLATFORM_VM_IP}"
 HOST_PRIVATE_BIND_IP="${host_bind_ip}"
 INSTANCER_MAX_MEM_MB="${max_mem_mb}"
 INSTANCER_MAX_SLOTS="${max_slots}"
+TCP_PORT_FIRST="${TCP_PORT_FIRST:-30000}"
+TCP_PORT_LAST="${TCP_PORT_LAST:-30199}"
 EOF
 )
   write_file "${env_file}" "${env_content}" "0600"

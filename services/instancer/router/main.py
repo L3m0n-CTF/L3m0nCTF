@@ -6,6 +6,7 @@ import logging
 import os
 import sys
 
+from services.instancer.ports import read_tcp_port_range
 from services.instancer.router.access_gate import AccessGate
 from services.instancer.router.router import MAX_BODY_BYTES, InstanceRouter, extract_instance_id, local_address_towards
 
@@ -66,8 +67,7 @@ def parse_router_config(env: dict | None = None) -> dict:
     if poll_interval <= 0:
         raise ValueError(f"POLL_INTERVAL must be positive, got {poll_interval}")
 
-    tcp_port_start = _get_int("INSTANCER_TCP_PORT_START", 30000)
-    tcp_port_count = _get_int("INSTANCER_TCP_PORT_COUNT", 200)
+    tcp_port_start, tcp_port_count = read_tcp_port_range(e)
     tcp_idle_timeout = _get_float("INSTANCER_TCP_IDLE_TIMEOUT", 300.0)
     tcp_lifetime_cap = _get_float("INSTANCER_TCP_LIFETIME_CAP", 3600.0)
     tcp_max_conns_per_instance = _get_int("INSTANCER_TCP_MAX_CONNS_PER_INSTANCE", 10)

@@ -8,6 +8,7 @@ import time
 from services.instancer.docker_client import DockerClient
 from services.instancer.manager import InstanceManager
 from services.instancer.manifest import load_manifest
+from services.instancer.ports import read_tcp_port_range
 from services.instancer.server import create_instancer_server, create_metrics_server
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
@@ -88,8 +89,7 @@ def main():
     docker = DockerClient()
     instance_domain = os.getenv("INSTANCE_DOMAIN", "localhost:8090")
     tcp_host = os.getenv("INSTANCER_TCP_HOST", "localhost")
-    tcp_port_start = int(os.getenv("INSTANCER_TCP_PORT_START", "30000"))
-    tcp_port_count = int(os.getenv("INSTANCER_TCP_PORT_COUNT", "200"))
+    tcp_port_start, tcp_port_count = read_tcp_port_range()
     router_container_name = os.getenv("ROUTER_CONTAINER_NAME", "l3mon-router-1")
     max_slots, max_mem_mb = read_capacity_limits()
     _log.info("Admission ceilings: %d instances, %d MB of declared memory", max_slots, max_mem_mb)
