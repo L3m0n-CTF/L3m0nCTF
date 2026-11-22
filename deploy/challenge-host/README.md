@@ -158,9 +158,14 @@ On the **platform VM**, edit `/etc/l3mon/hosts.json` (or `config/instancer/hosts
 Then give the platform the host's two tokens and switch the platform to multi-host mode with the **optional overlay** `deploy/compose/compose.instancer-multihost.yml`. Two folders hold one file per host, named in capitals, and each container sees only its own kind of token (CTFd the instancer tokens, the router the router tokens):
 ```bash
 # the tokens are the ones you generated on the host in step 2: the same values
-install -d -m 0700 /etc/l3mon/host-secrets/instancer /etc/l3mon/host-secrets/router
-install -m 0600 <(cat INSTANCER_TOKEN_OF_H1) /etc/l3mon/host-secrets/instancer/INSTANCER_TOKEN_H1   # CTFd calls the agent of h1 with this
-install -m 0600 <(cat ROUTER_TOKEN_OF_H1)    /etc/l3mon/host-secrets/router/ROUTER_TOKEN_H1         # the central router reads h1's routes with this
+# CTFd and the router run as users that are not root and see these two folders through a bind mount, which keeps the permissions. On the challenge host a 0600
+# token file was unreadable to the agent and the router (21 Nov 2026); the same applies to a 0700 folder or a 0600 file here, so the two folders are 0755 and the
+# files 0644, the layout that worked on the platform VM on 22 Nov 2026 (the 0600 form was not tried there). The PARENT folder is 0700 and root's: it is what keeps
+# every other user of the machine out (a container reaches the two folders through the mount, not through the parent).
+install -d -m 0700 -o root -g root /etc/l3mon/host-secrets
+install -d -m 0755 -o root -g root /etc/l3mon/host-secrets/instancer /etc/l3mon/host-secrets/router
+install -m 0644 <(cat INSTANCER_TOKEN_OF_H1) /etc/l3mon/host-secrets/instancer/INSTANCER_TOKEN_H1   # CTFd calls the agent of h1 with this
+install -m 0644 <(cat ROUTER_TOKEN_OF_H1)    /etc/l3mon/host-secrets/router/ROUTER_TOKEN_H1         # the central router reads h1's routes with this
 
 L3MON_ENV=production L3MON_OVERLAYS=instancer,instancer-production,instancer-multihost \
   L3MON_HOSTS_FILE=/etc/l3mon/hosts.json \
