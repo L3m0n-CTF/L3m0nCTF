@@ -90,6 +90,7 @@ Set in environment or `deploy/compose/generated/compose.env`:
 | `INSTANCER_HOST_NAME` | `default` | `h1`, `h2`... | Name of this challenge host in the fleet |
 | `INSTANCER_MANIFEST_FILE` | `../../config/instancer/challenges.example.toml` | `/etc/l3mon/challenges.toml` | Path to challenge manifest file |
 | `INSTANCE_DOMAIN` | `localhost:8090` | Required (e.g. `inst.l3m0nctf.xyz`) | Wildcard domain routing suffix |
+| `INSTANCE_URL_SCHEME` | empty | empty | The scheme of the address a web instance is handed to a player. Empty = `https` for a real domain (Cloudflare answers on 443 only, so an `http://` link times out: found on 22 Nov 2026 by the first platform-driven round), `http` for a development address (a port, or `localhost`). `http` or `https` forces one |
 | `INSTANCER_INSTANCE_POOL` | `10.200.0.0/16,172.16.0.0/12` | `10.200.0.0/16` | Valid network CIDR pool for instance containers |
 | `INSTANCER_TCP_PORT_START` | `30000` | `30000` | First port of the TCP relay range |
 | `INSTANCER_TCP_PORT_END` | `30199` | `30199` | Last port of the range (at most 2000 ports in all). `INSTANCER_TCP_PORT_COUNT` is still read when no END is given; both must agree. A host runs at most as many raw-TCP instances at once as it has ports |

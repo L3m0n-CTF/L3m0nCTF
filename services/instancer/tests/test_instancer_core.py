@@ -115,7 +115,7 @@ def test_instance_start_and_idempotence():
     assert inst1["slug"] == "demo-web"
     assert inst1["state"] == "running"
     assert inst1["expires_at"] == now_ts + 45 * 60
-    assert inst1["url"] == f"http://{inst1['id']}.inst.example.com/"
+    assert inst1["url"] == f"https://{inst1['id']}.inst.example.com/"  # a real domain is behind Cloudflare: https (test_instance_url_scheme.py)
 
     # Idempotent start: same team and challenge returns existing instance
     inst2, created = mgr.start_instance(team_id=7, challenge_id=42, slug="demo-web", flag=FLAG_EXAMPLE)
