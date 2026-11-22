@@ -7,6 +7,7 @@ from typing import Callable, Optional
 from services.instancer.flag import is_valid_flag_shape
 from services.instancer.manifest import ChallengeSpec, Manifest
 from services.instancer.safety import assert_safe
+from services.instancer.urls import instance_url_scheme
 
 _log = logging.getLogger("l3mon.instancer")
 
@@ -92,8 +93,8 @@ class InstanceRecord:
         self.max_body_bytes = max_body_bytes
         self.response_timeout_seconds = response_timeout_seconds
 
-    def to_dict(self, instance_domain: str, tcp_host: str) -> dict:
-        url = f"http://{self.id}.{instance_domain}/" if self.protocol == "http" else None
+    def to_dict(self, instance_domain: str, tcp_host: str, scheme: str = "http") -> dict:
+        url = f"{scheme}://{self.id}.{instance_domain}/" if self.protocol == "http" else None
         host = tcp_host if self.protocol == "tcp" else None
         return {
             "id": self.id,
@@ -132,6 +133,7 @@ class InstanceManager:
         max_concurrent_starts: int = 8,
         start_wait_seconds: float = 25.0,
         mem_overcommit: float = 1.0,
+        url_scheme: Optional[str] = None,
     ):
         if not (1024 <= tcp_port_start <= 65535):
             raise ValueError(f"INSTANCER_TCP_PORT_START must be between 1024 and 65535, got {tcp_port_start}")
@@ -145,6 +147,7 @@ class InstanceManager:
         self.manifest = manifest
         self.docker = docker_client
         self.instance_domain = instance_domain
+        self.url_scheme = instance_url_scheme(instance_domain, url_scheme)
         self.tcp_host = tcp_host
         self.tcp_port_start = tcp_port_start
         self.tcp_port_count = tcp_port_count
@@ -265,7 +268,7 @@ class InstanceManager:
             if existing_id and existing_id in self._instances:
                 inst = self._instances[existing_id]
                 if inst.state in (InstanceState.RUNNING, InstanceState.STARTING):
-                    return inst.to_dict(self.instance_domain, self.tcp_host), False
+                    return inst.to_dict(self.instance_domain, self.tcp_host, self.url_scheme), False
 
             # 2. Cooldown check
             cooldown_until = self._cooldowns.get(key, 0)
@@ -466,7 +469,7 @@ class InstanceManager:
                 record.state = InstanceState.RUNNING
                 record.target_ip = target_ip
                 record.container_id = real_cid
-                return record.to_dict(self.instance_domain, self.tcp_host), True
+                return record.to_dict(self.instance_domain, self.tcp_host, self.url_scheme), True
         finally:
             self._start_slots.release()
 
@@ -475,14 +478,14 @@ class InstanceManager:
             record = self._instances.get(instance_id)
             if not record:
                 return None
-            return record.to_dict(self.instance_domain, self.tcp_host)
+            return record.to_dict(self.instance_domain, self.tcp_host, self.url_scheme)
 
     def list_instances(self, team_id: Optional[int] = None) -> list[dict]:
         with self._lock:
             res = []
             for inst in self._instances.values():
                 if team_id is None or inst.team_id == team_id:
-                    res.append(inst.to_dict(self.instance_domain, self.tcp_host))
+                    res.append(inst.to_dict(self.instance_domain, self.tcp_host, self.url_scheme))
             return res
 
     def renew_instance(self, instance_id: str) -> dict:
@@ -509,7 +512,7 @@ class InstanceManager:
             record.last_renewed_at = now
             record.renewals += 1
 
-            return record.to_dict(self.instance_domain, self.tcp_host)
+            return record.to_dict(self.instance_domain, self.tcp_host, self.url_scheme)
 
     def _active_mem_mb(self) -> float:
         """The declared memory limits of the live instances, in MB. The caller holds the lock. (Counted against the ceiling as limit / mem_overcommit.)"""

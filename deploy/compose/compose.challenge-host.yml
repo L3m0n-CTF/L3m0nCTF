@@ -88,6 +88,8 @@ services:
       INSTANCER_DEV: "${INSTANCER_DEV:-0}"
       MANIFEST_PATH: /etc/instancer/challenges.toml
       INSTANCE_DOMAIN: "${INSTANCE_DOMAIN:-inst.l3m0nctf.xyz}"
+      # The scheme of the address a player is given: empty = https for a real domain (Cloudflare serves 443 only), http for a development address.
+      INSTANCE_URL_SCHEME: "${INSTANCE_URL_SCHEME:-}"
       INSTANCER_TCP_HOST: "${CHALLENGE_HOST_TCP_NAME:-h1.inst.l3m0nctf.xyz}"
       # The relay port range: the same two numbers for the agent, the router and the published ports (TCP_PORT_FIRST, TCP_PORT_LAST; at most 2000 ports).
       # A host runs at most as many raw-TCP instances at once as it has ports, so size the range for the peak (docs/deploy/instancer.md, "Sizing a challenge

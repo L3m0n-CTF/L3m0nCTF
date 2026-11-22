@@ -292,6 +292,9 @@ def test_challenge_host_compose_properties():
     assert agent_env.get("INSTANCER_MAX_SLOTS") and agent_env.get("INSTANCER_MAX_MEM_MB"), "the agent must get INSTANCER_MAX_SLOTS and INSTANCER_MAX_MEM_MB"
     # and the knobs for a burst and for measured challenges can be turned from the host's env file (defaults: 8 starts at a time, wait 35 s, no overcommit)
     assert agent_env.get("INSTANCER_MAX_CONCURRENT_STARTS") == "8" and agent_env.get("INSTANCER_START_WAIT_SECONDS") == "35" and agent_env.get("INSTANCER_MEM_OVERCOMMIT") == "1"
+    # the scheme of the address handed to a player: left empty it is https for a real domain (Cloudflare serves 443 only), and can be forced from the env file
+    assert "INSTANCE_URL_SCHEME" in agent_env, "the agent must be able to take INSTANCE_URL_SCHEME from the host's env file"
+    assert agent_env.get("INSTANCE_URL_SCHEME") in ("", None), "the default must be the empty guess (https for a real domain), never a fixed http"
     assert router.get("environment", {}).get("ROUTER_LISTEN_ADDR", "auto") == "auto"
     assert float(router.get("environment", {}).get("POLL_INTERVAL")) <= 1.0, "the relay port of a new TCP instance must appear within about a second"
 

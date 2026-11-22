@@ -142,6 +142,7 @@ def main():
         manifest=manifest,
         docker_client=docker,
         instance_domain=instance_domain,
+        url_scheme=os.getenv("INSTANCE_URL_SCHEME", ""),  # empty = https for a real domain, http for a development address
         tcp_host=tcp_host,
         tcp_port_start=tcp_port_start,
         tcp_port_count=tcp_port_count,
