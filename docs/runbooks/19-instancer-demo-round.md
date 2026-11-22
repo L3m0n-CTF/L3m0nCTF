@@ -33,9 +33,12 @@ Below, commands are written for Git Bash; in PowerShell put `& "C:\Program Files
 ```bash
 bash tools/ops/demo-round.sh vm-start
 bash tools/ops/gate.sh close --yes
+bash tools/ops/demo-round.sh instance-gate open
 bash tools/ops/demo-round.sh run setup_programme
 bash tools/ops/demo-round.sh run counts
 ```
+
+**Do not skip `instance-gate open`.** The central router rests in `crew` mode (nobody may open an instance's address until Cloudflare Access is set up), and in that mode the page starts an instance but the address it shows answers `Forbidden: these addresses are open to the organising crew only for now`. That was exactly what stopped the first manual round on 22 Nov. `open` lets in anybody who has the address (a random 32-character name that exists only while the instance runs); that is acceptable only for sample challenges, with the player gate closed, for the length of the round. It restarts only the central router, so players are not affected, and prints `INSTANCE_ACCESS_MODE=open`. `status` always shows the current mode.
 
 `vm-start` waits for the host's stack and prints its capacity (`slots_used` 0). `gate.sh close` ends with `GATE IS CLOSED ... (confirmed from outside ...)`; if it does not say so, stop. `setup_programme` ends with `released: channel crew-test and 5 programmes` and `notifications before / after (must be equal)`: the two numbers must be equal. `counts` shows `challenges 5 ... programmes 5`.
 
@@ -98,17 +101,21 @@ Connect to the host's **public IP address** (`34.180.12.8`) and the port the pag
 ```bash
 bash tools/ops/demo-round.sh run cleanup
 bash tools/ops/demo-round.sh run counts
+bash tools/ops/demo-round.sh instance-gate crew
 bash tools/ops/gate.sh open
 bash tools/ops/demo-round.sh vm-stop
 bash tools/ops/demo-round.sh status
 ```
 
-`cleanup` ends `cleanup done; notifications now: 0`. `counts` must show `challenges 0 ... channels 0 programmes 0` and `test users: 0`. `gate.sh open` ends `GATE IS OPEN: the channels answer players. (confirmed from outside ...)`. `status` must show the challenge VM `TERMINATED` and the TCP rule `DISABLED: True`. Your own player account and studio are never touched by `cleanup`: it removes only what is named `test-inst-`, the channel `crew-test` and the five sample challenges (their solves with them).
+`instance-gate crew` puts the router back to its resting mode (`INSTANCE_ACCESS_MODE=crew`).
+
+`cleanup` ends `cleanup done; notifications now: 0`. `counts` must show `challenges 0 ... channels 0 programmes 0`, `test users: 0` and `instance rows: 0 | live ones: 0`. `gate.sh open` ends `GATE IS OPEN: the channels answer players. (confirmed from outside ...)`. `status` must show the challenge VM `TERMINATED` and the TCP rule `DISABLED: True`. Your own player account and studio are never touched by `cleanup`: it removes only what is named `test-inst-`, the channel `crew-test` and the five sample challenges (their solves with them).
 
 ## Things that went wrong on 22 Nov, and what each meant
 
 | Seen | Cause | What to do |
 |---|---|---|
+| The instance address shows `Forbidden: these addresses are open to the organising crew only for now` (22 Nov, the first manual round) | the central router is in `crew` mode and nobody switched it to `open` for the round; the instance itself was started and was fine | `bash tools/ops/demo-round.sh instance-gate open`, then reload the address (a running instance needs no restart) |
 | `The required property [project] is not currently set` | the gcloud configuration `l3mon-new` has no project | set `CLOUDSDK_CORE_PROJECT` as above |
 | `bash: ... C:/Users/.../run_demo.sh: No such file` | a command that began with a path was rewritten by Git Bash | begin the command with a word (`bash /tmp/x`, not `/tmp/x`); do not set `MSYS_NO_PATHCONV` (it breaks gcloud itself) |
 | a fetch of an instance address answers 403 from a script | Cloudflare turns away Python's default client name | send a browser's name; `curl` and browsers are fine |

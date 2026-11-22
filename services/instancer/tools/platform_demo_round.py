@@ -420,10 +420,18 @@ def cleanup():
     from CTFd.plugins.l3mon_instances.hosts import get_host_tracker
     from CTFd.plugins.l3mon_instances.models import L3monInstance, L3monInstanceLog
     from CTFd.plugins.l3mon_release.reconcile import reconcile, serialize
+    from sqlalchemy import or_
     users = Users.query.filter(Users.name.like(PREFIX + "-%")).all()
     team_ids = [u.team_id for u in users if u.team_id]
+    chal_ids = [c.id for c in Challenges.query.filter_by(category="crew-test").all()]
+
+    def mine(model):
+        """The rows of the test studios AND every row, of any studio, for a demo challenge (a person testing by hand in their own studio leaves some)."""
+        conds = ([model.team_id.in_(team_ids)] if team_ids else []) + ([model.challenge_id.in_(chal_ids)] if chal_ids else [])
+        return model.query.filter(or_(*conds)) if conds else None
+
     # 1. anything still running on the host is stopped with the platform's own client
-    for row in L3monInstance.query.filter(L3monInstance.team_id.in_(team_ids)).all() if team_ids else []:
+    for row in (mine(L3monInstance).all() if mine(L3monInstance) is not None else []):
         if row.state in ("starting", "running"):
             try:
                 get_host_tracker().get_client_for_host(row.host_name).stop_instance(row.instance_id)
@@ -445,10 +453,11 @@ def cleanup():
         audit.record("plan.remove", "channel", f"{CHANNEL} removed (crew test over)")
         reconcile(locked=True)
     # 3. the demo challenges and everything that hangs on them or on the test studios
-    chal_ids = [c.id for c in Challenges.query.filter_by(category="crew-test").all()]
+    for model in (L3monInstance, L3monInstanceLog):
+        query = mine(model)
+        if query is not None:
+            query.delete(synchronize_session=False)
     if team_ids:
-        L3monInstance.query.filter(L3monInstance.team_id.in_(team_ids)).delete(synchronize_session=False)
-        L3monInstanceLog.query.filter(L3monInstanceLog.team_id.in_(team_ids)).delete(synchronize_session=False)
         Awards.query.filter(Awards.team_id.in_(team_ids)).delete(synchronize_session=False)
     for model in (Solves, Submissions):
         if chal_ids:
@@ -483,6 +492,8 @@ def counts():
     out("users", Users.query.count(), "teams", Teams.query.count(), "challenges", Challenges.query.count(), "solves", Solves.query.count(),
         "submissions", Submissions.query.count(), "channels", Channel.query.count(), "programmes", Programme.query.count())
     out("test users:", Users.query.filter(Users.name.like(PREFIX + "-%")).count())
+    from CTFd.plugins.l3mon_instances.models import L3monInstance
+    out("instance rows:", L3monInstance.query.count(), "| live ones:", L3monInstance.query.filter(L3monInstance.state.in_(["starting", "running"])).count())
     return 0
 
 

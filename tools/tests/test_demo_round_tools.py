@@ -140,3 +140,33 @@ def test_an_unknown_action_prints_the_help_and_exits_2(fake):
     done = run_wrapper(env, "frobnicate")
     assert done.returncode == 2 and "vm-start" in done.stderr
     assert log.read_text(encoding="utf-8") == ""
+
+
+@pytest.mark.parametrize("bad", ["", "closed", "OPEN", "open; id", "crew crew"])
+def test_instance_gate_takes_only_open_or_crew(fake, bad):
+    env, log = fake
+    done = run_wrapper(env, "instance-gate", bad)
+    assert done.returncode == 2
+    assert log.read_text(encoding="utf-8") == ""
+
+
+@pytest.mark.parametrize("mode", ["open", "crew"])
+def test_instance_gate_sets_the_mode_and_restarts_only_the_central_router(fake, mode):
+    """The first manual round on 22 Nov 2026 failed because the router rested in `crew` and nobody switched it to `open` for the round: every instance
+    address answered 'Forbidden: these addresses are open to the organising crew only for now'. The runbook now says when, and this is the way."""
+    env, log = fake
+    done = run_wrapper(env, "instance-gate", mode)
+    assert done.returncode == 0, done.stderr
+    calls = log.read_text(encoding="utf-8").splitlines()
+    assert len(calls) == 1 and "compute ssh l3mon-app" in calls[0] and "--tunnel-through-iap" in calls[0]
+    assert f"INSTANCE_ACCESS_MODE={mode}" in calls[0]
+    assert "tools/compose.sh up -d router" in calls[0], "only the router may be recreated: players are on the platform"
+    assert "up -d --wait" not in calls[0] and "l3mon-chal" not in calls[0]
+
+
+def test_the_runbook_tells_when_to_open_and_close_the_instance_gate():
+    runbook = RUNBOOK.read_text(encoding="utf-8")
+    assert "instance-gate open" in runbook and "instance-gate crew" in runbook
+    assert runbook.index("instance-gate open") < runbook.index("## B."), "the instance gate must be opened before the by-hand steps"
+    assert runbook.index("instance-gate crew") > runbook.index("## E."), "and put back at the end"
+    assert "open to the organising crew only for now" in runbook, "the message a person sees when it was forgotten must be in the table of problems"

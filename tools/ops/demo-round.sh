@@ -5,6 +5,10 @@
 #   bash tools/ops/demo-round.sh vm-start        start the challenge VM and wait until its host stack answers
 #   bash tools/ops/demo-round.sh vm-stop         stop the challenge VM (every instance on it ends)
 #   bash tools/ops/demo-round.sh run <command>   ship platform_demo_round.py to the platform VM and run one command of it there (see the list below)
+#   bash tools/ops/demo-round.sh instance-gate open|crew   who may open an instance's address: open = everybody who has it (for a round with sample challenges
+#                                                          and the player gate closed), crew = nobody until Cloudflare Access is set up (the resting state).
+#                                                          Restarts only the central router; players are not affected. Without `open` every address answers
+#                                                          "Forbidden: these addresses are open to the organising crew only for now".
 #
 # Commands of `run` (all go through the platform's own code and the real challenge host):
 #   setup_programme   the channel "crew-test" with five sample programmes on air (no test studios: you sign in with your own test player)
@@ -29,7 +33,7 @@ CHAL="${L3MON_CHAL_VM:-l3mon-chal}"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 usage() {
-  sed -n '2,22p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' >&2
+  sed -n '2,/^set -euo pipefail/p' "${BASH_SOURCE[0]}" | sed '$d' | sed 's/^# \{0,1\}//' >&2
   exit 2
 }
 
@@ -51,6 +55,14 @@ case "$ACTION" in
     echo "public TCP rule (disabled must be True outside a test of raw-TCP challenges):"
     g compute firewall-rules list --filter="name~tcp-relays" --format="table(name,disabled,sourceRanges.list():label=FROM,allowed[].map().firewall_rule().list():label=PORTS)"
     bash "$HERE/tools/ops/gate.sh" status
+    echo "the instance gate on the platform's central router (open = everybody who has an address; crew = resting state):"
+    on_vm "$APP" "docker inspect \"\$(docker ps -qf name=router-1 | head -1)\" --format '{{range .Config.Env}}{{println .}}{{end}}' | grep '^INSTANCE_ACCESS_MODE' || echo 'no central router is running'"
+    ;;
+
+  instance-gate)
+    MODE="${2:-}"
+    [[ "$MODE" == "open" || "$MODE" == "crew" ]] || usage
+    on_vm "$APP" "sudo sed -i '/^INSTANCE_ACCESS_MODE=/d' /etc/l3mon/production.env && echo INSTANCE_ACCESS_MODE=$MODE | sudo tee -a /etc/l3mon/production.env > /dev/null && cd \"\$HOME/L3m0nCTF\" && set -a && . /etc/l3mon/production.env && set +a && tools/compose.sh up -d router 2>&1 | tail -3 && sleep 5 && docker inspect \"\$(docker ps -qf name=router-1 | head -1)\" --format '{{range .Config.Env}}{{println .}}{{end}}' | grep '^INSTANCE_ACCESS_MODE'"
     ;;
 
   vm-start)
