@@ -469,7 +469,14 @@ def g_tcp():
     check("tcp: and is never accepted and then closed with nothing (the relay waits for an instance that is still starting)", empty_close == 0, f"{empty_close} empty closes")
     ok, got = tcp_talk(Cfg.tcp_host, a["port"], "flag")
     check("tcp: team A's port serves team A's flag", ok and fa in got and fb not in got, got[:90].replace("\n", " | "))
-    ok, got = tcp_talk(Cfg.tcp_host, b["port"], "flag")
+    # Team B was started a moment after team A, so its relay port may appear one polling cycle later than A's: wait for it the way a player's client would.
+    ok, got = False, ""
+    t1 = time.time()
+    while time.time() - t1 < 8:
+        ok, got = tcp_talk(Cfg.tcp_host, b["port"], "flag", timeout=3)
+        if ok and got:
+            break
+        time.sleep(0.2)
     check("tcp: team B's port serves team B's flag", ok and fb in got and fa not in got, got[:90].replace("\n", " | "))
     stop(a["id"])
     freed = wait_for(lambda: not tcp_talk(Cfg.tcp_host, a["port"], timeout=1.5)[0], 15)
@@ -709,15 +716,24 @@ def cleanup():
 
 
 def main() -> int:
+    # On a real challenge host the agent and the router listen on the host's private address (HOST_PRIVATE_BIND_IP), never on 127.0.0.1: take it from
+    # the host's own env file so that the bare command works there.
+    own_ip = "10.10.0.3"
+    try:
+        for line in open("/etc/l3mon/challenge-host.env", encoding="utf-8"):
+            if line.startswith("HOST_PRIVATE_BIND_IP="):
+                own_ip = line.split("=", 1)[1].strip().strip('"')
+    except OSError:
+        pass
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--agent", default="http://127.0.0.1:8300")
-    ap.add_argument("--router", default="http://127.0.0.1:8080")
+    ap.add_argument("--agent", default=f"http://{own_ip}:8300")
+    ap.add_argument("--router", default=f"http://{own_ip}:8080")
     ap.add_argument("--token-file", default="/etc/l3mon/secrets/INSTANCER_TOKEN")
     ap.add_argument("--router-token-file", default="/etc/l3mon/secrets/ROUTER_TOKEN")
     ap.add_argument("--domain", default="l3m0nctf.xyz")
-    ap.add_argument("--tcp-host", default="127.0.0.1")
+    ap.add_argument("--tcp-host", default=own_ip)
     ap.add_argument("--platform-ip", default="10.10.0.2")
-    ap.add_argument("--host-ip", default="10.10.0.3")
+    ap.add_argument("--host-ip", default=own_ip)
     ap.add_argument("--only", default="", help="comma-separated group names")
     ap.add_argument("--list", action="store_true")
     args = ap.parse_args()
