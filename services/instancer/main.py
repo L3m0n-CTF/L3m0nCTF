@@ -6,6 +6,7 @@ import threading
 import time
 
 from services.instancer.docker_client import DockerClient
+from services.instancer.lifetime import read_instance_lifetime
 from services.instancer.manager import InstanceManager
 from services.instancer.manifest import load_manifest
 from services.instancer.ports import read_tcp_port_range
@@ -133,7 +134,11 @@ def main():
     _log.info("Admission ceilings: %d instances, %d MB of declared memory", max_slots, max_mem_mb)
 
     max_concurrent_starts, start_wait_seconds = read_start_limits()
+    max_ttl_minutes, max_renewals = read_instance_lifetime()
+    _log.info("Instance lifetime: at most %d minutes, %d renewal(s) allowed", max_ttl_minutes, max_renewals)
     manager = InstanceManager(
+        max_ttl_minutes=max_ttl_minutes,
+        max_renewals=max_renewals,
         mem_overcommit=read_mem_overcommit(),
         max_concurrent_starts=max_concurrent_starts,
         start_wait_seconds=start_wait_seconds,

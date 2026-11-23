@@ -48,6 +48,8 @@ REAL_START = datetime.datetime.utcnow()  # CTFd dates a solve, an award and an u
 BEFORE = T_START - 3600
 LIVE = T_START + 60  # minute 0 of the scenario
 
+PLATFORM_ADDITIONS = ("channel_bonus",)
+
 
 def load(name):
     with open(os.path.join(HERE, name), encoding="utf-8") as handle:
@@ -212,6 +214,10 @@ class Round:
         data = body.get("data") or {}
         extra = dict(data.get("l3mon") or {})
         reason = extra.pop("reason", None)
+        # What the platform tells a studio ON TOP of what the approved demo told it (the demo is the page's mock server, written before these existed). Each of
+        # these has its own tests; the golden file stays the demo's own words for everything else. channel_bonus: the TRP a completing flag earns (23 Nov 2026).
+        for added in PLATFORM_ADDITIONS:
+            extra.pop(added, None)
         out = {"http": r.status_code, "kind": body.get("error") or reason or data.get("status")}
         if body.get("phase"):
             out["phase"] = body["phase"]

@@ -1,6 +1,6 @@
 """The reply to a flag: CTFd's own answer (it judges the flag, records the solve and values the challenge), with `l3mon` added.
 
-correct      {value, reel, reels_needed, channel_signal, channel_complete, first_blood, solves}
+correct      {value, reel, reels_needed, channel_signal, channel_complete, channel_bonus, first_blood, solves}
 incorrect    {tries_left} when the challenge limits tries
 the 403 and 429 replies   {reason: processing | no_tries | ratelimited | paused | ended, retry_after?}
 
@@ -61,7 +61,7 @@ def limited(play, tries=2, slug="careful_door"):
 def test_a_correct_flag_keeps_ctfds_answer_and_adds_the_programmes_numbers(play):
     r = send(play.alice, play.ids.lantern, "lantern-answer")
     assert r.status_code == 200 and data(r)["status"] == "correct" and data(r)["message"] == "Correct"
-    assert data(r)["l3mon"] == {"value": 100, "reel": 1, "reels_needed": 3, "channel_signal": 0.33, "channel_complete": False, "first_blood": True, "solves": 1}
+    assert data(r)["l3mon"] == {"value": 100, "reel": 1, "reels_needed": 3, "channel_signal": 0.33, "channel_complete": False, "channel_bonus": 0, "first_blood": True, "solves": 1}
 
 
 def test_the_second_studio_is_not_first_and_the_count_includes_it(play):
@@ -84,8 +84,10 @@ def test_the_reel_and_the_signal_count_only_programmes_the_studio_can_see_and_th
 
 
 def test_a_channel_is_complete_when_every_cell_of_its_picture_is_clear(play):
+    set_config("l3mon_channel_bonus_trp", "100")  # the world switches the bonus off; this test is about what a completing flag is told
     block = data(send(play.alice, play.ids.coffee, "coffee-answer"))["l3mon"]
     assert block["channel_signal"] == 1 and block["channel_complete"] is True
+    assert block["channel_bonus"] == 100, "completing a channel earns the crew's amount (100 by default): plugins/l3mon_scoring/tests/test_channel_bonus.py"
     send(play.alice, play.ids.lantern, "lantern-answer")
     block = data(send(play.alice, play.ids.moth, "moth-answer"))["l3mon"]
     assert block["channel_complete"] is False, "the street has a third cell that is not on air, so it cannot be complete"

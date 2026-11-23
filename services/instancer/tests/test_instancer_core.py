@@ -105,7 +105,8 @@ def test_instance_start_and_idempotence():
     manifest = load_manifest_from_string(MANIFEST_TOML, dev_mode=False)
     docker = MockDockerClient()
     now_ts = 1700000000
-    mgr = InstanceManager(manifest=manifest, docker_client=docker, instance_domain="inst.example.com", time_fn=lambda: now_ts)
+    # a host whose ceiling is 45 minutes: this test is about idempotence; the 15-minute default has its own tests (test_instance_lifetime.py)
+    mgr = InstanceManager(manifest=manifest, docker_client=docker, instance_domain="inst.example.com", time_fn=lambda: now_ts, max_ttl_minutes=45)
 
     # First start
     inst1, created = mgr.start_instance(team_id=7, challenge_id=42, slug="demo-web", flag=FLAG_EXAMPLE)
@@ -173,7 +174,8 @@ def test_renewal_constraints():
     def get_time():
         return current_time
 
-    mgr = InstanceManager(manifest=manifest, docker_client=docker, instance_domain="inst.example.com", time_fn=get_time)
+    # renewal is off by default (test_instance_lifetime.py); this test is about the rules of a renewal when an operator allows them
+    mgr = InstanceManager(manifest=manifest, docker_client=docker, instance_domain="inst.example.com", time_fn=get_time, max_ttl_minutes=45, max_renewals=100)
 
     inst, _ = mgr.start_instance(team_id=7, challenge_id=42, slug="demo-web", flag=FLAG_EXAMPLE)
     orig_expiry = inst["expires_at"]

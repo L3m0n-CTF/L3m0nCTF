@@ -219,11 +219,11 @@ def functional():
     check("A submits its own flag: accepted", st == 200 and "correct" in json.dumps(body).lower() and "incorrect" not in json.dumps(body).lower(), f"{st} {json.dumps(body)[:160]}")
     st, body = call(cb, nb, "post", "/api/v1/challenges/attempt", {"challenge_id": ids["demo-web"], "submission": fa})
     check("B submits A's flag: refused", st in (200, 400, 429) and "incorrect" in json.dumps(body).lower(), f"{st} {json.dumps(body)[:160]}")
-    # 4. renew and the renew cooldown
+    # 4. renewal is off: an instance lives 15 minutes and cannot be extended (owner's rule of 23 Nov 2026), so the platform answers 409 renew_limit
     st, body = call(ca, na, "post", f"/api/v1/l3mon/instances/{ids['demo-web']}/renew")
-    check("A renews (200)", st == 200, st)
-    st, body = call(ca, na, "post", f"/api/v1/l3mon/instances/{ids['demo-web']}/renew")
-    check("a second renew within 60 s is refused (429)", st == 429, f"{st} {json.dumps(body)[:100]}")
+    check("A's renew is refused (409 renew_limit): an instance cannot be extended", st == 409 and "renew_limit" in json.dumps(body), f"{st} {json.dumps(body)[:140]}")
+    check("the refusal says what to do (start a new one)", "new one" in json.dumps(body).lower(), json.dumps(body)[:140])
+    check("an instance's life, as the start answer said, is at most 15 minutes", 0 < (a_web.get("expires_in") or 10**9) <= 15 * 60 + 5, f"{a_web.get('expires_in')} s")
     # 5. the quota of three
     for slug in ("demo-web2", "demo-web3"):
         st, body = call(ca, na, "post", "/api/v1/l3mon/instances", {"challenge_id": ids[slug]})

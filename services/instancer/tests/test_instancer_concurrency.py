@@ -161,7 +161,7 @@ def test_reservation_starting_state_enforces_quota():
 
     # Third start for Team 1
     # Manually populate third active instance to hit quota of 3
-    fake_record = InstanceRecord("fake", 1, 103, "slug", "http", 8080, 0, 9999, state=InstanceState.STARTING)
+    fake_record = InstanceRecord("fake", 1, 103, "slug", "http", 8080, 0, int(time.time()) + 10_000, state=InstanceState.STARTING)  # still has time left: a start now releases a studio's EXPIRED instances first
     with manager._lock:
         manager._instances["fake"] = fake_record
         manager._team_index.setdefault(1, set()).add("fake")

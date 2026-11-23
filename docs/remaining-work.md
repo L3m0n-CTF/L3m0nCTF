@@ -36,7 +36,7 @@ What is left is mostly **operations, capacity, and getting the challenges in**, 
 | B4 | **A shared service next to the instances** (the Ollama challenges): a model server that every instance can call. CPU inference of a 1B model for hundreds of players at once is not realistic; I recommend a hosted LLM API with a rate limit, or fewer simultaneous players on those challenges | decision first | decision A9 |
 | B5 | **Monitoring of the challenge hosts**: Prometheus does not scrape them at all today (no CPU, memory, disk, agent or router metrics, no alerts for a full host, a down host or gate refusals) | half a day | after A3 |
 | B6 | **The platform page waits for the instance to be live**: for up to a second after Start the address answers 404 (the routers poll every 0.5 s); the page should show "starting" until it answers | 2 hours | plugin and page |
-| B7 | **Stop all instances when the contest ends** (today only a time-up of at most 45 minutes, or the crew's kill call, ends them) | 2 hours | |
+| B7 | **Stop all instances when the contest ends** (today only a time-up of at most 15 minutes, or the crew's kill call, ends them) | 2 hours | |
 | B8 | **A crew page for instances** (list, kill by team or challenge; today only the API) | half a day | nice to have |
 | B9 | **A load script for the rehearsal** (the existing probe refuses anything but a throwaway local stack): sign in several hundred players, poll, submit flags, start instances; run it on 27 Nov and read the numbers | 1 day | the platform's capacity on cloud cores has never been measured |
 | B10 | **Tune the platform for the bigger machine**: `CTFD_WORKERS`, MariaDB buffer pool (384 MB now), Redis memory, nginx limits; then resize and re-run the checks | 2 hours | after A1 |

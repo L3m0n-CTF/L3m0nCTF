@@ -31,14 +31,16 @@ SECOND = "b3d95f0a6c12"
 THIRD = "c5e2a7b9d104"
 FOURTH = "d8f3a1b4e205"
 FIFTH = "e9a4b2c5f306"
-REVISION = FIFTH  # the head: the fifth revision adds the activity ledger and the removal records
+SIXTH = "f1b6c3d7a407"
+REVISION = SIXTH  # the head: the sixth revision adds the channel bonus table
 THIRD_COLUMNS = ("difficulty", "delivery")
 FOURTH_COLUMNS = ("story",)
 THIRD_CHECKS = {"ck_l3mon_programme_difficulty", "ck_l3mon_programme_delivery"}
 VERSION_KEY = "l3mon_core_alembic_version"
-MODELS = {m.__tablename__: m for m in (models.Channel, models.Programme, models.Void, models.Bonus, models.Note, models.Audit, models.Activity, models.Removal)}
+MODELS = {m.__tablename__: m for m in (models.Channel, models.Programme, models.Void, models.Bonus, models.Note, models.Audit, models.Activity, models.Removal, models.ChannelBonus)}
 FIRST_FIVE = {"l3mon_channel", "l3mon_programme", "l3mon_void", "l3mon_bonus", "l3mon_note"}
 FIFTH_TABLES = {"l3mon_activity", "l3mon_removal"}
+SIXTH_TABLES = {"l3mon_channel_bonus"}
 
 
 def _load(file_name, module_name):
@@ -74,6 +76,11 @@ def fifth_module():
     return _load("e9a4b2c5f306_add_the_activity_ledger_and_removals.py", "l3mon_fifth_revision")
 
 
+def sixth_module():
+    """The sixth revision (the channel bonus table)."""
+    return _load("f1b6c3d7a407_add_the_channel_bonus_table.py", "l3mon_sixth_revision")
+
+
 def programme_columns():
     return {c["name"] for c in inspect(db.engine).get_columns("l3mon_programme")}
 
@@ -98,7 +105,7 @@ def forget_the_recorded_revision():
     cache.delete_memoized(_get_config, VERSION_KEY)
 
 
-def test_loading_the_plugin_creates_the_eight_tables_and_records_the_head_revision():
+def test_loading_the_plugin_creates_the_nine_tables_and_records_the_head_revision():
     app = create_ctfd(enable_plugins=True, user_mode="teams")
     with app.app_context():
         assert set(MODELS) <= tables()
@@ -238,6 +245,9 @@ def test_two_workers_running_a_migration_at_the_same_moment_both_succeed(which):
         module = migration_module() if which == "first" else audit_module()
         ours = FIRST_FIVE if which == "first" else {"l3mon_audit"}
         for round_number in range(5):
+            if which == "first":
+                # the channel bonus table (sixth revision) points at l3mon_channel: downgrades go newest first, and dropping the channel table with it still there is refused
+                run_on_connection(lambda op: sixth_module().downgrade(op=op))
             run_on_connection(lambda op: module.downgrade(op=op))
             assert not (ours & tables())
             barrier, errors = threading.Barrier(2), []
@@ -277,15 +287,16 @@ def test_the_second_downgrade_drops_only_the_audit_table_and_a_database_at_the_f
     destroy_ctfd(app)
 
 
-def test_the_downgrades_drop_the_eight_tables_and_nothing_else_and_a_forgotten_revision_brings_them_back_at_the_next_start():
+def test_the_downgrades_drop_the_nine_tables_and_nothing_else_and_a_forgotten_revision_brings_them_back_at_the_next_start():
     app = create_ctfd(enable_plugins=True, user_mode="teams")
     with app.app_context():
         before = tables()
+        run_on_connection(lambda op: sixth_module().downgrade(op=op))
         run_on_connection(lambda op: fifth_module().downgrade(op=op))
         run_on_connection(lambda op: audit_module().downgrade(op=op))
         run_on_connection(lambda op: migration_module().downgrade(op=op))
         after = tables()
-        assert before - after == set(MODELS), "exactly our eight tables are gone"
+        assert before - after == set(MODELS), "exactly our nine tables are gone"
         assert after <= before and "challenges" in after and "teams" in after
         run_on_connection(lambda op: migration_module().downgrade(op=op))  # a second downgrade is harmless
         # CTFd's runner only goes forward from the revision it recorded, so after a manual downgrade the recorded revision must be
@@ -541,4 +552,76 @@ def test_on_a_real_mariadb_a_rename_writes_its_line_in_its_own_transaction_and_a
         line = models.Activity.query.filter_by(kind="studio.rename").one()
         assert line.team_id == team_id
         assert activity.verify_chain().ok
+    destroy_ctfd(app)
+
+
+# ------------------------------------------------------------------ the sixth revision: the channel bonus table
+
+def test_the_sixth_revision_adds_the_channel_bonus_table_and_a_second_run_changes_nothing():
+    app = create_ctfd(enable_plugins=True, user_mode="teams")
+    with app.app_context():
+        assert SIXTH_TABLES <= tables()
+        before = tables()
+        run_on_connection(lambda op: sixth_module().upgrade(op=op))  # again: nothing happens, and no error
+        assert tables() == before
+        run_on_connection(lambda op: sixth_module().downgrade(op=op))
+        assert before - tables() == SIXTH_TABLES, "only the new table is gone"
+        run_on_connection(lambda op: sixth_module().downgrade(op=op))  # a second downgrade is harmless
+        run_on_connection(lambda op: sixth_module().upgrade(op=op))
+        assert tables() == before
+    destroy_ctfd(app)
+
+
+def test_a_platform_at_the_fifth_revision_gets_the_channel_bonus_table_at_the_next_start():
+    app = create_ctfd(enable_plugins=True, user_mode="teams")
+    with app.app_context():
+        before = tables()
+        run_on_connection(lambda op: sixth_module().downgrade(op=op))
+        set_config("l3mon_core_alembic_version", FIFTH)
+        assert current("l3mon_core") == FIFTH
+        upgrade(plugin_name="l3mon_core")
+        assert tables() == before and current("l3mon_core") == REVISION
+    destroy_ctfd(app)
+
+
+def test_the_database_itself_refuses_a_second_channel_bonus_record_and_a_state_nobody_knows():
+    """The key (team_id, channel_id) is what stops two workers paying a studio twice for the same channel; the CHECK keeps the two words the code understands."""
+    app = create_ctfd(enable_plugins=True, user_mode="teams")
+    with app.app_context():
+        team = gen_team(db, name="Alpha", email="a@e.com", member_count=1)
+        channel = models.Channel(slug="street", name="Street", position=1, release_state="released")
+        db.session.add(channel)
+        db.session.commit()
+        db.session.add(models.ChannelBonus(team_id=team.id, channel_id=channel.id, state="awarded", trp=100))
+        db.session.commit()
+        db.session.add(models.ChannelBonus(team_id=team.id, channel_id=channel.id, state="awarded", trp=100))
+        with pytest.raises(DBAPIError):
+            db.session.commit()
+        db.session.rollback()
+        db.session.execute(text("DELETE FROM l3mon_channel_bonus"))
+        db.session.commit()
+        db.session.add(models.ChannelBonus(team_id=team.id, channel_id=channel.id, state="paid", trp=100))
+        with pytest.raises(DBAPIError):
+            db.session.commit()
+        db.session.rollback()
+    destroy_ctfd(app)
+
+
+def test_deleting_a_studio_or_a_channel_takes_its_channel_bonus_records_with_it_and_deleting_the_award_only_clears_the_link():
+    app = create_ctfd(enable_plugins=True, user_mode="teams")
+    with app.app_context():
+        team = gen_team(db, name="Alpha", email="a@e.com", member_count=1)
+        channel = models.Channel(slug="street", name="Street", position=1, release_state="released")
+        db.session.add(channel)
+        db.session.commit()
+        award = gen_award(db, user_id=team.members[0].id, team_id=team.id, name="Channel bonus +100 TRP", value=100)
+        db.session.add(models.ChannelBonus(team_id=team.id, channel_id=channel.id, award_id=award.id, state="awarded", trp=100))
+        db.session.commit()
+        db.session.execute(text("DELETE FROM awards WHERE id = :i"), {"i": award.id})
+        db.session.commit()
+        row = models.ChannelBonus.query.one()
+        assert row.award_id is None and row.state == "awarded", "the record stays; its link to the deleted award is cleared"
+        db.session.execute(text("DELETE FROM l3mon_channel WHERE id = :i"), {"i": channel.id})
+        db.session.commit()
+        assert models.ChannelBonus.query.count() == 0, "a record goes with its channel"
     destroy_ctfd(app)

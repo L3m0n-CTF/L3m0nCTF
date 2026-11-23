@@ -163,10 +163,10 @@ def test_tcp_instance_end_to_end_lifecycle(world):
         assert status == 200, attempt_b
         assert attempt_b["data"]["status"] == "incorrect"
 
-        # 9. Renew TCP instance
+        # 9. Renew TCP instance: refused (an instance lives 15 minutes and cannot be extended: 409 renew_limit)
         status, renew_resp = post_json(session_a, f"/api/v1/l3mon/instances/{chal_id}/renew", {})
-        assert status == 200, renew_resp
-        assert renew_resp["success"] is True
+        assert status == 409, renew_resp
+        assert renew_resp["success"] is False and renew_resp["error"] == "renew_limit"
 
         # 10. Restart Instancer and Router to verify TCP route recovery from labels
         subprocess.run(["docker", "restart", "l3mon-instancer-1"], check=True)

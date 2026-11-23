@@ -88,6 +88,7 @@ def world():
         status, view = r.admin("GET", r.RELEASE)
         channel = view["data"]["channels"][0]
         r.change({"kind": "channel", "id": channel["id"], "mode": "release"}, *[{"kind": "programme", "id": p["id"], "mode": "release"} for p in channel["programmes"]])
+        r.channel_bonus(0)  # this world counts programme VALUES in a channel of two programmes; the bonus for completing it has its own test (test_channel_bonus.py)
         for name in PLAYERS:
             session, user_id, team_id = r.make_player(name)
             made.players.append(session)

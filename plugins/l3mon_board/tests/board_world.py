@@ -40,6 +40,9 @@ def make_app():
 def started():
     set_config("start", T_START)
     set_config("end", T_END)
+    # These worlds have channels of one programme and count VALUES; the channel bonus (23 Nov 2026) has its own tests (l3mon_scoring/tests/test_channel_bonus.py)
+    # and would add its TRP to every one of these numbers. The reply test that wants it sets it.
+    set_config("l3mon_channel_bonus_trp", "0")
 
 
 def nonce_of(client):

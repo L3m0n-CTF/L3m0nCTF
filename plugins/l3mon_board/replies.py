@@ -2,13 +2,14 @@
 
 CTFd's own endpoint keeps judging the flag, recording the solve and valuing the challenge; its answer gains `data.l3mon`:
 
-    correct    {value, reel, reels_needed, channel_signal, channel_complete, first_blood, solves}
+    correct    {value, reel, reels_needed, channel_signal, channel_complete, channel_bonus, first_blood, solves}
     incorrect  {tries_left}                      only when the challenge limits tries
     refused    {reason, [retry_after], [tries_left]}   reason: processing | no_tries | ratelimited | paused | ended
     unlocked   {score, cost}                     on a bought hint: the studio's TRP after the purchase and what the hint cost
 
 `value` is what the programme is worth after this solve (CTFd has already valued it). `reel` is the studio's solves of programmes
 it can see, `reels_needed` a third of all the cells (rounded up), `channel_signal` the share of the channel's cells that are clear.
+`channel_bonus` is the TRP this solve earns by completing its channel (the crew's amount; 0 when the channel is not complete yet, was paid for already, or the bonus is off).
 `first_blood` is exact: no studio that counts has an earlier solve of it, so two studios racing for it cannot both be told they
 were first. `solves` is the programme's count as this studio may know it (CTFd's, which honours the freeze, plus the
 studio's own solve if the freeze left it out).
@@ -106,8 +107,22 @@ def _correct(challenge_id, team):
         "value": int(db.session.query(Challenges.value).filter_by(id=challenge_id).scalar() or 0),
         "reel": reel, "reels_needed": math.ceil(total_cells / 3),
         "channel_signal": round(done / len(in_channel), 2) if in_channel else 0, "channel_complete": bool(in_channel) and done == len(in_channel),
+        "channel_bonus": _channel_bonus(team.id, mine.channel_id if mine is not None else None, bool(in_channel) and done == len(in_channel)),
         "first_blood": earlier is None, "solves": counted,
     }
+
+
+def _channel_bonus(team_id, channel_id, complete):
+    """The TRP this solve earns by completing its channel: what the platform will give now (the crew's amount, unless the studio was paid for this channel already
+    or the bonus is off), else 0. The platform gives it itself when the request ends (plugins/l3mon_scoring/channel_bonus.py); this only tells the studio, and never
+    promises what will not come. A scoring plugin that is not loaded means no bonus."""
+    if not complete or channel_id is None:
+        return 0
+    try:
+        from CTFd.plugins.l3mon_scoring import channel_bonus
+        return channel_bonus.told(team_id, channel_id)
+    except Exception:  # noqa: BLE001  (the reply to a flag must never fail because of this)
+        return 0
 
 
 def _refusal(status, message):

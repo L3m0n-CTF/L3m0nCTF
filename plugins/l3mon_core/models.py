@@ -4,6 +4,7 @@
     l3mon_programme  the place of one challenge in one channel (cell, number, address) and whether it is on air
     l3mon_void       a solve set aside by Revoke: who, when, why, and what happened to it since (nothing is deleted)
     l3mon_bonus      the private note behind a "Bonus" award: for the team or for one member
+    l3mon_channel_bonus  the bonus a studio was given for completing a channel: one row per studio and channel (added by the sixth migration)
     l3mon_note       a private line for one studio (every void and bonus writes one)
     l3mon_audit      who did what to which target, and why: one line for every admin action (added by the second migration)
 
@@ -95,6 +96,27 @@ class Bonus(db.Model):
     message = db.Column(db.String(200), nullable=False)
     given_by = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"))
     given_at = db.Column(db.DateTime, nullable=False, default=_utcnow)
+
+
+class ChannelBonus(db.Model):
+    """The bonus a studio was given for completing a channel (plugins/l3mon_scoring/channel_bonus.py): one row per studio and channel, ever.
+
+    The key (team_id, channel_id) is what makes a second payment impossible even when two workers finish the same channel for the same studio at the same
+    moment. `state` is `awarded` while the bonus counts and `revoked` after a Revoke set aside a solve of the channel; a Restore makes the same row `awarded`
+    again, with a new award. `award_id` is NULL while it is revoked."""
+    __tablename__ = "l3mon_channel_bonus"
+    __table_args__ = (
+        UniqueConstraint("team_id", "channel_id", name="uq_l3mon_channel_bonus_team_channel"),
+        CheckConstraint("state in ('awarded', 'revoked')", name="ck_l3mon_channel_bonus_state"),
+    )
+    id = db.Column(db.Integer, primary_key=True)
+    team_id = db.Column(db.Integer, db.ForeignKey("teams.id", ondelete="CASCADE"), nullable=False)
+    channel_id = db.Column(db.Integer, db.ForeignKey("l3mon_channel.id", ondelete="CASCADE"), nullable=False)
+    award_id = db.Column(db.Integer, db.ForeignKey("awards.id", ondelete="SET NULL"))
+    state = db.Column(db.String(8), nullable=False, default="awarded")
+    trp = db.Column(db.Integer, nullable=False)
+    awarded_at = db.Column(db.DateTime, nullable=False, default=_utcnow)
+    revoked_at = db.Column(db.DateTime)
 
 
 class Note(db.Model):
