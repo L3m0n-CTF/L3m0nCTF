@@ -68,11 +68,11 @@
   }
 
   // One change at a time: busy is set before anything else, so a second click while the first is on its way does nothing.
-  function act(path, payload, done) {
+  function act(path, payload, done, method) {
     if (busy) return;
     busy = true;
     say('Saving…', false);
-    send('POST', path, payload).then(function (result) {
+    send(method || 'POST', path, payload).then(function (result) {
       busy = false;
       say(done(result), false);
       return load();
@@ -185,6 +185,34 @@
     return form;
   }
 
+  // ---- the channel bonus (built once): the TRP a studio is given for completing a channel ---------------------------------------------
+
+  function buildChannelBonusForm() {
+    var current = node('p', { 'class': 'sc-muted' });
+    var trp = node('input', { type: 'number', min: '0', max: '1000', step: '1', 'class': 'form-control form-control-sm', 'aria-label': 'TRP for each completed channel' });
+    var save = node('button', { type: 'button', 'class': 'btn btn-sm btn-primary', text: 'Save' });
+    var section = node('section', {}, [
+      node('h2', { text: 'Channel bonus' }),
+      current,
+      node('div', { 'class': 'sc-form' }, [node('label', {}, ['TRP for each completed channel (0 switches it off)', trp]), save])
+    ]);
+    save.addEventListener('click', function () {
+      if (busy) return;
+      var amount = Number(trp.value);
+      if (trp.value === '' || !Number.isInteger(amount) || amount < 0 || amount > 1000) { say('The channel bonus must be a whole number from 0 to 1000.', true); return; }
+      if (!window.confirm('Give every studio ' + amount + ' TRP for completing a channel? It applies from now on, and to channels already completed while it was 0.')) return;
+      act('/channel-bonus', { trp: amount }, function (r) { trp.value = ''; return 'Channel bonus is now ' + r.trp + ' TRP.'; }, 'PUT');
+    });
+    shell.channelBonus = { current: current };
+    return section;
+  }
+
+  function fillChannelBonus() {
+    var cb = data.channel_bonus || {};
+    shell.channelBonus.current.textContent = 'Now ' + cb.trp + ' TRP for each channel a studio completes (every programme in it solved), once per studio and channel. ' +
+      'It is given at once, counts like any TRP, and is taken back if a solve in that channel is set aside (and given again when it is restored).';
+  }
+
   function fillMembers() {
     var team = null;
     var chosen = parseInt(shell.form.studio.value, 10);
@@ -252,12 +280,14 @@
     var bottom = node('div', {});
     shell = { reasonBox: reasonBox, summary: summary, top: top, bottom: bottom, recalc: recalc };
     var form = buildBonusForm();
+    var channelForm = buildChannelBonusForm();
     say('', false); // "Loading the scores…" has done its job
     while (app.firstChild) app.removeChild(app.firstChild);
     app.appendChild(statusLine);
     app.appendChild(node('div', { 'class': 'sc-bar' }, [summary, reasonBox, refresh, recalc]));
     app.appendChild(top);
     app.appendChild(form);
+    app.appendChild(channelForm);
     app.appendChild(bottom);
   }
 
@@ -276,6 +306,7 @@
     if (data.frozen) shell.recalc.setAttribute('disabled', 'disabled'); else shell.recalc.removeAttribute('disabled');
     fill(shell.top, [valuesSection()]);
     fillStudios();
+    fillChannelBonus();
     fill(shell.bottom, [voidsSection(), bonusesSection(), auditSection()]);
   }
 

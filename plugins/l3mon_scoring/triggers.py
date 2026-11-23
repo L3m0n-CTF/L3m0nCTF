@@ -38,11 +38,11 @@ from CTFd.cache import clear_challenges, clear_standings
 from CTFd.models import Configs, Solves, Submissions, Teams, Users, db
 from CTFd.plugins.l3mon_core.claim import claim
 from CTFd.plugins.l3mon_core.clock import current_phase
-from CTFd.plugins.l3mon_scoring import values
+from CTFd.plugins.l3mon_scoring import channel_bonus, values
 
 _log = logging.getLogger("l3mon")
 
-ON = {"flush": True, "bulk": True, "check": True, "freeze": True}
+ON = {"flush": True, "bulk": True, "check": True, "freeze": True, "channel_bonus": True}
 CHECK_KEY = "l3mon:scoring:checked"
 CHECK_SECONDS = 60
 WATCHED = (Teams, Users, Solves)  # a flush that deletes one of these, or bans or hides a studio or user, changes who counts
@@ -52,6 +52,8 @@ ATTEMPT = "/api/v1/challenges/attempt"
 _EVERYTHING = "l3mon_scoring_recalculate_everything"  # on `g`: who counts changed, so every curve-valued challenge
 _FREEZE_SET = "l3mon_scoring_freeze_set"  # on `g`: the freeze was set, moved or removed in this request: value as of the freeze time
 _THESE = "l3mon_scoring_recalculate_these"  # on `g`: solves were added, so only their challenges
+_BONUS_GIVE = "l3mon_scoring_channel_bonus_give"  # on `g`: studios that got a solve in this request: a channel may be complete now
+_BONUS_TAKE = "l3mon_scoring_channel_bonus_take"  # on `g`: {studio: challenges} whose solves were deleted in this request: a channel bonus may be broken
 _SKIP_PREFIXES = ("/themes/", "/plugins/", "/static/")
 _SKIP_PATHS = ("/healthcheck", "/l3mon/healthz")
 _installed = False
@@ -68,6 +70,18 @@ def _note_everything():
 def _note_challenges(ids):
     if has_request_context():
         g.setdefault(_THESE, set()).update(ids)
+
+
+def _note_bonus_give(team_ids):
+    if has_request_context() and team_ids:
+        g.setdefault(_BONUS_GIVE, set()).update(team_ids)
+
+
+def _note_bonus_take(pairs):
+    if has_request_context() and pairs:
+        taken = g.setdefault(_BONUS_TAKE, {})
+        for team_id, challenge_id in pairs:
+            taken.setdefault(team_id, set()).add(challenge_id)
 
 
 def _who_counts_changed(session) -> bool:
@@ -102,6 +116,10 @@ def _after_flush(session, context):
     added = {obj.challenge_id for obj in session.new if isinstance(obj, Solves) and obj.challenge_id is not None}
     if added:
         _note_challenges(added)
+    if ON["channel_bonus"]:
+        # the channel bonus: a studio that got a solve may have completed a channel; a studio that lost one may have lost its bonus (settled when the request ends)
+        _note_bonus_give({obj.team_id for obj in session.new if isinstance(obj, Solves) and obj.team_id is not None})
+        _note_bonus_take({(obj.team_id, obj.challenge_id) for obj in session.deleted if isinstance(obj, Solves) and obj.team_id is not None})
 
 
 def _after_bulk_delete(context):
@@ -111,13 +129,33 @@ def _after_bulk_delete(context):
 
 # -- the end of the request -------------------------------------------------------------------------------------------------------
 
+def _settle_channel_bonuses(give, take):
+    """Give the bonus to the studios that may have completed a channel in this request, and take it back from those that lost a solve. A fresh transaction after the
+    cause has committed (the same rule as the values above); a failure is logged and never stops the request, and the minute check puts it right."""
+    if not (give or take) or not ON["channel_bonus"]:
+        return
+    try:
+        db.session.rollback()  # a view that returned an error may have left work uncommitted; it is rolled back at teardown anyway, and must not be committed by us
+        for team_id, challenge_ids in sorted((take or {}).items()):
+            channel_bonus.revoke_broken(team_id, challenge_ids, commit=False)
+        for team_id in sorted(give or ()):
+            channel_bonus.award(team_id, commit=False)
+        db.session.commit()  # the caches are cleared by the after_commit hook
+    except Exception:  # noqa: BLE001  (the solve itself went through; the minute check gives what was missed)
+        db.session.rollback()
+        _log.warning("l3mon: the channel bonus could not be settled at the end of the request", exc_info=True)
+
+
 def _end_of_request(response):
     everything = g.pop(_EVERYTHING, False)
     freeze_set = g.pop(_FREEZE_SET, False)
     these = g.pop(_THESE, None)
+    bonus_give = g.pop(_BONUS_GIVE, None)
+    bonus_take = g.pop(_BONUS_TAKE, None)
     if request.path.rstrip("/") == ATTEMPT:
         these = None  # CTFd values the challenge itself, in its own transaction, right after a player's solve
     if not (everything or these):
+        _settle_channel_bonuses(bonus_give, bonus_take)
         return response
     try:
         # A view that returned an error may have left work uncommitted; it is rolled back at teardown anyway, and must not be committed by us.
@@ -127,6 +165,7 @@ def _end_of_request(response):
     except Exception:  # noqa: BLE001  (the ban, the delete or the solve itself went through; the minute check will put it right)
         db.session.rollback()
         _log.warning("l3mon: the dynamic values could not be recalculated at the end of the request", exc_info=True)
+    _settle_channel_bonuses(bonus_give, bonus_take)
     return response
 
 
@@ -161,6 +200,12 @@ def _minute_check():
     except Exception:  # noqa: BLE001  (a page must never fail because of the check)
         db.session.rollback()
         _log.warning("l3mon: the minute check of the dynamic values could not run", exc_info=True)
+    if ON["channel_bonus"]:
+        try:
+            channel_bonus.sweep()
+        except Exception:  # noqa: BLE001  (the same rule: a page must never fail because of the check)
+            db.session.rollback()
+            _log.warning("l3mon: the minute check of the channel bonuses could not run", exc_info=True)
     return None
 
 

@@ -4,6 +4,7 @@
     POST /api/v1/l3mon/admin/scoring/revoke       {"challenge_id", "reason"}: set the challenge's solves aside
     POST /api/v1/l3mon/admin/scoring/restore      {"challenge_id", "reason"?}: put them back
     POST /api/v1/l3mon/admin/scoring/bonus        {"team_id", "user_id"?, "trp", "message"}
+    PUT  /api/v1/l3mon/admin/scoring/channel-bonus {"trp"}  the TRP a studio is given for completing a channel (0 = off)
     POST /api/v1/l3mon/admin/scoring/recalculate  {}: put every dynamic value right and say what changed
 
 Every call needs an administrator (CTFd's own `admins_only`); a signed-in session also needs CTFd's CSRF token, and a script sends an
@@ -23,7 +24,7 @@ from CTFd.plugins.l3mon_core import audit
 from CTFd.plugins.l3mon_core.clock import now
 from CTFd.plugins.l3mon_core.counting import counted_solve_counts
 from CTFd.plugins.l3mon_core.models import Bonus, Void
-from CTFd.plugins.l3mon_scoring import bonus, freeze, values, voids
+from CTFd.plugins.l3mon_scoring import bonus, channel_bonus, freeze, values, voids
 from CTFd.plugins.l3mon_scoring.errors import Refused
 from CTFd.utils.decorators import admins_only
 
@@ -171,6 +172,7 @@ def get_scoring():
             "teams": _teams(),
             "voids": _voids(),
             "bonuses": _bonuses(),
+            "channel_bonus": {"trp": channel_bonus.amount(), "default": channel_bonus.DEFAULT_TRP, "max": channel_bonus.MAX_TRP},
             "audit": audit.recent(AUDIT_SHOWN, prefix="scoring."),
         }
     )
@@ -203,6 +205,17 @@ def post_bonus():
     if problems:
         return _refuse(problems)
     return _do(lambda: bonus.give(data.get("team_id"), data.get("user_id"), data.get("trp"), data.get("message")))
+
+
+@bp.route("/scoring/channel-bonus", methods=["PUT"])
+@admins_only
+def put_channel_bonus():
+    """The TRP a studio is given for completing a channel (0 switches it off). Changes only what is given from now on, and the minute check gives the channels
+    already complete when it was 0."""
+    data, problems = _body({"trp"})
+    if problems:
+        return _refuse(problems)
+    return _do(lambda: channel_bonus.set_amount(data.get("trp")))
 
 
 @bp.route("/scoring/recalculate", methods=["POST"])

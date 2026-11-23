@@ -36,7 +36,7 @@ from CTFd.models import Challenges, Solves, Submissions, Teams, db
 from CTFd.plugins.l3mon_core import audit, locks
 from CTFd.plugins.l3mon_core.models import Void
 from CTFd.plugins.l3mon_core.text import crew_text
-from CTFd.plugins.l3mon_scoring import notes, values
+from CTFd.plugins.l3mon_scoring import channel_bonus, notes, values
 from CTFd.plugins.l3mon_scoring.errors import Refused
 from CTFd.utils.config import is_teams_mode
 
@@ -139,6 +139,8 @@ def revoke(challenge_id=None, reason=None, actor=None) -> dict:
 
     values.mark_changed()  # solves were deleted: the standings, scores and challenge lists are stale whether or not a value moves
     db.session.flush()
+    for team_id in team_ids:  # a studio whose channel is no longer complete loses that channel's bonus, in this same transaction
+        channel_bonus.revoke_broken(team_id, [challenge_id], commit=False)
     changed = values.recalculate([challenge_id])
     after = changed[0][2] if changed else before
     teams = [t.name for t in Teams.query.filter(Teams.id.in_(team_ids)).order_by(Teams.id).all()]
@@ -203,6 +205,7 @@ def restore(challenge_id=None, reason="", actor=None) -> dict:
         by_team.setdefault(record.team_id, []).append(record)
 
     counts = {"restored": 0, "skipped": 0, "superseded": 0}
+    restored_teams = set()
     for team_id, group in by_team.items():
         holds = db.session.query(Solves.id).filter(Solves.challenge_id == challenge_id, Solves.team_id == team_id).first() is not None
         back = False
@@ -221,6 +224,8 @@ def restore(challenge_id=None, reason="", actor=None) -> dict:
                     raise RuntimeError("a void record was resolved by someone else after its solve was put back")  # rolls everything back
                 continue  # another Restore got to this record first (only possible when there is no channel row to lock)
             counts[outcome] += 1
+            if outcome == "restored":
+                restored_teams.add(team_id)
     if not sum(counts.values()):  # every record was taken by another Restore meanwhile: this one has nothing to do
         db.session.rollback()
         raise Refused({"challenge_id": ["nothing is set aside for this challenge; there is nothing to restore"]}, 409)
@@ -228,6 +233,8 @@ def restore(challenge_id=None, reason="", actor=None) -> dict:
     if counts["restored"]:
         values.mark_changed()  # solves were put back: the same caches are stale
     db.session.flush()
+    for team_id in sorted(restored_teams):  # a studio whose solve came back may have its channel complete again: the bonus comes back (the same record, a new award)
+        channel_bonus.award(team_id, commit=False)
     changed = values.recalculate([challenge_id])
     after = changed[0][2] if changed else before
     detail = f"{counts['restored']} restored, {counts['skipped']} skipped, {counts['superseded']} superseded; value {before} -> {after}"
