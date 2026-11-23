@@ -245,6 +245,9 @@ def test_two_workers_running_a_migration_at_the_same_moment_both_succeed(which):
         module = migration_module() if which == "first" else audit_module()
         ours = FIRST_FIVE if which == "first" else {"l3mon_audit"}
         for round_number in range(5):
+            if which == "first":
+                # the channel bonus table (sixth revision) points at l3mon_channel: downgrades go newest first, and dropping the channel table with it still there is refused
+                run_on_connection(lambda op: sixth_module().downgrade(op=op))
             run_on_connection(lambda op: module.downgrade(op=op))
             assert not (ours & tables())
             barrier, errors = threading.Barrier(2), []
