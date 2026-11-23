@@ -200,7 +200,9 @@
       if (busy) return;
       var amount = Number(trp.value);
       if (trp.value === '' || !Number.isInteger(amount) || amount < 0 || amount > 1000) { say('The channel bonus must be a whole number from 0 to 1000.', true); return; }
-      if (!window.confirm('Give every studio ' + amount + ' TRP for completing a channel? It applies from now on, and to channels already completed while it was 0.')) return;
+      var question = amount === 0 ? 'Switch the channel bonus off? Studios that complete a channel from now on get nothing for it; what was already given stays.'
+        : 'Give every studio ' + amount + ' TRP for completing a channel? It applies from now on, and to channels already completed while it was 0.';
+      if (!window.confirm(question)) return;
       act('/channel-bonus', { trp: amount }, function (r) { trp.value = ''; return 'Channel bonus is now ' + r.trp + ' TRP.'; }, 'PUT');
     });
     shell.channelBonus = { current: current };
@@ -208,9 +210,10 @@
   }
 
   function fillChannelBonus() {
-    var cb = data.channel_bonus || {};
-    shell.channelBonus.current.textContent = 'Now ' + cb.trp + ' TRP for each channel a studio completes (every programme in it solved), once per studio and channel. ' +
-      'It is given at once, counts like any TRP, and is taken back if a solve in that channel is set aside (and given again when it is restored).';
+    var cb = data.channel_bonus;
+    if (!cb || typeof cb.trp !== 'number') { shell.channelBonus.current.textContent = 'The channel bonus could not be read.'; return; }
+    shell.channelBonus.current.textContent = (cb.trp === 0 ? 'The channel bonus is off.' : 'Now ' + cb.trp + ' TRP for each channel a studio completes (every programme in it solved), once per studio and channel.') +
+      ' ' + plural(cb.given || 0, 'bonus') + ' in force. It is given at once, counts like any TRP, and is taken back if a solve in that channel is set aside (and given again when it is restored).';
   }
 
   function fillMembers() {

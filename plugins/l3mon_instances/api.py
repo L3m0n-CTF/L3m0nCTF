@@ -23,6 +23,7 @@ bp = Blueprint("l3mon_instances", __name__, url_prefix="/api/v1/l3mon")
 _DIGITS_PATTERN = re.compile(r"^[0-9]{1,9}\Z")
 MAX_TEAM_INSTANCES = 3
 COOLDOWN_SECONDS = 60
+DEFAULT_LIFETIME_MINUTES = 15  # what a host that leaves `expires_at` out is assumed to give: an instance lives 15 minutes (the owner's rule of 23 Nov 2026); it was 45
 
 
 def _parse_id(val) -> int | None:
@@ -267,7 +268,15 @@ def start_instance():
 
     # 6. Record in DB
     created_ts = inst_data.get("created_at") or int(now_dt.timestamp())
-    expires_ts = inst_data.get("expires_at") or int((now_dt + datetime.timedelta(minutes=45)).timestamp())
+    expires_ts = inst_data.get("expires_at") or int((now_dt + datetime.timedelta(minutes=DEFAULT_LIFETIME_MINUTES)).timestamp())
+    if expires_ts <= int(now_dt.timestamp()):
+        # The host handed over an instance whose time is already up (a dead record from the seconds before its reaper ran). Never show it as running with 0 seconds left:
+        # stop it and let the player try again, which gets a fresh one.
+        try:
+            client.stop_instance(inst_data["id"])
+        except Exception as stop_err:  # noqa: BLE001
+            _log.warning("Failed to stop an already expired instance %s on host %s: %s", inst_data.get("id"), chosen_host["name"], stop_err)
+        return envelope.fail("busy", 503, "The challenge servers are busy. Try again in a few seconds.")
     created_at = datetime.datetime.utcfromtimestamp(created_ts)
     expires_at = datetime.datetime.utcfromtimestamp(expires_ts)
 

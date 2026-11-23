@@ -668,8 +668,8 @@ def test_route_probe_e_racing_starts_same_host_does_not_stop_winner():
             "state": "running",
             "protocol": "http",
             "url": "http://inst_h1_winner.inst.l3m0nctf.xyz/",
-            "created_at": 1000,
-            "expires_at": 3700,
+            "created_at": int(time.time()),
+            "expires_at": int(time.time()) + 900,  # time left: a host that hands over an instance already past its time is refused (test_instances_player_api.py)
         }
 
         hosts = [{"name": "h1", "url": "http://10.0.1.10:8300", "router_url": "http://10.0.1.10:8090", "host": "h1.xyz", "weight": 1.0, "max_slots": 50}]

@@ -11,6 +11,8 @@ When a studio has solved **every programme of a channel**, the platform gives it
 | Which solves complete a channel? | every programme the plan puts in the channel, **on air or not**: a programme still withheld has to be solved when it comes on air. A channel with no programme never completes |
 | Who gets the award? | it is a plain bonus award on the studio's **captain** (the first member if the studio has no captain), like the crew's own bonus, so it counts for the whole studio |
 | Can it be given twice? | no: the database has one record per studio and channel, even if two members finish the channel at the same moment |
+| What date does the award carry? | the date of the studio's **last solve in that channel**, not the moment it was written. CTFd breaks a tie by the date of a studio's latest solve or award, so a studio paid late (the amount switched on later, the minute check, a Restore) keeps the tie-break position its solves earned |
+| What if the award is deleted (in CTFd's admin, by a member removal, or with the captain's account)? | the studio is owed it again: it is given again within a minute |
 | When is it given? | at the end of the request that records the last solve (a player's flag, or "mark correct" by the crew, or a Restore), and at the latest within a minute of any page load (the minute check), which also gives it to solves written straight into the database |
 | What if the crew adds a programme to the channel later? | the studio **keeps** the bonus: it earned it |
 | What if a solve of that channel is set aside (Revoke)? | the bonus is **taken back** when the channel is no longer complete, the studio is told in its private lines, and a Restore **gives it again** (the same record, a new award) |
@@ -20,7 +22,7 @@ When a studio has solved **every programme of a channel**, the platform gives it
 
 ## See and change the amount
 
-On the crew's Scoring page (`/admin/l3mon/scoring`, crew host) the section **Channel bonus** shows the amount and a box to change it ("0 switches it off"); it asks you to confirm. Every change is in the audit trail (`scoring.channel_bonus`) and in the activity log.
+On the crew's Scoring page (`/admin/l3mon/scoring`, crew host) the section **Channel bonus** shows the amount and a box to change it ("0 switches it off"); it asks you to confirm. Every change of the amount, and every withdrawal of a bonus, is in the audit trail (`scoring.channel_bonus`) and in the activity log. An automatic award writes no audit line (hundreds of them would push the crew's own lines off the page): the table `l3mon_channel_bonus` and the studio's private line are its record, the Scoring page shows how many are in force, and the crew's list of "Bonuses" holds only the ones a person gave.
 
 Without the page, from the browser console of any crew admin page:
 
@@ -40,3 +42,9 @@ fetch('/api/v1/l3mon/admin/scoring/channel-bonus', {method: 'PUT', credentials: 
 ## The numbers behind it
 
 One record per studio and channel in `l3mon_channel_bonus` (state `awarded` or `revoked`, the amount, the award it created). The channel bonus never changes a programme's own value or the dynamic scoring. Nothing here runs unless the amount is above 0.
+
+## Things to know
+
+- **A programme that can never be solved blocks its channel.** A channel is complete only when every programme the plan puts in it is solved. A challenge that is hidden in CTFd or broken and left on the plan means no studio that has not already solved it can complete that channel. Take such a programme off the plan (Release control) or fix it. The other way round, taking a programme off the plan at once completes the channel for every studio that solved the rest, and they are paid within a minute.
+- **The reply to the completing flag** says `channel_bonus: 100` (the amount) and a later flag in an already paid channel says 0. The shipped page does not show this number yet; the studio sees the award in its Guide total and its bell.
+- **Renew is unrelated:** see `docs/deploy/instancer.md` for the 15-minute instance lifetime that was changed in the same release.

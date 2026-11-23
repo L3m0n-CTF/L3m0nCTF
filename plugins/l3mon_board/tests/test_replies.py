@@ -84,6 +84,7 @@ def test_the_reel_and_the_signal_count_only_programmes_the_studio_can_see_and_th
 
 
 def test_a_channel_is_complete_when_every_cell_of_its_picture_is_clear(play):
+    set_config("l3mon_channel_bonus_trp", "100")  # the world switches the bonus off; this test is about what a completing flag is told
     block = data(send(play.alice, play.ids.coffee, "coffee-answer"))["l3mon"]
     assert block["channel_signal"] == 1 and block["channel_complete"] is True
     assert block["channel_bonus"] == 100, "completing a channel earns the crew's amount (100 by default): plugins/l3mon_scoring/tests/test_channel_bonus.py"

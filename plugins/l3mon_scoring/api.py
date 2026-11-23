@@ -23,7 +23,7 @@ from CTFd.models import Awards, Challenges, Solves, Teams, Users, db
 from CTFd.plugins.l3mon_core import audit
 from CTFd.plugins.l3mon_core.clock import now
 from CTFd.plugins.l3mon_core.counting import counted_solve_counts
-from CTFd.plugins.l3mon_core.models import Bonus, Void
+from CTFd.plugins.l3mon_core.models import ChannelBonus, Bonus, Void
 from CTFd.plugins.l3mon_scoring import bonus, channel_bonus, freeze, values, voids
 from CTFd.plugins.l3mon_scoring.errors import Refused
 from CTFd.utils.decorators import admins_only
@@ -135,6 +135,7 @@ def _bonuses() -> list:
         .join(Teams, Teams.id == Bonus.team_id)
         .join(member, member.id == Bonus.user_id)
         .outerjoin(giver, giver.id == Bonus.given_by)
+        .filter(~Bonus.award_id.in_(db.session.query(ChannelBonus.award_id).filter(ChannelBonus.award_id.isnot(None))))  # the automatic channel bonuses are not "given" by anyone
         .order_by(Bonus.id.desc())
         .limit(BONUSES_SHOWN)
         .all()
@@ -172,7 +173,7 @@ def get_scoring():
             "teams": _teams(),
             "voids": _voids(),
             "bonuses": _bonuses(),
-            "channel_bonus": {"trp": channel_bonus.amount(), "default": channel_bonus.DEFAULT_TRP, "max": channel_bonus.MAX_TRP},
+            "channel_bonus": {"trp": channel_bonus.amount(), "default": channel_bonus.DEFAULT_TRP, "max": channel_bonus.MAX_TRP, "given": channel_bonus.given_count()},
             "audit": audit.recent(AUDIT_SHOWN, prefix="scoring."),
         }
     )

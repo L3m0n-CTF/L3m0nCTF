@@ -77,7 +77,7 @@ def in_ctfd(code: str) -> str:
 
 CLEANUP = "\n".join([
     "from CTFd import create_app",
-    "from CTFd.models import Notifications, db",
+    "from CTFd.models import Configs, Notifications, db",
     "from CTFd.plugins.l3mon_core.models import Audit, Channel",
     "from CTFd.cache import clear_challenges, clear_standings, cache",
     "app = create_app()",
@@ -85,6 +85,7 @@ CLEANUP = "\n".join([
     "    Channel.query.delete()",
     "    Notifications.query.filter(Notifications.title == 'New on air').delete()",
     "    Audit.query.delete()",
+    "    Configs.query.filter_by(key='l3mon_channel_bonus_trp').delete()",
     "    db.session.commit()",
     "    clear_challenges(); clear_standings(); cache.delete('l3mon:release:next')",
     "    print('CLEANED')",
@@ -126,6 +127,14 @@ def purge():
         for row in (out["data"] if status == 200 else []):
             if row["name"] == spec["name"]:
                 admin("DELETE", f"/api/v1/challenges/{row['id']}")
+
+
+def channel_bonus(trp):
+    """Set the TRP a studio is given for completing a channel (the worlds that count programme VALUES switch it off: their channels have one programme, so every
+    solve would add the bonus; it is deleted again by CLEANUP, which brings the default back)."""
+    status, out = admin("PUT", "/api/v1/l3mon/admin/scoring/channel-bonus", {"trp": trp})
+    assert status == 200, out
+    return out["data"]
 
 
 def change(*changes, reason="integration test"):

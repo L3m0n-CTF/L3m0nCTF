@@ -2,6 +2,7 @@ import logging
 import secrets
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import Callable, Optional
 
 from services.instancer.flag import is_valid_flag_shape
@@ -17,6 +18,7 @@ COOLDOWN_SECONDS = 60
 # After an instance DIED on its own (a crash, the memory limit): the team may start it again after this short wait, not after the full stop cooldown.
 CRASH_COOLDOWN_SECONDS = 10
 MIN_RENEW_INTERVAL_SECONDS = 60
+REAP_WORKERS = 8  # Docker stops and removals that run at the same moment when instances expire together
 ABSOLUTE_LIFETIME_SECONDS = 3 * 3600  # 3 hours
 
 
@@ -208,6 +210,9 @@ class InstanceManager:
                     slug = labels.get("l3mon.slug", "")
                     created_at = int(labels.get("l3mon.created_at", now))
                     expires_at = int(labels.get("l3mon.expires_at", now))
+                    spec_for_cap = self.manifest.get(labels.get("l3mon.slug", ""))
+                    ceiling = self.max_ttl_minutes * 60 if spec_for_cap is None else self._lifetime_seconds(spec_for_cap)
+                    expires_at = min(expires_at, created_at + ceiling)  # started before the ceiling existed (45 minutes): cut to it
                     protocol = labels.get("l3mon.protocol", "http")
                     port = int(labels.get("l3mon.port", 8080))
                     renewals = int(labels.get("l3mon.renewals", 0))
@@ -273,6 +278,10 @@ class InstanceManager:
         if spec is None:
             raise SlugNotFoundError(f"Unknown challenge slug '{slug}'")
 
+        # The studio's instances whose time is up leave first (a quick stop, then Docker): otherwise the host would hand back the dead record for the few seconds before
+        # the reaper's next pass, and count it against the studio's quota of three.
+        self.reap_expired(team_id)
+
         with self._lock:
             now = self._now()
             key = (team_id, challenge_id)
@@ -323,7 +332,7 @@ class InstanceManager:
 
             # Calculate TTL
             if self.dev_mode and ttl_seconds is not None:
-                duration = int(ttl_seconds)
+                duration = max(1, min(int(ttl_seconds), self._lifetime_seconds(spec)))  # a shorter test lifetime is allowed; a longer one is not
             else:
                 duration = self._lifetime_seconds(spec)
             expires_at = now + duration
@@ -547,14 +556,15 @@ class InstanceManager:
                     total += spec.mem_mb
         return total
 
-    def stop_instance(self, instance_id: str, cooldown_seconds: int = COOLDOWN_SECONDS) -> bool:
-        """Stop and tear down an instance. Idempotent."""
+    def _begin_stop(self, instance_id: str, cooldown_seconds: int):
+        """The quick half of a stop, under the lock and with no Docker call: the instance stops counting against the slots, the memory and the studio's quota, leaves the
+        indexes (so no start is handed this record) and leaves the routes. -> what the slow half needs, or None when there is nothing to stop (or it is stopping already)."""
         with self._lock:
             record = self._instances.get(instance_id)
             if not record:
-                return False
+                return None
             if record.state == InstanceState.STOPPING:
-                return False
+                return None
 
             now = self._now()
             record.state = InstanceState.STOPPING
@@ -571,9 +581,10 @@ class InstanceManager:
             if self._challenge_index.get(key) == instance_id:
                 self._challenge_index.pop(key, None)
 
-            target_container = getattr(record, "container_id", None) or instance_id
+            return getattr(record, "container_id", None) or instance_id
 
-        # Cleanup docker container and network OUTSIDE self._lock
+    def _finish_stop(self, instance_id: str, target_container: str) -> None:
+        """The slow half of a stop, outside the lock: Docker stops and removes the container and its network, then the record goes."""
         net_name = f"l3mon_inst_{instance_id}"
         try:
             self.docker.stop_container(target_container)
@@ -590,6 +601,12 @@ class InstanceManager:
         with self._lock:
             self._instances.pop(instance_id, None)
 
+    def stop_instance(self, instance_id: str, cooldown_seconds: int = COOLDOWN_SECONDS) -> bool:
+        """Stop and tear down an instance. Idempotent."""
+        target = self._begin_stop(instance_id, cooldown_seconds)
+        if target is None:
+            return False
+        self._finish_stop(instance_id, target)
         return True
 
     def kill_instances(self, team_id: Optional[int] = None, challenge_id: Optional[int] = None) -> int:
@@ -608,22 +625,35 @@ class InstanceManager:
                 count += 1
         return count
 
-    def reap_expired(self) -> list[str]:
-        """Scan active instances and reap those past their expiry time."""
-        expired_ids = []
+    def _expired_ids(self, team_id: Optional[int] = None) -> list[str]:
         with self._lock:
             now = self._now()
-            for inst in list(self._instances.values()):
-                if inst.state in (InstanceState.RUNNING, InstanceState.STARTING) and now >= inst.expires_at:
-                    expired_ids.append(inst.id)
+            return [
+                inst.id for inst in list(self._instances.values())
+                if inst.state in (InstanceState.RUNNING, InstanceState.STARTING) and now >= inst.expires_at and (team_id is None or inst.team_id == team_id)
+            ]
 
-        reaped = []
-        for iid in expired_ids:
-            # An instance that ran out its time is not a studio hammering Start and Stop: the studio must be able to start a new one at once, so no
-            # restart cooldown is left (a deliberate Stop still leaves the 60 seconds).
-            if self.stop_instance(iid, cooldown_seconds=0):
-                reaped.append(iid)
-        return reaped
+    def reap_expired(self, team_id: Optional[int] = None) -> list[str]:
+        """Remove the instances whose time is up (those of one studio when `team_id` is given).
+
+        All of them stop counting at once (the quick half, with no Docker call), then Docker removes them several at a time. With 15-minute lives the instances of the
+        opening burst expire together and the studios start again at once, so a wave of hundreds comes every 15 minutes: one thread stopping them one by one (up to five
+        seconds each) would leave them running, routable and counted against the slots for minutes."""
+        # An instance that ran out its time is not a studio hammering Start and Stop: the studio must be able to start a new one at once, so no restart cooldown is
+        # left (a deliberate Stop still leaves the 60 seconds).
+        started = []
+        for iid in self._expired_ids(team_id):
+            target = self._begin_stop(iid, 0)
+            if target is not None:
+                started.append((iid, target))
+        if not started:
+            return []
+        if len(started) == 1:
+            self._finish_stop(*started[0])
+        else:
+            with ThreadPoolExecutor(max_workers=min(REAP_WORKERS, len(started)), thread_name_prefix="reap") as pool:
+                list(pool.map(lambda item: self._finish_stop(*item), started))
+        return [iid for iid, _ in started]
 
     def reap_dead(self) -> list[str]:
         """Tear down the instances whose container is no longer running (it crashed, or the memory limit killed it, or someone removed it).

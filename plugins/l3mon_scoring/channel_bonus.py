@@ -12,6 +12,13 @@ What the rules are, and why
   when two workers finish the same channel for the same studio at once, the loser's award goes away with its refused record and nobody is paid twice.
 - It is given when the last solve is recorded: a player's flag, the crew's "mark correct", a Restore, and at the latest by the minute check (`sweep`), which is
   what gives it to solves written straight into the database and to a studio that was complete while the amount was 0.
+- The award is dated when the channel was COMPLETED (the date of the studio's latest solve of one of its programmes), never when it was written: CTFd breaks a tie
+  by the date of a studio's latest solve or award, so an award dated 'now' would push a studio that is paid late (the amount switched on later, the minute check, a
+  Restore) behind the studios it had beaten.
+- A record that says `awarded` but has lost its award (the crew deleted the award, CTFd's member removal deleted it, the captain's account was deleted: the foreign
+  key clears the link) is owed again, like a revoked one.
+- An automatic award writes no audit line (500 studios times several channels would bury the crew's own lines): its record row and the studio's private line are
+  the record. A withdrawal does, because a crew action caused it, and so does a change of the amount.
 - It is NOT taken back because the crew adds a programme to the channel later: the studio earned it. It IS taken back when a Revoke (or any deletion of a solve that
   the ORM sees) sets aside a solve of that channel and the channel is no longer complete, and a Restore gives it again (the same record, a new award).
   A deletion that bypasses the ORM (CTFd deleting a user and their solves in bulk) leaves the bonus where it is.
@@ -20,6 +27,7 @@ What the rules are, and why
 import datetime
 import logging
 
+from flask import g, has_request_context, request
 from sqlalchemy import update
 from sqlalchemy.exc import IntegrityError
 
@@ -96,6 +104,41 @@ def _existing(team_id) -> dict:
     return {row.channel_id: row for row in ChannelBonus.query.filter_by(team_id=team_id).all()}
 
 
+_GIVEN = "l3mon_channel_bonus_given_in_this_request"  # on `g`: {(studio, channel): trp} given by this request
+
+
+def told(team_id, channel_id) -> int:
+    """What to tell the studio in the reply to the flag that completed `channel_id`: what this very request gave it, if the end-of-request step already ran, else
+    what it will be given (`owed`). The two hooks that build the reply and give the bonus run in an order Flask chooses; either way the studio is told the truth."""
+    if has_request_context():
+        store = g.get(_GIVEN)
+        if store is not None and store["request"] is request._get_current_object():  # `g` outlives a request when the app context was pushed earlier (the tests do)
+            given = store["given"].get((team_id, channel_id))
+            if given:
+                return given
+    return owed(team_id, channel_id)
+
+
+def _is_paid(row) -> bool:
+    """A record counts only while it is `awarded` AND still points at its award."""
+    return row is not None and row.state == "awarded" and row.award_id is not None
+
+
+def owed(team_id, channel_id) -> int:
+    """What the studio would be given for completing this channel right now: the amount, unless it was paid already (or the bonus is off). The reply to a flag
+    uses this, so that it never promises what the platform will not give."""
+    trp = amount()
+    if trp <= 0:
+        return 0
+    row = ChannelBonus.query.filter_by(team_id=team_id, channel_id=channel_id).first()
+    return 0 if _is_paid(row) else trp
+
+
+def _completed_at(team_id, challenge_ids):
+    """The date of the studio's latest solve of one of these programmes: when the channel was completed."""
+    return db.session.query(db.func.max(Solves.date)).filter(Solves.team_id == team_id, Solves.challenge_id.in_(list(challenge_ids))).scalar()
+
+
 def _recipient(team):
     """The member the award is attached to: the captain, else the studio's first member. CTFd sums a studio's awards through its members."""
     if team.captain_id:
@@ -121,7 +164,7 @@ def award(team_id, channel_ids=None, commit=True) -> list:
     if not complete:
         return []
     have = _existing(team_id)
-    todo = [c for c in complete if c not in have or have[c].state != "awarded"]
+    todo = [c for c in complete if not _is_paid(have.get(c))]
     if not todo:
         return []
     team = Teams.query.filter_by(id=team_id).first()
@@ -139,7 +182,8 @@ def award(team_id, channel_ids=None, commit=True) -> list:
         row = have.get(channel_id)
         try:
             with db.session.begin_nested():
-                award_row = Awards(user_id=member.id, team_id=team.id, name=title, description="", value=trp, category=CATEGORY)
+                completed = _completed_at(team.id, cells[channel_id]) or datetime.datetime.utcnow()
+                award_row = Awards(user_id=member.id, team_id=team.id, name=title, description="", value=trp, category=CATEGORY, date=completed)
                 db.session.add(award_row)
                 db.session.flush()
                 db.session.add(Bonus(award_id=award_row.id, team_id=team.id, user_id=member.id, scope="team", message=message, given_by=None))
@@ -150,7 +194,7 @@ def award(team_id, channel_ids=None, commit=True) -> list:
                     table = ChannelBonus.__table__
                     claimed = db.session.execute(
                         update(table)
-                        .where(table.c.id == row.id, table.c.state == "revoked")
+                        .where(table.c.id == row.id, (table.c.state == "revoked") | ((table.c.state == "awarded") & table.c.award_id.is_(None)))
                         .values(state="awarded", award_id=award_row.id, trp=trp, awarded_at=datetime.datetime.utcnow(), revoked_at=None)
                     )
                     if claimed.rowcount != 1:
@@ -158,7 +202,12 @@ def award(team_id, channel_ids=None, commit=True) -> list:
         except (IntegrityError, _Lost):
             continue  # another worker gave it first; its award stands and ours was undone with the savepoint
         notes.tell(team.id, title, message)
-        audit.record("scoring.channel_bonus", team.name, f"{title} for completing {plain_text(channel.name)}", system=True)
+        if has_request_context():
+            store = g.get(_GIVEN)
+            if store is None or store["request"] is not request._get_current_object():
+                g.pop(_GIVEN, None)  # `g` is not a dict: no item assignment, only attributes (get, pop and setdefault)
+                store = g.setdefault(_GIVEN, {"request": request._get_current_object(), "given": {}})
+            store["given"][(team.id, channel_id)] = trp
         given.append({"channel_id": channel_id, "trp": trp, "award_id": award_row.id})
     if given:
         values.mark_changed()  # CTFd's standings are stale: cleared after the commit
@@ -228,7 +277,7 @@ def sweep() -> int:
             owed.setdefault(team_id, set()).add(channel_id)
     if not owed:
         return 0
-    paid = {(t, c) for t, c in db.session.query(ChannelBonus.team_id, ChannelBonus.channel_id).filter(ChannelBonus.state == "awarded").all()}
+    paid = {(t, c) for t, c in db.session.query(ChannelBonus.team_id, ChannelBonus.channel_id).filter(ChannelBonus.state == "awarded", ChannelBonus.award_id.isnot(None)).all()}
     total = 0
     for team_id in sorted(owed):
         channels = {c for c in owed[team_id] if (team_id, c) not in paid}
@@ -236,3 +285,8 @@ def sweep() -> int:
             continue
         total += len(award(team_id, channels, commit=True))
     return total
+
+
+def given_count() -> int:
+    """How many channel bonuses are in force now (the crew page shows it: the automatic awards are not in the list of bonuses the crew gave)."""
+    return ChannelBonus.query.filter(ChannelBonus.state == "awarded", ChannelBonus.award_id.isnot(None)).count()

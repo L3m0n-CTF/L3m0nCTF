@@ -315,10 +315,11 @@ def test_instances_end_to_end_lifecycle(world):
         assert status == 200, attempt_b
         assert attempt_b["data"]["status"] == "incorrect"
 
-        # 9. Renew instance
+        # 9. Renew instance: refused. An instance lives 15 minutes and cannot be extended (owner's rule of 23 Nov 2026), so the host answers 409 renew_limit
         status, renew_resp = post_json(session_a, f"/api/v1/l3mon/instances/{chal_id}/renew", {})
-        assert status == 200, renew_resp
-        assert renew_resp["success"] is True
+        assert status == 409, renew_resp
+        assert renew_resp["success"] is False and renew_resp["error"] == "renew_limit" and "new one" in renew_resp["message"].lower()
+        assert 0 < data["expires_in"] <= 15 * 60 + 5, data  # the start answer: at most the 15-minute ceiling
 
         # 10. Restart Instancer and Router - test recovery from labels
         subprocess.run(["docker", "restart", "l3mon-instancer-1"], check=True)

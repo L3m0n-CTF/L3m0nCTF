@@ -28,6 +28,7 @@ class FakeInstancerClient:
         self.stopped = []
         self.fail_start = None  # an InstancerClientError to raise on the next starts (a challenge whose container cannot start)
         self.refuse_renew = None  # an InstancerClientError to raise on a renewal (the host does not allow renewals: the default since 23 Nov 2026)
+        self.expires_in = None  # seconds a started instance lives, from the frozen now (a number, or 'omit' for a host that leaves `expires_at` out)
 
     def request(self, method, path, body=None):
         if method == "POST" and path == "/v1/instances":
@@ -36,7 +37,7 @@ class FakeInstancerClient:
             inst_id = f"mockinst{self.next_id:024d}"
             self.next_id += 1
             now_ts = int(time.time())  # the frozen time of the test
-            exp_ts = now_ts + (body.get("ttl_seconds") or 2700)
+            exp_ts = now_ts + (body.get("ttl_seconds") or (900 if self.expires_in in (None, "omit") else self.expires_in))
             inst = {
                 "id": inst_id,
                 "team_id": body["team_id"],
@@ -51,6 +52,8 @@ class FakeInstancerClient:
                 "expires_at": exp_ts,
                 "renewals": 0,
             }
+            if self.expires_in == "omit":
+                inst.pop("expires_at")
             self.instances[inst_id] = inst
             return 201, {"instance": inst}
 
@@ -414,6 +417,9 @@ def test_a_renewal_the_host_does_not_allow_reaches_the_player_as_409_renew_limit
     the message on unchanged, so the page can tell the player to start a new one. The instance is not touched."""
     app = create_ctfd(user_mode="teams", enable_plugins=True)
     with app.app_context():
+        from CTFd.plugins.l3mon_instances.hosts import get_host_tracker
+
+        get_host_tracker().reset_cache()  # the test before this one leaves the host marked down for 30 seconds
         c1, c2, c3, c4, cs, alice = _setup_world(app)
         fake_client = FakeInstancerClient()
         set_client_override(fake_client)
@@ -429,5 +435,47 @@ def test_a_renewal_the_host_does_not_allow_reaches_the_player_as_409_renew_limit
                 # still running, still the same row
                 listed = alice.get("/api/v1/l3mon/instances").get_json()["data"]["instances"]
                 assert len(listed) == 1 and listed[0]["state"] == "running"
+    set_client_override(None)
+    destroy_ctfd(app)
+
+
+def test_an_instance_the_host_hands_over_already_past_its_time_is_stopped_and_not_recorded():
+    """A host that answers a start with an instance whose time is up (it handed back the dead record in the few seconds before its reaper ran) must not be shown
+    to the player as a running instance with 0 seconds left: the platform stops it and asks the player to try again."""
+    app = create_ctfd(user_mode="teams", enable_plugins=True)
+    with app.app_context():
+        from CTFd.plugins.l3mon_instances.hosts import get_host_tracker
+
+        get_host_tracker().reset_cache()
+        c1, c2, c3, c4, cs, alice = _setup_world(app)
+        fake_client = FakeInstancerClient()
+        fake_client.expires_in = -5
+        set_client_override(fake_client)
+        with freeze_time(datetime.datetime.utcfromtimestamp(T_LIVE)):
+            with mock.patch("CTFd.plugins.l3mon_instances.api.get_flag_secret", return_value="test-secret"):
+                r = alice.post("/api/v1/l3mon/instances", json={"challenge_id": c1})
+                assert r.status_code == 503 and r.get_json()["error"] == "busy", r.get_data(as_text=True)
+                assert len(fake_client.stopped) == 1, "the dead instance was stopped on the host"
+                assert alice.get("/api/v1/l3mon/instances").get_json()["data"]["instances"] == []
+                assert L3monInstance.query.count() == 0
+    set_client_override(None)
+    destroy_ctfd(app)
+
+
+def test_a_host_that_leaves_the_expiry_out_gets_the_15_minute_default_not_the_old_45():
+    app = create_ctfd(user_mode="teams", enable_plugins=True)
+    with app.app_context():
+        from CTFd.plugins.l3mon_instances.hosts import get_host_tracker
+
+        get_host_tracker().reset_cache()
+        c1, c2, c3, c4, cs, alice = _setup_world(app)
+        fake_client = FakeInstancerClient()
+        fake_client.expires_in = "omit"
+        set_client_override(fake_client)
+        with freeze_time(datetime.datetime.utcfromtimestamp(T_LIVE)):
+            with mock.patch("CTFd.plugins.l3mon_instances.api.get_flag_secret", return_value="test-secret"):
+                r = alice.post("/api/v1/l3mon/instances", json={"challenge_id": c1})
+                assert r.status_code == 201, r.get_data(as_text=True)
+                assert 14 * 60 <= r.get_json()["data"]["expires_in"] <= 15 * 60
     set_client_override(None)
     destroy_ctfd(app)

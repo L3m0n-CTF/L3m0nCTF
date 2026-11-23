@@ -196,8 +196,13 @@ def _minute_check():
     try:
         if not claim(CHECK_KEY, CHECK_SECONDS):
             return None  # looked at within the minute, or another worker has this one
+    except Exception:  # noqa: BLE001  (a page must never fail because of the check; and without the claim nothing below may run: every request of every worker would)
+        db.session.rollback()
+        _log.warning("l3mon: the minute check could not take its claim", exc_info=True)
+        return None
+    try:
         values.heal()
-    except Exception:  # noqa: BLE001  (a page must never fail because of the check)
+    except Exception:  # noqa: BLE001
         db.session.rollback()
         _log.warning("l3mon: the minute check of the dynamic values could not run", exc_info=True)
     if ON["channel_bonus"]:

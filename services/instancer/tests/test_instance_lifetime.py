@@ -140,3 +140,107 @@ def test_a_setting_that_makes_no_sense_stops_the_agent_at_start(name, value):
 def test_the_manager_refuses_a_ceiling_that_makes_no_sense(kw):
     with pytest.raises(ValueError):
         manager([1_700_000_000], **kw)
+
+
+# ---- what the independent review found (23 Nov 2026) ------------------------------------------------------------------------------------
+
+import threading
+import time
+
+
+class SlowDocker(MockDockerClient):
+    """A Docker whose stop takes a moment, like `docker stop -t 5` does."""
+
+    delay = 0.15
+
+    def stop_container(self, container_id):
+        time.sleep(self.delay)
+        super().stop_container(container_id)
+
+
+def _filled(n, now, **kw):
+    mgr = InstanceManager(
+        manifest=load_manifest_from_string(MANIFEST_TOML, dev_mode=False), docker_client=SlowDocker(), instance_domain="inst.example.com",
+        time_fn=lambda: now[0], max_slots=200, **kw,
+    )
+    ids = [mgr.start_instance(team_id=100 + i, challenge_id=42, slug="demo-web", flag=FLAG_EXAMPLE)[0]["id"] for i in range(n)]
+    return mgr, ids
+
+
+def test_the_reaper_tears_expired_instances_down_in_parallel_not_one_by_one():
+    """With 15-minute lives, the instances of the opening burst all expire in the same moment, and a studio that starts again at once makes the next wave come
+    15 minutes later. One thread stopping 600 containers one at a time (up to five seconds each) would leave them running, routable and counted against the slots
+    for minutes after their time was up."""
+    now = [1_700_000_000]
+    mgr, ids = _filled(16, now)
+    now[0] += 15 * 60 + 1
+    t0 = time.time()
+    reaped = mgr.reap_expired()
+    took = time.time() - t0
+    assert sorted(reaped) == sorted(ids)
+    assert took < 1.2, f"16 stops of 0.15 s took {took:.2f} s: they ran one after the other (16 x 0.15 = 2.4 s)"
+    assert mgr.get_capacity()["slots_used"] == 0
+    assert not mgr.docker.containers, "every container is gone"
+
+
+def test_an_expired_instance_stops_counting_against_the_slots_the_moment_the_reaper_sees_it():
+    now = [1_700_000_000]
+    mgr, ids = _filled(8, now)
+    now[0] += 15 * 60 + 1
+    seen = []
+    worker = threading.Thread(target=mgr.reap_expired)
+    worker.start()
+    time.sleep(0.05)  # the Docker stops are still running
+    seen.append(mgr.get_capacity()["slots_used"])
+    worker.join()
+    assert seen == [0], "slots and memory are freed first; the Docker work follows"
+
+
+def test_a_start_after_the_time_is_up_gets_a_new_instance_even_before_the_reaper_has_run():
+    """The platform asks 'start' the moment the page shows the instance ended. The host used to hand back the old RUNNING record (expiry in the past) for up to five
+    seconds, and the studio got an instance that was already dead."""
+    now = [1_700_000_000]
+    mgr = manager(now)
+    first, _ = mgr.start_instance(team_id=7, challenge_id=42, slug="demo-web", flag=FLAG_EXAMPLE)
+    now[0] += 15 * 60 + 1  # the reaper has not run yet
+    again, created = mgr.start_instance(team_id=7, challenge_id=42, slug="demo-web", flag=FLAG_EXAMPLE)
+    assert created is True and again["id"] != first["id"]
+    assert again["expires_at"] == now[0] + 15 * 60
+    assert first["id"] not in mgr.docker.containers, "the dead one was removed"
+
+
+def test_instances_whose_time_is_up_do_not_count_against_the_quota_of_three():
+    now = [1_700_000_000]
+    mgr = manager(now)
+    for challenge_id, slug in ((1, "demo-web"), (2, "demo-web-2"), (3, "demo-web-3")):
+        mgr.start_instance(team_id=7, challenge_id=challenge_id, slug=slug, flag=FLAG_EXAMPLE)
+    now[0] += 15 * 60 + 1
+    fresh, created = mgr.start_instance(team_id=7, challenge_id=4, slug="demo-web-4", flag=FLAG_EXAMPLE)  # no QuotaError
+    assert created is True
+
+
+def test_the_development_override_cannot_outlast_the_ceiling():
+    now = [1_700_000_000]
+    mgr = InstanceManager(manifest=load_manifest_from_string(MANIFEST_TOML, dev_mode=True), docker_client=MockDockerClient(), instance_domain="inst.test", dev_mode=True, time_fn=lambda: now[0])
+    long_one, _ = mgr.start_instance(team_id=1, challenge_id=1, slug="demo-web", flag=FLAG_EXAMPLE, ttl_seconds=999_999)
+    assert long_one["expires_at"] == now[0] + 15 * 60
+    short_one, _ = mgr.start_instance(team_id=2, challenge_id=1, slug="demo-web", flag=FLAG_EXAMPLE, ttl_seconds=30)
+    assert short_one["expires_at"] == now[0] + 30, "a shorter test lifetime is still allowed"
+    zero, _ = mgr.start_instance(team_id=3, challenge_id=1, slug="demo-web", flag=FLAG_EXAMPLE, ttl_seconds=0)
+    assert zero["expires_at"] >= now[0] + 1, "a lifetime of nothing is not an instance"
+
+
+def test_an_instance_started_before_the_upgrade_does_not_keep_its_old_45_minutes_after_a_restart():
+    """Reconcile rebuilds an instance from its Docker labels, expiry included: one that was started with the old 45 minutes must be cut to the ceiling."""
+    now = [1_700_000_000]
+    docker = MockDockerClient()
+    docker.containers["oldinst1234567890abcdef1234567"] = {
+        "labels": {
+            "l3mon.instance": "oldinst1234567890abcdef1234567", "l3mon.team_id": "7", "l3mon.challenge_id": "42", "l3mon.slug": "demo-web",
+            "l3mon.created_at": str(now[0] - 600), "l3mon.expires_at": str(now[0] + 2100), "l3mon.protocol": "http", "l3mon.port": "8080", "l3mon.renewals": "0",
+        },
+        "state": "running", "ip": "10.0.1.2",
+    }
+    mgr = InstanceManager(manifest=load_manifest_from_string(MANIFEST_TOML, dev_mode=False), docker_client=docker, instance_domain="inst.example.com", time_fn=lambda: now[0])
+    mgr.reconcile_from_docker()
+    assert mgr.get_instance("oldinst1234567890abcdef1234567")["expires_at"] == now[0] - 600 + 15 * 60

@@ -55,7 +55,7 @@ DECISIONS = {
     "/api/v1/l3mon/admin/removals": "crew", "/api/v1/l3mon/admin/removals/<int:removal_id>/lift": "crew",
     "/api/v1/l3mon/admin/activity": "crew", "/api/v1/l3mon/admin/activity/verify": "crew",
     "/api/v1/l3mon/admin/scoring": "crew", "/api/v1/l3mon/admin/scoring/revoke": "crew", "/api/v1/l3mon/admin/scoring/restore": "crew",
-    "/api/v1/l3mon/admin/scoring/bonus": "crew", "/api/v1/l3mon/admin/scoring/recalculate": "crew",
+    "/api/v1/l3mon/admin/scoring/bonus": "crew", "/api/v1/l3mon/admin/scoring/recalculate": "crew", "/api/v1/l3mon/admin/scoring/channel-bonus": "crew",
 }
 
 # Routes of CTFd itself (or of the theme replacing CTFd's page) that the plugins do not add as URL rules.

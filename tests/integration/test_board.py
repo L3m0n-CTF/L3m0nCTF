@@ -128,7 +128,7 @@ def test_03_a_correct_flag_carries_the_numbers_of_the_reply_and_the_board_follow
     status, out = r.post_json(world.players[0], "/api/v1/challenges/attempt", {"challenge_id": world.ids.shown, "submission": SHOWN["flag"]})
     assert status == 200 and out["data"]["status"] == "correct"
     extra = out["data"]["l3mon"]
-    assert extra == {"value": 150, "reel": 1, "reels_needed": 1, "channel_signal": 0.33, "channel_complete": False, "first_blood": True, "solves": 1}, extra
+    assert extra == {"value": 150, "reel": 1, "reels_needed": 1, "channel_signal": 0.33, "channel_complete": False, "channel_bonus": 0, "first_blood": True, "solves": 1}, extra
     status, out = r.post_json(world.players[1], "/api/v1/challenges/attempt", {"challenge_id": world.ids.shown, "submission": SHOWN["flag"]})
     assert out["data"]["l3mon"]["first_blood"] is False and out["data"]["l3mon"]["solves"] == 2
     _, _, one = ask(world.players[0], BOARD)

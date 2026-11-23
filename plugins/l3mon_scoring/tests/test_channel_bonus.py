@@ -14,14 +14,17 @@ crew gave one by hand. Now the platform gives it itself. The rules, each pinned 
 Run through tools/run-ctfd-tests.sh:
     L3MON_MOUNT_PLUGINS=1 tools/run-ctfd-tests.sh l3mon/ctfd:dev -- -q -p no:randomly -p no:cacheprovider /l3mon_tests/l3mon_scoring
 """
+import datetime
+
 import pytest
 
-from CTFd.models import Awards, Solves, Submissions, Teams, db
+from CTFd.cache import clear_challenges
+from CTFd.models import Awards, Challenges, Solves, Submissions, Teams, db
 from CTFd.plugins.l3mon_core.models import Audit, Bonus, Channel, ChannelBonus, Note, Programme
 from CTFd.plugins.l3mon_scoring import channel_bonus, voids
 from CTFd.plugins.l3mon_scoring.errors import Refused
 from CTFd.utils import set_config
-from scoring_world import attempt, fixed, make_app, score_of, solve, standings, studio, team_client, team_of
+from scoring_world import T0, attempt, fixed, make_app, score_of, solve, standings, studio, team_client, team_of
 from tests.helpers import destroy_ctfd, login_as_user
 
 
@@ -331,7 +334,7 @@ def test_a_wrong_flag_never_gives_anything(app):
 def test_the_crew_reads_and_sets_the_amount_through_the_api_and_a_player_cannot(app):
     admin = login_as_user(app, "admin")
     r = admin.get("/api/v1/l3mon/admin/scoring")
-    assert r.status_code == 200 and r.get_json()["data"]["channel_bonus"] == {"trp": 100, "default": 100, "max": 1000}
+    assert r.status_code == 200 and r.get_json()["data"]["channel_bonus"] == {"trp": 100, "default": 100, "max": 1000, "given": 0}
     r = admin.put("/api/v1/l3mon/admin/scoring/channel-bonus", json={"trp": 150})
     assert r.status_code == 200 and r.get_json()["data"]["trp"] == 150 and channel_bonus.amount() == 150
     r = admin.put("/api/v1/l3mon/admin/scoring/channel-bonus", json={"trp": 5000})
@@ -341,3 +344,135 @@ def test_the_crew_reads_and_sets_the_amount_through_the_api_and_a_player_cannot(
     player = team_client(app, "alice", "studio-a")
     assert player.put("/api/v1/l3mon/admin/scoring/channel-bonus", json={"trp": 1}).status_code in (302, 401, 403)
     assert channel_bonus.amount() == 150
+
+
+# ---- what the independent review found (23 Nov 2026) ------------------------------------------------------------------------------------
+
+def minutes(n):
+    return T0 + datetime.timedelta(minutes=n)
+
+
+def test_the_bonus_is_dated_when_the_channel_was_completed_not_when_it_was_paid(app):
+    """CTFd breaks a tie by the date of a studio's latest solve OR AWARD. A bonus dated 'now' moved every studio that was paid late (amount switched on later,
+    the minute check, a Restore) behind the others: alpha completed the channel ten minutes before beta, and after the sweep beta led the tie."""
+    channel_bonus.set_amount(0)
+    alpha, beta = studio("alpha"), studio("beta")
+    _, challenges = make_channel("street", programmes=2)
+    solve(beta, challenges[0], minutes=5)
+    solve(beta, challenges[1], minutes=11)
+    solve(alpha, challenges[0], minutes=0)
+    solve(alpha, challenges[1], minutes=1)
+    channel_bonus.set_amount(100)
+    assert channel_bonus.sweep() == 2
+    dates = {a.team_id: a.date for a in Awards.query.all()}
+    assert dates == {alpha.id: minutes(1), beta.id: minutes(11)}, "each award carries the date of the studio's last solve of that channel"
+    assert standings() == [("alpha", 300), ("beta", 300)], "the tie goes to the studio that got there first"
+
+
+def test_a_restored_bonus_keeps_the_date_of_the_completion_not_of_the_restore(app):
+    team = studio("alpha")
+    _, challenges = make_channel("street", programmes=2)
+    solve(team, challenges[0], minutes=0)
+    solve(team, challenges[1], minutes=3)
+    channel_bonus.award(team.id)
+    voids.revoke(challenges[1].id, "broken")
+    voids.restore(challenges[1].id, "fixed")
+    assert Awards.query.one().date == minutes(3)
+
+
+def test_a_bonus_whose_award_was_deleted_is_given_again(app):
+    """The award can vanish while its record stays: the crew deletes it in CTFd's admin, CTFd's member removal deletes a user's awards, or the captain's account
+    is deleted (the foreign key then clears the record's link). The studio is still owed it."""
+    team = studio("alpha")
+    _, challenges = make_channel("street", programmes=2)
+    solve_all(team, challenges)
+    channel_bonus.award(team.id)
+    Awards.query.delete()
+    ChannelBonus.query.update({"award_id": None})
+    db.session.commit()
+    assert score_of(team.id) == 200
+    assert len(channel_bonus.award(team.id)) == 1
+    assert score_of(team.id) == 300 and Awards.query.count() == 1
+    row = ChannelBonus.query.one()
+    assert row.state == "awarded" and row.award_id == Awards.query.one().id and ChannelBonus.query.count() == 1
+
+
+def test_the_minute_sweep_also_gives_a_bonus_whose_award_was_deleted(app):
+    team = studio("alpha")
+    _, challenges = make_channel("street", programmes=1)
+    solve_all(team, challenges)
+    channel_bonus.award(team.id)
+    Awards.query.delete()
+    ChannelBonus.query.update({"award_id": None})
+    db.session.commit()
+    assert channel_bonus.sweep() == 1 and score_of(team.id) == 200
+
+
+def test_the_reply_names_the_bonus_only_when_it_is_owed_now(app):
+    """The reply used to say 'channel_bonus: 100' whenever the channel was complete. A studio that was paid, then had a programme added and solved it, was promised
+    a second payment that never came."""
+    channel, challenges = make_channel("street", programmes=1, flags=True)
+    first = challenges[0].id
+    extra = fixed("street-extra", value=100, flag="street-extra-answer")
+    extra_id = extra.id
+    alice = team_client(app, "alice", "studio-a")
+    paid = alice.post("/api/v1/challenges/attempt", json={"challenge_id": first, "submission": "street-0-answer"}).get_json()["data"]
+    assert paid["l3mon"]["channel_complete"] is True and paid["l3mon"]["channel_bonus"] == 100
+    add_programme(Channel.query.filter_by(slug="street").one(), Challenges.query.get(extra_id), 1)
+    Challenges.query.get(extra_id).state = "visible"  # the release control hid it while it was on no programme; it is on air now
+    db.session.commit()
+    clear_challenges()
+    r = alice.post("/api/v1/challenges/attempt", json={"challenge_id": extra_id, "submission": "street-extra-answer"})
+    assert r.status_code == 200, r.get_data(as_text=True)
+    again = r.get_json()["data"]
+    assert again["l3mon"]["channel_complete"] is True and again["l3mon"]["channel_bonus"] == 0, "it was paid already: nothing is promised"
+    db.session.rollback()
+    assert Awards.query.count() == 1
+
+
+def test_an_automatic_bonus_is_not_in_the_crews_list_of_bonuses_and_adds_no_audit_line(app):
+    """500 studios times several channels would push the crew's own Revoke and Restore lines out of the Scoring page and show a giver '(gone)'."""
+    admin = login_as_user(app, "admin")
+    team = studio("alpha")
+    _, challenges = make_channel("street", programmes=1)
+    solve_all(team, challenges)
+    channel_bonus.award(team.id)
+    assert Awards.query.count() == 1 and ChannelBonus.query.count() == 1
+    assert Audit.query.filter_by(action="scoring.channel_bonus").count() == 0, "the record table and the studio's private line are the record of an award"
+    data = admin.get("/api/v1/l3mon/admin/scoring").get_json()["data"]
+    assert data["bonuses"] == []
+    assert data["channel_bonus"]["given"] == 1
+
+
+def test_a_withdrawn_bonus_is_in_the_audit_trail_because_a_crew_action_caused_it(app):
+    team = studio("alpha")
+    _, challenges = make_channel("street", programmes=2)
+    solve_all(team, challenges)
+    channel_bonus.award(team.id)
+    voids.revoke(challenges[0].id, "broken")
+    assert Audit.query.filter_by(action="scoring.channel_bonus").count() == 1
+
+
+def test_the_minute_check_runs_the_sweep_only_when_it_holds_the_claim(app, monkeypatch):
+    """If the claim itself fails (Redis down) every request of every worker would otherwise run the sweep."""
+    from CTFd.plugins.l3mon_scoring import triggers
+
+    calls = []
+    monkeypatch.setattr(channel_bonus, "sweep", lambda: calls.append(1) or 0)
+    monkeypatch.setattr(triggers.values, "heal", lambda: None)
+
+    def broken(*a, **k):
+        raise RuntimeError("redis is down")
+
+    monkeypatch.setattr(triggers, "claim", broken)
+    with app.test_request_context("/board"):
+        triggers._minute_check()
+    assert calls == [], "no claim, no sweep"
+    monkeypatch.setattr(triggers, "claim", lambda *a, **k: False)
+    with app.test_request_context("/board"):
+        triggers._minute_check()
+    assert calls == [], "another worker has the minute"
+    monkeypatch.setattr(triggers, "claim", lambda *a, **k: True)
+    with app.test_request_context("/board"):
+        triggers._minute_check()
+    assert calls == [1]
