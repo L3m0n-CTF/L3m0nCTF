@@ -5,6 +5,7 @@ import time
 from typing import Callable, Optional
 
 from services.instancer.flag import is_valid_flag_shape
+from services.instancer.lifetime import DEFAULT_MAX_RENEWALS, DEFAULT_MAX_TTL_MINUTES, GLOBAL_MAX_TTL_MINUTES, MAX_RENEWALS_LIMIT, RenewLimitError
 from services.instancer.manifest import ChallengeSpec, Manifest
 from services.instancer.safety import assert_safe
 from services.instancer.urls import instance_url_scheme
@@ -134,6 +135,8 @@ class InstanceManager:
         start_wait_seconds: float = 25.0,
         mem_overcommit: float = 1.0,
         url_scheme: Optional[str] = None,
+        max_ttl_minutes: int = DEFAULT_MAX_TTL_MINUTES,
+        max_renewals: int = DEFAULT_MAX_RENEWALS,
     ):
         if not (1024 <= tcp_port_start <= 65535):
             raise ValueError(f"INSTANCER_TCP_PORT_START must be between 1024 and 65535, got {tcp_port_start}")
@@ -143,6 +146,17 @@ class InstanceManager:
             raise ValueError(
                 f"TCP port range [{tcp_port_start}, {tcp_port_start + tcp_port_count - 1}] exceeds 65535"
             )
+
+        if not (1 <= max_ttl_minutes <= GLOBAL_MAX_TTL_MINUTES):
+            raise ValueError(f"max_ttl_minutes must be between 1 and {GLOBAL_MAX_TTL_MINUTES}, got {max_ttl_minutes}")
+        if not (0 <= max_renewals <= MAX_RENEWALS_LIMIT):
+            raise ValueError(f"max_renewals must be between 0 and {MAX_RENEWALS_LIMIT}, got {max_renewals}")
+        # The longest any instance lives, whatever its challenge asks for, and how often a studio may renew one (services/instancer/lifetime.py)
+        self.max_ttl_minutes = int(max_ttl_minutes)
+        self.max_renewals = int(max_renewals)
+        for spec in manifest.challenges.values() if hasattr(manifest, "challenges") else []:
+            if spec.ttl_minutes > self.max_ttl_minutes:
+                _log.warning("Challenge '%s' asks for %d minutes; this host lets an instance live at most %d: it gets %d", spec.slug, spec.ttl_minutes, self.max_ttl_minutes, self.max_ttl_minutes)
 
         self.manifest = manifest
         self.docker = docker_client
@@ -311,7 +325,7 @@ class InstanceManager:
             if self.dev_mode and ttl_seconds is not None:
                 duration = int(ttl_seconds)
             else:
-                duration = spec.ttl_minutes * 60
+                duration = self._lifetime_seconds(spec)
             expires_at = now + duration
 
             record = InstanceRecord(
@@ -496,6 +510,12 @@ class InstanceManager:
                 raise SlugNotFoundError(f"Instance '{instance_id}' not found")
 
             now = self._now()
+            # 0. Refuse when the studio has used the renewals this host allows (none, by default: an instance lives 15 minutes and then a new one is started)
+            if record.renewals >= self.max_renewals:
+                if self.max_renewals == 0:
+                    raise RenewLimitError(f"An instance runs for {self.max_ttl_minutes} minutes and cannot be extended. Start a new one when it ends.")
+                raise RenewLimitError(f"This instance has already been renewed {record.renewals} time{'' if record.renewals == 1 else 's'}, the most this host allows. Start a new one when it ends.")
+
             # 1. Refuse if renewed less than 60s ago
             if record.last_renewed_at is not None and (now - record.last_renewed_at < MIN_RENEW_INTERVAL_SECONDS):
                 raise ValueError("Instance cannot be renewed less than 60 seconds after previous renewal")
@@ -505,14 +525,17 @@ class InstanceManager:
                 raise ValueError("Instance has reached its absolute 3-hour lifetime cap")
 
             spec = self.manifest.get(record.slug)
-            ttl_minutes = spec.ttl_minutes if spec else 45
-            new_expiry = min(now + ttl_minutes * 60, record.created_at + ABSOLUTE_LIFETIME_SECONDS)
+            new_expiry = min(now + (self._lifetime_seconds(spec) if spec else self.max_ttl_minutes * 60), record.created_at + ABSOLUTE_LIFETIME_SECONDS)
 
             record.expires_at = new_expiry
             record.last_renewed_at = now
             record.renewals += 1
 
             return record.to_dict(self.instance_domain, self.tcp_host, self.url_scheme)
+
+    def _lifetime_seconds(self, spec) -> int:
+        """How long an instance of this challenge lives: what its manifest asks for, never more than this host's ceiling."""
+        return min(spec.ttl_minutes, self.max_ttl_minutes) * 60
 
     def _active_mem_mb(self) -> float:
         """The declared memory limits of the live instances, in MB. The caller holds the lock. (Counted against the ceiling as limit / mem_overcommit.)"""
@@ -596,7 +619,9 @@ class InstanceManager:
 
         reaped = []
         for iid in expired_ids:
-            if self.stop_instance(iid):
+            # An instance that ran out its time is not a studio hammering Start and Stop: the studio must be able to start a new one at once, so no
+            # restart cooldown is left (a deliberate Stop still leaves the 60 seconds).
+            if self.stop_instance(iid, cooldown_seconds=0):
                 reaped.append(iid)
         return reaped
 

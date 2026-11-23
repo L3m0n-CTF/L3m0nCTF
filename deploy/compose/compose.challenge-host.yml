@@ -90,6 +90,10 @@ services:
       INSTANCE_DOMAIN: "${INSTANCE_DOMAIN:-inst.l3m0nctf.xyz}"
       # The scheme of the address a player is given: empty = https for a real domain (Cloudflare serves 443 only), http for a development address.
       INSTANCE_URL_SCHEME: "${INSTANCE_URL_SCHEME:-}"
+      # How long an instance lives and whether it can be extended (owner's rule of 23 Nov 2026: 15 minutes, then the participant starts a new one; services/instancer/lifetime.py).
+      # The ceiling applies to every challenge whatever its manifest says; a renewal is refused unless INSTANCER_MAX_RENEWALS is raised.
+      INSTANCER_MAX_TTL_MINUTES: "${INSTANCER_MAX_TTL_MINUTES:-15}"
+      INSTANCER_MAX_RENEWALS: "${INSTANCER_MAX_RENEWALS:-0}"
       INSTANCER_TCP_HOST: "${CHALLENGE_HOST_TCP_NAME:-h1.inst.l3m0nctf.xyz}"
       # The relay port range: the same two numbers for the agent, the router and the published ports (TCP_PORT_FIRST, TCP_PORT_LAST; at most 2000 ports).
       # A host runs at most as many raw-TCP instances at once as it has ports, so size the range for the peak (docs/deploy/instancer.md, "Sizing a challenge

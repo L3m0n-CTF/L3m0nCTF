@@ -48,14 +48,14 @@ You need a player account in a studio (yours; do not use the crew account, it ha
 
 | # | You do | You should see |
 |---|---|---|
-| 1 | Demo web, **Start** | "Starting" for 1 to 2 seconds, then running, an `https://<32 characters>.l3m0nctf.xyz` address and a countdown of about 45 minutes |
+| 1 | Demo web, **Start** | "Starting" for 1 to 2 seconds, then running, an `https://<32 characters>.l3m0nctf.xyz` address and a countdown of about 15 minutes |
 | 2 | Open the address, then add `/flag` | the sample page; a flag that starts `L3m0n{` |
 | 3 | Paste the flag into the programme | "Correct" (0 TRP) |
 | 4 | Open the address on a phone on mobile data | the same page |
-| 5 | **Renew** | "not yet" in the first minute (a 60 s rule); "Renewed" after it |
+| 5 | **Renew** | refused, always: an instance lives 15 minutes and cannot be extended (the owner's rule of 23 Nov 2026). The page still shows the button and says "NOT YET. This instance cannot be renewed yet." (its wording was written for a renewal that opens later); hiding the button needs a change in the page, not on the server |
 | 6 | **Stop**, then Start at once | stopped, the address dies within about 10 s; an immediate restart is refused for about 60 s |
 | 7 | Start Demo web, web two, web three, then try Demo web short | the fourth is refused: the studio already runs the most instances it may |
-| 8 | Demo web short, **Start**, wait a minute | expired; the address is dead |
+| 8 | Demo web short, **Start**, wait a minute | expired; the address is dead; **Start works again at once** (an instance that ran out its time leaves no restart cooldown, a deliberate Stop does: 60 s) |
 | 9 | Demo tcp, **Start** | an address `h1.inst.l3m0nctf.xyz` and a port from 30000 to 30199 (see D) |
 
 Anything that differs: write down what you pressed, the exact words on the page and the time, and take a screenshot.
@@ -70,7 +70,7 @@ bash tools/ops/demo-round.sh run burst
 
 Three small commands help around them: `run probe` makes one signed-in call as test studio 1 and prints the answer (nothing changes), `run reset` stops every instance of the test studios through the platform and removes their solves (use it to rerun `functional`, after waiting out the 60 s restart cool-down), and `run expected_tcp` prints a 10-character hash prefix of the flag the platform expects for studio 1's TCP programme, to compare with the hash of what the instance served.
 
-`functional` prints one `PASS` or `FAIL` line per check and ends `RESULT: 23 passed, 0 failed` (it waits about 80 s for a 1-minute instance to expire). `burst` starts 24 studios at the same moment and ends `RESULT: 4 passed, 0 failed`; its `BURST:` line gives the times (22 Nov: 11.2 s for the whole burst, median 7.5 s, longest 11.1 s). A `FAIL` line says what it saw.
+`functional` prints one `PASS` or `FAIL` line per check and ends `RESULT: 24 passed, 0 failed` (it waits about 80 s for a 1-minute instance to expire). `burst` starts 24 studios at the same moment and ends `RESULT: 4 passed, 0 failed`; its `BURST:` line gives the times (22 Nov: 11.2 s for the whole burst, median 7.5 s, longest 11.1 s). A `FAIL` line says what it saw.
 
 ### Host down and back, and an instance gone from the host
 

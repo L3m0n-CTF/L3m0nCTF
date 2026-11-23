@@ -90,6 +90,8 @@ Set in environment or `deploy/compose/generated/compose.env`:
 | `INSTANCER_HOST_NAME` | `default` | `h1`, `h2`... | Name of this challenge host in the fleet |
 | `INSTANCER_MANIFEST_FILE` | `../../config/instancer/challenges.example.toml` | `/etc/l3mon/challenges.toml` | Path to challenge manifest file |
 | `INSTANCE_DOMAIN` | `localhost:8090` | Required (e.g. `inst.l3m0nctf.xyz`) | Wildcard domain routing suffix |
+| `INSTANCER_MAX_TTL_MINUTES` | `15` | `15` | **The longest any instance lives, whatever its challenge's `ttl_minutes` says** (1 to 180; a challenge that asks for less keeps its own shorter time; one that asks for more is logged once at start and gets the ceiling). The owner's rule of 23 Nov 2026: every instance lives 15 minutes and the participant starts a new one when it ends. Before this the samples lived 45 minutes |
+| `INSTANCER_MAX_RENEWALS` | `0` | `0` | How many times a studio may renew one instance (0 to 100). **0 = an instance cannot be extended**: a renewal is refused with `409 renew_limit` and the message "An instance runs for 15 minutes and cannot be extended. Start a new one when it ends." A renewal that is allowed gives the full lifetime again and still stops at the 3-hour absolute ceiling. An instance that ran out its time leaves **no** restart cooldown (the studio starts a new one at once); a deliberate Stop leaves 60 seconds |
 | `INSTANCE_URL_SCHEME` | empty | empty | The scheme of the address a web instance is handed to a player. Empty = `https` for a real domain (Cloudflare answers on 443 only, so an `http://` link times out: found on 22 Nov 2026 by the first platform-driven round), `http` for a development address (a port, or `localhost`). `http` or `https` forces one |
 | `INSTANCER_INSTANCE_POOL` | `10.200.0.0/16,172.16.0.0/12` | `10.200.0.0/16` | Valid network CIDR pool for instance containers |
 | `INSTANCER_TCP_PORT_START` | `30000` | `30000` | First port of the TCP relay range |
@@ -349,7 +351,7 @@ port = 1337               # Target internal port inside container (1..65535)
 cpus = 1.0                # CPU quota (0.1 .. 4.0)
 mem_mb = 128              # Memory limit in MB (32 .. 2048)
 pids = 64                 # Process limit (16 .. 256)
-ttl_minutes = 45          # Base instance lifetime (5 .. 120)
+ttl_minutes = 15          # The lifetime this challenge asks for (1 .. 180). The host's ceiling INSTANCER_MAX_TTL_MINUTES (default 15) wins when it is lower, so every instance lives at most 15 minutes
 max_per_team = 1          # Active instances per team (default 1)
 max_body_bytes = 10485760 # Max HTTP request size in bytes (HTTP only, default 10MB)
 response_timeout_seconds = 120 # HTTP backend response timeout

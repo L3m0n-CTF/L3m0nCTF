@@ -40,13 +40,13 @@ EOF
 }
 {
   echo "# TEST manifest written by real_host_prepare.sh on $(date -u +%FT%TZ): the repository's sample challenges, digest-pinned from the local registry."
-  stanza demo-web "$WEB" http 8080 0.25 64 64 45
-  stanza demo-web2 "$WEB" http 8080 0.25 64 64 45
-  stanza demo-web3 "$WEB" http 8080 0.25 64 64 45
+  stanza demo-web "$WEB" http 8080 0.25 64 64 15
+  stanza demo-web2 "$WEB" http 8080 0.25 64 64 15
+  stanza demo-web3 "$WEB" http 8080 0.25 64 64 15
   stanza demo-web-short "$WEB" http 8080 0.25 64 64 1
-  stanza demo-tcp "$TCP" tcp 8000 0.25 64 64 45
-  stanza demo-prober "$PROBER" http 8080 0.25 64 64 45
-  stanza demo-stress "$STRESS" http 8080 0.25 128 64 45
+  stanza demo-tcp "$TCP" tcp 8000 0.25 64 64 15
+  stanza demo-prober "$PROBER" http 8080 0.25 64 64 15
+  stanza demo-stress "$STRESS" http 8080 0.25 128 64 15
 } | sudo tee /etc/l3mon/challenges.toml > /dev/null
 sudo chmod 0644 /etc/l3mon/challenges.toml
 echo "manifest: $(grep -c '^slug' /etc/l3mon/challenges.toml) challenges"

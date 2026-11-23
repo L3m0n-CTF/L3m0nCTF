@@ -142,7 +142,7 @@ Following the audit of Milestone 1 on 18 October 2026 and its merge into `pre-de
 - **Player API (`/api/v1/l3mon/instances`)**:
   - `GET /api/v1/l3mon/instances`: Returns active instances and quotas for the caller's studio.
   - `POST /api/v1/l3mon/instances`: Starts instance (gated on authenticated team, delivery `live_single`, on-air, contest `live` phase, quotas, and 60s cooldown; ignores `ttl_seconds` unless `L3MON_INSTANCES_TTL_OVERRIDE=1`).
-  - `POST /api/v1/l3mon/instances/<challenge_id>/renew`: Extends TTL (cooldown of 60s between renewals, 3h absolute cap).
+  - `POST /api/v1/l3mon/instances/<challenge_id>/renew`: Refused by default (`409 renew_limit`: an instance lives 15 minutes and cannot be extended, owner's rule of 23 Nov 2026, `INSTANCER_MAX_RENEWALS=0`); when an operator allows renewals it extends the TTL (cooldown of 60s between renewals, 3h absolute cap).
   - `DELETE /api/v1/l3mon/instances/<challenge_id>`: Idempotent stop.
 - **Admin/Crew API (`/api/v1/l3mon/admin/instances`)**: List all live instances, stop by team/challenge, stop all. Logs every action via `l3mon_core.audit`.
 - **Extension Hooks**:

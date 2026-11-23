@@ -29,7 +29,7 @@ port = $4
 cpus = 0.25
 mem_mb = $5
 pids = 64
-ttl_minutes = 45
+ttl_minutes = 15
 max_per_team = 1
 EOF
 }

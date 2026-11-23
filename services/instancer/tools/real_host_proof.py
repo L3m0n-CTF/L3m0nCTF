@@ -397,11 +397,14 @@ def g_lifecycle():
     st, body, _ = start(t, 410, "demo-prober", new_flag())
     check("lifecycle: a 4th live instance for the same team is refused (409)", st == 409, f"status {st} {body}")
     # renew
-    st, body, _ = api("POST", f"/v1/instances/{ids[0]}/renew", {})
-    before = None
-    check("lifecycle: renew works the first time", st == 200, f"status {st}")
+    # The owner's rule of 23 Nov 2026: an instance lives 15 minutes and cannot be extended (INSTANCER_MAX_RENEWALS=0, the default). A host set up to allow
+    # renewals (INSTANCER_MAX_RENEWALS above 0) is checked by services/instancer/tests/test_instance_lifetime.py, not here.
     st, body, hdr = api("POST", f"/v1/instances/{ids[0]}/renew", {})
-    check("lifecycle: a second renew within 60 s is refused (429)", st == 429, f"status {st}")
+    check("lifecycle: a renew is refused with its own code (409 renew_limit): an instance lives 15 minutes and cannot be extended", st == 409 and (body or {}).get("error") == "renew_limit", f"status {st} {body}")
+    check("lifecycle: ... and the refusal says what to do (start a new one) and does not tell the player to wait", "new one" in str((body or {}).get("message", "")).lower() and hdr.get("Retry-After") is None, str((body or {}).get("message", ""))[:100])
+    st, body, _ = api("GET", f"/v1/instances/{ids[0]}")
+    left = ((body or {}).get("instance", {}) or {}).get("expires_at", 0) - time.time()
+    check("lifecycle: an instance's life is at most 15 minutes (the host's ceiling), whatever the manifest says", 0 < left <= 15 * 60 + 5, f"{left:.0f} s left")
     # stop and clean up
     st, _, _ = stop(ids[0])
     check("lifecycle: stop answers 204", st == 204, f"status {st}")

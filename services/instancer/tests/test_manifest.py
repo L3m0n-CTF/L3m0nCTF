@@ -48,7 +48,7 @@ def test_valid_manifest_parsing():
     assert pwn.cpus == 0.5
     assert pwn.mem_mb == 256
     assert pwn.pids == 128
-    assert pwn.ttl_minutes == 45
+    assert pwn.ttl_minutes == 15  # the default lifetime is the host's 15-minute ceiling (services/instancer/lifetime.py); it was 45
     assert pwn.read_only is True
 
 

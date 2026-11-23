@@ -27,6 +27,7 @@ class FakeInstancerClient:
         self.next_id = 1
         self.stopped = []
         self.fail_start = None  # an InstancerClientError to raise on the next starts (a challenge whose container cannot start)
+        self.refuse_renew = None  # an InstancerClientError to raise on a renewal (the host does not allow renewals: the default since 23 Nov 2026)
 
     def request(self, method, path, body=None):
         if method == "POST" and path == "/v1/instances":
@@ -55,6 +56,8 @@ class FakeInstancerClient:
 
         elif method == "POST" and path.endswith("/renew"):
             inst_id = path.split("/")[3]
+            if self.refuse_renew is not None:
+                raise self.refuse_renew
             if inst_id in self.instances:
                 inst = self.instances[inst_id]
                 inst["renewals"] += 1
@@ -402,5 +405,29 @@ def test_one_challenge_that_cannot_start_does_not_take_the_other_challenges_down
                 down = alice.post("/api/v1/l3mon/instances", json={"challenge_id": c3})
                 assert down.status_code == 503
                 assert "10.200" not in down.get_data(as_text=True) and "urlopen" not in down.get_data(as_text=True)
+    set_client_override(None)
+    destroy_ctfd(app)
+
+
+def test_a_renewal_the_host_does_not_allow_reaches_the_player_as_409_renew_limit_with_the_hosts_words():
+    """An instance lives 15 minutes and cannot be extended (owner's rule of 23 Nov 2026): the host answers 409 renew_limit, and the platform passes the code and
+    the message on unchanged, so the page can tell the player to start a new one. The instance is not touched."""
+    app = create_ctfd(user_mode="teams", enable_plugins=True)
+    with app.app_context():
+        c1, c2, c3, c4, cs, alice = _setup_world(app)
+        fake_client = FakeInstancerClient()
+        set_client_override(fake_client)
+        with freeze_time(datetime.datetime.utcfromtimestamp(T_LIVE)):
+            with mock.patch("CTFd.plugins.l3mon_instances.api.get_flag_secret", return_value="test-secret"):
+                assert alice.post("/api/v1/l3mon/instances", json={"challenge_id": c1}).status_code == 201
+                fake_client.refuse_renew = InstancerClientError(409, "renew_limit", "An instance runs for 15 minutes and cannot be extended. Start a new one when it ends.")
+                r = alice.post(f"/api/v1/l3mon/instances/{c1}/renew", json={})
+                assert r.status_code == 409
+                body = r.get_json()
+                assert body["success"] is False and body["error"] == "renew_limit"
+                assert "15 minutes" in body["message"] and "new one" in body["message"].lower()
+                # still running, still the same row
+                listed = alice.get("/api/v1/l3mon/instances").get_json()["data"]["instances"]
+                assert len(listed) == 1 and listed[0]["state"] == "running"
     set_client_override(None)
     destroy_ctfd(app)

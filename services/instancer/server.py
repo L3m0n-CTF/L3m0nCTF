@@ -7,6 +7,7 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
 from typing import Optional
 
+from services.instancer.lifetime import RenewLimitError
 from services.instancer.manager import (
     InstanceManager,
     QuotaError,
@@ -199,6 +200,9 @@ class InstancerAPIHandler(BaseHTTPRequestHandler):
                 return
             except SlugNotFoundError as e:
                 self._send_json(404, {"error": "not_found", "message": str(e)})
+                return
+            except RenewLimitError as e:
+                self._send_json(409, {"error": "renew_limit", "message": str(e)})
                 return
             except ValueError as e:
                 self._send_json(429, {"error": "cooldown", "message": str(e), "retry_after": 60}, headers={"Retry-After": "60"})

@@ -212,3 +212,15 @@ def test_an_empty_router_token_never_matches_an_empty_bearer(tmp_path):
         assert _raw(f"http://127.0.0.1:{port}/v1/routes", b"Bearer " + INSTANCER_TOKEN.encode()) == 200
     finally:
         server.shutdown()
+
+
+def test_a_renewal_that_the_host_does_not_allow_answers_409_renew_limit(instancer_api):
+    """Renewal is off by default (an instance lives 15 minutes, then the studio starts a new one): the answer says so with its own code. It used to be a
+    429 'cooldown, retry in 60 s' for every kind of refusal, which would have told a player to wait and try again for something that never works."""
+    base = instancer_api["base_url"]
+    body = {"team_id": 7, "challenge_id": 42, "slug": "demo-web", "flag": FLAG_EXAMPLE}
+    _, data, _ = _request(f"{base}/v1/instances", method="POST", body=body, token=INSTANCER_TOKEN)
+    status, answer, headers = _request(f"{base}/v1/instances/{data['instance']['id']}/renew", method="POST", body={}, token=INSTANCER_TOKEN)
+    assert status == 409 and answer["error"] == "renew_limit"
+    assert "15 minutes" in answer["message"] and "new one" in answer["message"].lower()
+    assert headers.get("Retry-After") is None, "there is nothing to wait for"

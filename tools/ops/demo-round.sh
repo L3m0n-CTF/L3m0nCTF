@@ -15,7 +15,7 @@
 #   setup             the same, plus two hidden test studios (test-inst-01, test-inst-02) for the automatic tests
 #   counts            what exists now (users, challenges, programmes, solves, test users); changes nothing
 #   probe             one signed-in call as test studio 1; changes nothing
-#   functional        the 23 checks of one studio's whole life with an instance (needs `setup`)       about 2.5 minutes
+#   functional        the 24 checks of one studio's whole life with an instance (needs `setup`)       about 2.5 minutes
 #   burst             24 studios start at the same moment (creates 24 more hidden test studios)        about 1 minute
 #   hostdown_during / hostdown_after / gone / after_gone / expected_tcp / reset    the parts of the host-down and recovery checks (the runbook says when)
 #   cleanup           takes everything above away again (programmes, channel, sample challenges, test studios, their solves and instances)
