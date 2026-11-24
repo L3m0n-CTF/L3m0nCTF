@@ -862,7 +862,7 @@ String(t||'News').replace(/^\[[\w-]+\]\s*/i,'').trim()||'News';
 function mdToHtml(m){
 let s=String(m||'').replace(/<title[^>]*>[\s\S]*?<\/title>/gi,'').replace(/<!DOCTYPE[^>]*>|<\/?(?:html|head|body|meta)[^>]*>/gi,'');
 if(!s.trim())return'';
-s=s.replace(/<style[^>]*>([\s\S]*?)<\/style>/gi,(_,c)=>`<style>${c.replace(/\bbody\b/g,'.nt-alert-box').replace(/height\s*:\s*100vh;?/gi,'')}</style>`)
+s=s.replace(/<style[^>]*>([\s\S]*?)<\/style>/gi,(_,c)=>`<style>${c.replace(/\bbody\b/g,'.nt-alert-box, .nt-c').replace(/height\s*:\s*100vh;?/gi,'')}</style>`)
 .replace(/^(#{1,6})\s+(.+)$/gm,(_,h,t)=>`<h${h.length}>${t.trim()}</h${h.length}>`)
 .replace(/^>\s+(.+)$/gm,'<blockquote>$1</blockquote>')
 .replace(/\*\*([^*\n]+)\*\*/g,'<strong>$1</strong>')
@@ -990,7 +990,23 @@ body.append(list,p);
 function nfRestarted(v){
 return v===0&&(nf.ver>0||nfSeen().ver>0);
 }
+function initNotifPage(){
+for(const item of $$('.nt-item')){
+const t=$('.nt-t',item);
+const c=$('.nt-c',item);
+if(t){
+item.className=`nt-item nt-${notifKind(t.textContent)}`;
+t.textContent=cleanTitle(t.textContent);
+}
+if(c){
+const raw=c.textContent;
+c.textContent='';
+renderNotifContent(c,raw);
+}
+}
+}
 function initNotif(){
+initNotifPage();
 for(const bell of $$('[data-notif]')){
 bell.addEventListener('click',(e)=>{
 if(e.defaultPrevented||e.button!==0||e.metaKey||e.ctrlKey||e.shiftKey||e.altKey)return;
