@@ -391,7 +391,7 @@ So the commands below are the sequence. They run unchanged on any machine (that 
 ## D1. Get the code
 
 ```bash
-git clone https://github.com/sivaahari/L3m0nCTF.git && cd L3m0nCTF
+git clone https://github.com/L3m0n-CTF/L3m0nCTF.git && cd L3m0nCTF
 git checkout <the release tag I give you>
 ```
 

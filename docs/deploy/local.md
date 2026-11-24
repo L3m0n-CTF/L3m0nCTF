@@ -11,7 +11,7 @@ This starts the same stack that production will run (CTFd, MariaDB, Redis and ng
 ## From a fresh clone to a working platform
 
 ```bash
-git clone https://github.com/sivaahari/L3m0nCTF.git && cd L3m0nCTF && git checkout pre-deployment
+git clone https://github.com/L3m0n-CTF/L3m0nCTF.git && cd L3m0nCTF && git checkout pre-deployment
 (cd tools && python -m l3mon secrets generate --dir ../.secrets \
   && python -m l3mon config render ../config/event.example.toml --out ../deploy/compose/generated)
 docker build -f docker/ctfd/Dockerfile -t l3mon/ctfd:dev .

@@ -69,7 +69,7 @@ If Google refuses the VM for quota, ask for the quota in 2.4 first (a new accoun
 2. Check out **the same release** and bring the two scripts across, as in Part 1 (`gcloud compute scp` to the new VM, which is in the new project):
 
    ```bash
-   git clone https://github.com/sivaahari/L3m0nCTF.git && cd L3m0nCTF && git fetch --tags && git checkout release-2026-10-22
+   git clone https://github.com/L3m0n-CTF/L3m0nCTF.git && cd L3m0nCTF && git fetch --tags && git checkout release-2026-10-22
    ```
 
 3. Bring the saved file across (from your computer, with the new account active), then put everything back. `place` checks the file's checksums, refuses a different commit, and refuses to overwrite anything already there (add `--force` only when you mean it):

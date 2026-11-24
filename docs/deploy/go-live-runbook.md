@@ -358,7 +358,7 @@ Until the VM serves something, `https://play.l3m0nctf.xyz` shows a Cloudflare **
 
 ```bash
 cd ~
-git clone https://github.com/sivaahari/L3m0nCTF.git
+git clone https://github.com/L3m0n-CTF/L3m0nCTF.git
 cd L3m0nCTF
 git fetch --tags
 git checkout release-2026-10-18

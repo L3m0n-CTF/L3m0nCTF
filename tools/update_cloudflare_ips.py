@@ -19,7 +19,7 @@ TARGET = Path(__file__).resolve().parents[1] / "deploy" / "nginx" / "snippets" /
 
 def fetch(url: str) -> list[str]:
     # Cloudflare refuses the default Python user agent, so say who is asking
-    request = urllib.request.Request(url, headers={"User-Agent": "l3mon-platform-tools/1.0 (+https://github.com/sivaahari/L3m0nCTF)"})
+    request = urllib.request.Request(url, headers={"User-Agent": "l3mon-platform-tools/1.0 (+https://github.com/L3m0n-CTF/L3m0nCTF)"})
     with urllib.request.urlopen(request, timeout=20) as response:  # noqa: S310 - fixed https URLs
         text = response.read().decode("ascii")
     ranges = [line.strip() for line in text.splitlines() if line.strip()]
