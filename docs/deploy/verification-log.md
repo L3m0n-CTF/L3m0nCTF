@@ -815,3 +815,26 @@ Must reflect on both `crew.l3m0nctf.xyz` and `play.l3m0nctf.xyz`.
 - Mail queue: 0 (caps 290 and 450).
 - Ledger chain ok over 9,908 lines with triggers in place.
 - External checks through Cloudflare: `/readyz`, `/login`, `/healthcheck` 200; new JS bundles `login.ae74504486.js` and `shell.6535f66f23.js` verified live with `mdToHtml`.
+
+## 2026-11-24 (late night): `release-2026-11-24d` DEPLOYED (HTML & Markdown rendering on /notifications history page)
+
+**The owner's request:** On `https://crew.l3m0nctf.xyz/notifications` (and `play.l3m0nctf.xyz/notifications`), notification history was displaying raw text; upgrade it to full HTML and Markdown rendering.
+
+**UI Prototype & Export:**
+- Implemented `initNotifPage()` in `notif.js`, invoked automatically on shell initialization.
+- For every `.nt-item` on `/notifications`: cleans bracket prefixes from titles, assigns the tier status class (`nt-urgent`, `nt-release`, `nt-background`), and converts content to formatted HTML and Markdown using `renderNotifContent(c, raw)`.
+- Updated `lists.css`: styled `.nt-c` with `display: block;` and comprehensive typography rules (`h1-h3`, `p`, `pre`, `code`, `blockquote`, `a`).
+- Scoped `<style>` element rules to both `.nt-alert-box` and `.nt-c`.
+- Exported 43 theme files to `ui/theme/l3mon`.
+- Verified all 396 UI tests passed and page budgets green.
+
+**Deploy:**
+- Run by `deploy-24a.sh` from 17:36 to 17:38 UTC (23:06 to 23:08 IST).
+- Encrypted full backup: 860,568 bytes shipped to `~/backups/sink/full`.
+- **1,251 accounts and 638 studios before and after, 0 challenges, 0 solves, identical fingerprint `8ce4109afe4a8589`**.
+- `verify-image` 37 of 37 checks ok.
+- 17 services up, none unhealthy.
+- Gate unchanged (`default 0;`).
+- Crew account hidden: `[('l3m0n-main-admin', True)]`.
+- Activity ledger: chain ok over 10,215 lines with triggers in place.
+- External checks through Cloudflare: `/readyz`, `/login`, `/healthcheck` 200; new live bundle `shell.de0e0d848d.js` verified live with `initNotifPage`.
