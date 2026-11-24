@@ -751,3 +751,33 @@ Must reflect on both `crew.l3m0nctf.xyz` and `play.l3m0nctf.xyz`.
 - Mail queue: 0 (caps 290 and 450).
 - Ledger chain ok over 9,365 lines with triggers in place.
 - External checks through Cloudflare: `/readyz`, `/login`, `/healthcheck` 200; `/crew` redirects 302; new JS bundle served containing `dlg-alert`.
+
+## 2026-11-24 (later): `release-2026-11-24b` DEPLOYED (Renamed to Announcement & single latest announcement guarantee)
+
+**The owner's request:** Rename Critical Alert to "Announcement"; once an Announcement is acknowledged, a second announcement must not show the old one, only the new one (single announcement should be there).
+
+**UI Prototype & Export:**
+- Renamed dialog title to `Announcement`, tag badge in modal card to `ANNOUNCEMENT`, spoken announcement to `Announcement: ...`, and bell drawer tag to `ANNOUNCEMENT`.
+- Single announcement guarantee: modal renders only the latest unacknowledged announcement (`unack[unack.length - 1]`) instead of looping over multiple cards.
+- Fixed acknowledgement wipe: `nfRestarted(v)` now triggers only on server reset (`v === 0`), preventing 52-bit SHA-256 non-monotonic hash updates from clearing local acknowledgements.
+- Acknowledgements saved immediately and permanently in client storage.
+- All bundle budgets green in `build.mjs`; 393 UI tests passed, 1 skipped.
+- Exported 43 theme files to `ui/theme/l3mon`.
+
+**Backend & Platform:**
+- Added support for `type="announcement"` and `[ANNOUNCEMENT]` title tagging in `plugins/l3mon_board/notices.py`.
+- Unit tests and hygiene passed (75 passed, 2 skipped; 0 hygiene findings).
+- Tagged `release-2026-11-24b` on commit `03c4457`.
+
+**Deploy (the owner's explicit "yes go om"):**
+- Run by `deploy-24a.sh` from 15:15 to 15:17 UTC.
+- Encrypted full backup: 819,592 bytes shipped to `~/backups/sink/full`.
+- **1,229 accounts and 629 studios before and after, 0 challenges, the same fingerprint `15336048a9857806`**.
+- `verify-image` 37 of 37 checks ok.
+- 17 services up, none unhealthy.
+- Gate unchanged (`default 0;`).
+- Crew account hidden: `[('l3m0n-main-admin', True)]`.
+- Nginx `http2` in 0 places and TLS 1.2 only.
+- Mail queue: 0 (caps 290 and 450).
+- Ledger chain ok over 9,546 lines with triggers in place.
+- External checks through Cloudflare: `/readyz`, `/login`, `/healthcheck` 200; new JS bundle `login.f6dff969ea.js` verified live with `ANNOUNCEMENT`.
