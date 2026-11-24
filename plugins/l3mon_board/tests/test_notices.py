@@ -376,10 +376,10 @@ def test_the_guarded_paths_still_ask(play, path):
 
 
 def test_notification_type_tagging_via_api(play):
-    r = play.admin.post(LIST, json={"title": "Emergency Reboot", "content": "Save your work", "type": "alert"})
+    r = play.admin.post(LIST, json={"title": "Emergency Reboot", "content": "Save your work", "type": "announcement"})
     assert r.status_code == 200
     alert_row = Notifications.query.filter_by(content="Save your work").one()
-    assert alert_row.title == "[ALERT] Emergency Reboot"
+    assert alert_row.title == "[ANNOUNCEMENT] Emergency Reboot"
 
     r2 = play.admin.post(LIST, json={"title": "Score Sync", "content": "Recalculated", "type": "background"})
     assert r2.status_code == 200

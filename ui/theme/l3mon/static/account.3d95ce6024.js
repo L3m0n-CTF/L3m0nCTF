@@ -827,10 +827,19 @@ const nf={all:[],ver:null,loading:false,again:false,prev:null};
 let initial=true;
 const nfSeen=()=>{
 const[a,b,c='']=String(store.get('seen','0')).split(':');
-return{id:Math.max(0,Number(a)||0),ver:b!==undefined?Number(b):null,acks:new Set(c?c.split(',').map(Number):[])};
+return{
+id:Math.max(0,Number(a)||0),
+ver:b!==undefined?Number(b):null,
+acks:new Set(c?c.split(',').map(Number).filter((n)=>n>0):[])
+};
 };
 const nfMax=()=>nf.all.reduce((m,n)=>Math.max(m,n.id),0);
 const nfUnread=()=>nf.all.filter((n)=>n.id>nfSeen().id).length;
+function saveAckAlerts(ids){
+const s=nfSeen();
+for(const id of ids)if(id>0)s.acks.add(id);
+store.set('seen',`${s.id}:${s.ver??0}:${[...s.acks].join(',')}`);
+}
 function nfBadge(){
 const n=nfUnread();
 const text=n>9?'9+':String(n);
@@ -844,39 +853,41 @@ for(const bell of $$('[data-notif]'))bell.setAttribute('aria-label',n?`Notificat
 if(nf.prev!==null&&n>nf.prev&&!$('[data-board]'))announce(`${n} unread notification${n===1?'':'s'}.`);
 nf.prev=n;
 }
-const notifKind=(t='')=>/^\[(?:alert|urg|crit)/i.test(t)||/warn|alert|urg|crit/i.test(t)?'urgent':/^\[(?:back|sil|upd)/i.test(t)?'background':/^\[(?:toast|rel)/i.test(t)||/air|prog|rel/i.test(t)?'release':'general';
+const notifKind=(t='')=>
+/^\[(?:ann|alert|urg|crit)/i.test(t)||/announc|warn|alert|urg|crit/i.test(t)
+?'urgent'
+:/^\[(?:back|sil|upd)/i.test(t)
+?'background'
+:/^\[(?:toast|rel)/i.test(t)||/air|prog|rel/i.test(t)
+?'release'
+:'general';
 const cleanTitle=(t='')=>String(t||'News').replace(/^\[[\w-]+\]\s*/i,'').trim()||'News';
-function saveAckAlerts(ids){
-const s=nfSeen();
-for(const id of ids)if(id>0)s.acks.add(id);
-store.set('seen',`${s.id}:${s.ver??0}:${[...s.acks].join(',')}`);
-}
-function openAlertDialog(alerts){
-if(!alerts?.length)return;
+function openAlertDialog(alert,allUnackIds=[]){
+if(!alert)return;
 const dlg=$('[data-dlg]');
 if(!dlg?.showModal)return;
-const ids=alerts.map((a)=>a.id);
+const idsToAck=allUnackIds.length?allUnackIds:[alert.id];
 const btn=$('[data-dlg-close]',dlg);
 const prev=btn?.textContent||'Close';
 dlg.classList.add('dlg-alert');
 if(btn)btn.textContent='Acknowledge';
-dlg.addEventListener('close',()=>{
-saveAckAlerts(ids);
+const finish=()=>{
+saveAckAlerts(idsToAck);
 dlg.classList.remove('dlg-alert');
 if(btn)btn.textContent=prev;
-},{once:true});
-openDialog('CRITICAL ALERT',(body)=>{
-for(const a of alerts){
+};
+dlg.addEventListener('close',finish,{once:true});
+btn?.addEventListener('click',finish,{once:true});
+openDialog('Announcement',(body)=>{
 const b=mk('div','nt-alert-box');
 const h=mk('div','nt-alert-hdr');
-h.append(mk('span','nt-tag nt-tag-urgent','ALERT'),mk('b','nt-alert-title',cleanTitle(a.title)));
-b.append(h,mk('p','nt-alert-content',a.content||''));
+h.append(mk('span','nt-tag nt-tag-urgent','ANNOUNCEMENT'),mk('b','nt-alert-title',cleanTitle(alert.title)));
+b.append(h,mk('p','nt-alert-content',alert.content||''));
 body.append(b);
-}
 });
 sfx('bonk');
 setTimeout(()=>sfx('ding'),120);
-announce(`Alert: ${alerts.map((a)=>cleanTitle(a.title)).join('. ')}`);
+announce(`Announcement: ${cleanTitle(alert.title)}`);
 }
 async function nfLoad(){
 if(nf.loading){nf.again=true;return;}
@@ -897,7 +908,10 @@ nf.all.sort((a,b)=>a.id-b.id);
 nfBadge();
 const acks=nfSeen().acks;
 const unack=nf.all.filter((n)=>notifKind(n.title)==='urgent'&&!acks.has(n.id));
-if(unack.length)openAlertDialog(unack);
+if(unack.length){
+const latest=unack[unack.length-1];
+openAlertDialog(latest,unack.map((a)=>a.id));
+}
 if(fresh.length){
 for(const it of fresh){
 const k=notifKind(it.title);
@@ -918,7 +932,7 @@ nf.loading=false;
 if(nf.again){nf.again=false;nfLoad();}
 }
 }
-const TAGS={urgent:'ALERT',release:'RELEASE',background:'UPDATE'};
+const TAGS={urgent:'ANNOUNCEMENT',release:'RELEASE',background:'UPDATE'};
 function nfOpen(bell){
 const s=nfSeen();
 store.set('seen',`${nfMax()}:${nf.ver??0}:${[...s.acks].join(',')}`);
@@ -942,8 +956,7 @@ body.append(list,p);
 },bell);
 }
 function nfRestarted(v){
-const s=nfSeen();
-return(nf.ver!==null&&v<nf.ver)||(s.ver!==null&&v<s.ver);
+return v===0&&(nf.ver>0||nfSeen().ver>0);
 }
 function initNotif(){
 for(const bell of $$('[data-notif]')){
@@ -956,7 +969,12 @@ nfOpen(bell);
 on('net',(r)=>{
 const v=r?.ok&&r.data&&!Array.isArray(r.data)?r.data.notif_ver:undefined;
 if(!Number.isFinite(v))return;
-if(nfRestarted(v)){nf.all=[];nf.prev=null;store.set('seen',`0:${v}`);}
+if(nfRestarted(v)){
+const s=nfSeen();
+nf.all=[];
+nf.prev=null;
+store.set('seen',`0:${v}:${[...s.acks].join(',')}`);
+}
 if(nf.ver===null||v!==nf.ver){nf.ver=v;nfLoad();}
 });
 nfLoad();
@@ -1110,100 +1128,16 @@ let ended=false;
 on('net',(r)=>{if(!ended&&r.error&&r.error.code==='auth_required'){ended=true;sessionEnded();}});
 document.addEventListener('visibilitychange',()=>audioVisibility(document.hidden));
 }
-const POLL_MS=15000;
-const IDLE_MS=180000;
-function followTicks({ver,onChange}){
-const s={ver,own:undefined,timer:0,last:Date.now(),busy:false};
-const schedule=()=>{
-clearTimeout(s.timer);
-if(document.hidden)return;
-const idle=Date.now()-s.last>IDLE_MS;
-s.timer=setTimeout(poll,idle?60000:POLL_MS+Math.round(Math.random()*6000-3000));
-};
-async function poll(){
-if(s.busy)return;
-s.busy=true;
-try{
-const t=await ticks();
-if(t.ok&&t.data){
-const moved=t.data.ver!==s.ver||(s.own!==undefined&&t.data.own!==s.own);
-if(s.own===undefined)s.own=t.data.own;
-if(moved&&(await onChange(t.data.ver))){s.ver=t.data.ver;s.own=t.data.own;}
-}
-}finally{s.busy=false;}
-schedule();
-}
-const touch=()=>{s.last=Date.now();};
-for(const evt of['pointerdown','keydown','scroll'])addEventListener(evt,touch,{passive:true,capture:true});
-document.addEventListener('visibilitychange',()=>{if(document.hidden)clearTimeout(s.timer);else poll();});
-schedule();
-return{poll};
-}
-function showBanner(b){
-const slot=$('[data-banner-slot]');
-if(!slot)return;
-const cur=$('[data-banner]',slot);
-if(!b){if(cur)cur.remove();return;}
-if(cur&&cur.dataset.banner===b.id)return;
-const p=mk('p',`banner ${b.cls}`);
-p.dataset.banner=b.id;
-p.append(mk('b','banner-lead',b.lead),` ${b.text}`);
-slot.replaceChildren(p);
-}
-const sb={root:null,list:null,etag:null,rowsTag:null,sig:null,place:null};
-const sbOrdinal=(n)=>{
-const k=n%100;
-return k>=11&&k<=13?`${n}th`:`${n}${({1:'st',2:'nd',3:'rd'})[n%10]||'th'}`;
-};
-function sbText(el,text){
-if(el&&el.textContent!==text)el.textContent=text;
-}
-async function sbSwapRows(sig){
-if(!sb.list)return;
-const r=await scoreboardRows(sb.rowsTag);
-if(r.ok&&r.notModified){sb.sig=sig;return;}
-if(!r.ok||typeof r.html!=='string')return;
-sb.rowsTag=r.etag||sb.rowsTag;
-const doc=new DOMParser().parseFromString(`<body>${r.html}</body>`,'text/html');
-const rows=$$('.sb-row',doc.body).map((li)=>document.importNode(li,true));
-for(const li of rows)li.classList.add('swapped');
-sb.list.replaceChildren(...rows);
-sb.list.dataset.sig=sig;
-sb.sig=sig;
-}
-const sbPlace=(me,phase)=>(me.pos===null?(phase&&phase.frozen?'Ranks frozen':'Not ranked yet'):`${sbOrdinal(me.pos)} of ${me.of}`);
-function sbApply(d){
-const me=d.me;
-if(me){
-const place=sbPlace(me,d.phase);
-sbText($('[data-k="score"]',sb.root),String(me.score));
-sbText($('[data-k="place"]',sb.root),place);
-if(sb.place!==null&&sb.place!==place&&me.pos!==null)announce(`Your studio is now ${place}.`);
-sb.place=place;
-}
-showBanner(d.banner);
-}
-async function sbLoad(){
-const r=await scoreboard(sb.etag);
-if(!r.ok)return false;
-if(r.notModified||!r.data)return true;
-sb.etag=r.etag||sb.etag;
-sbApply(r.data);
-const has=r.data.total>0;
-if(has!==!!sb.list){location.reload();return true;}
-if(has&&r.data.rows_sig!==sb.sig){
-await sbSwapRows(r.data.rows_sig);
-}
-return true;
-}
-function initScoreboard(){
-sb.root=$('[data-sb]');
-if(!sb.root)return;
-sb.list=$('[data-rows]',sb.root);
-sb.sig=sb.list?sb.list.dataset.sig:null;
-const own=$('[data-k="place"]',sb.root);
-sb.place=own?own.textContent:null;
-followTicks({ver:Number(sb.root.dataset.ver),onChange:sbLoad});
+function initAccount(){
+const btn=$('[data-copy]');
+if(!btn)return;
+const code=$('[data-invite]');
+const out=$('[data-copy-msg]');
+btn.addEventListener('click',async()=>{
+const how=await copyText(code.textContent.trim(),code);
+out.textContent=how==='copied'?'Copied. Paste it to your teammate.':'Selected. Press Ctrl+C (or Cmd+C) to copy it.';
+sfx('tada');
+});
 }
 function run(name,fn){
 try{fn();}catch(err){console.error(`[l3m0n] ${name} failed`,err);}
@@ -1212,5 +1146,5 @@ run('dialog',initDialog);
 run('prefs',initPrefs);
 run('shell',initShell);
 run('keys',initKeys);
-run('scoreboard',initScoreboard);
+run('account',initAccount);
 })();

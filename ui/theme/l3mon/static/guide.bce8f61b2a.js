@@ -827,10 +827,19 @@ const nf={all:[],ver:null,loading:false,again:false,prev:null};
 let initial=true;
 const nfSeen=()=>{
 const[a,b,c='']=String(store.get('seen','0')).split(':');
-return{id:Math.max(0,Number(a)||0),ver:b!==undefined?Number(b):null,acks:new Set(c?c.split(',').map(Number):[])};
+return{
+id:Math.max(0,Number(a)||0),
+ver:b!==undefined?Number(b):null,
+acks:new Set(c?c.split(',').map(Number).filter((n)=>n>0):[])
+};
 };
 const nfMax=()=>nf.all.reduce((m,n)=>Math.max(m,n.id),0);
 const nfUnread=()=>nf.all.filter((n)=>n.id>nfSeen().id).length;
+function saveAckAlerts(ids){
+const s=nfSeen();
+for(const id of ids)if(id>0)s.acks.add(id);
+store.set('seen',`${s.id}:${s.ver??0}:${[...s.acks].join(',')}`);
+}
 function nfBadge(){
 const n=nfUnread();
 const text=n>9?'9+':String(n);
@@ -844,39 +853,41 @@ for(const bell of $$('[data-notif]'))bell.setAttribute('aria-label',n?`Notificat
 if(nf.prev!==null&&n>nf.prev&&!$('[data-board]'))announce(`${n} unread notification${n===1?'':'s'}.`);
 nf.prev=n;
 }
-const notifKind=(t='')=>/^\[(?:alert|urg|crit)/i.test(t)||/warn|alert|urg|crit/i.test(t)?'urgent':/^\[(?:back|sil|upd)/i.test(t)?'background':/^\[(?:toast|rel)/i.test(t)||/air|prog|rel/i.test(t)?'release':'general';
+const notifKind=(t='')=>
+/^\[(?:ann|alert|urg|crit)/i.test(t)||/announc|warn|alert|urg|crit/i.test(t)
+?'urgent'
+:/^\[(?:back|sil|upd)/i.test(t)
+?'background'
+:/^\[(?:toast|rel)/i.test(t)||/air|prog|rel/i.test(t)
+?'release'
+:'general';
 const cleanTitle=(t='')=>String(t||'News').replace(/^\[[\w-]+\]\s*/i,'').trim()||'News';
-function saveAckAlerts(ids){
-const s=nfSeen();
-for(const id of ids)if(id>0)s.acks.add(id);
-store.set('seen',`${s.id}:${s.ver??0}:${[...s.acks].join(',')}`);
-}
-function openAlertDialog(alerts){
-if(!alerts?.length)return;
+function openAlertDialog(alert,allUnackIds=[]){
+if(!alert)return;
 const dlg=$('[data-dlg]');
 if(!dlg?.showModal)return;
-const ids=alerts.map((a)=>a.id);
+const idsToAck=allUnackIds.length?allUnackIds:[alert.id];
 const btn=$('[data-dlg-close]',dlg);
 const prev=btn?.textContent||'Close';
 dlg.classList.add('dlg-alert');
 if(btn)btn.textContent='Acknowledge';
-dlg.addEventListener('close',()=>{
-saveAckAlerts(ids);
+const finish=()=>{
+saveAckAlerts(idsToAck);
 dlg.classList.remove('dlg-alert');
 if(btn)btn.textContent=prev;
-},{once:true});
-openDialog('CRITICAL ALERT',(body)=>{
-for(const a of alerts){
+};
+dlg.addEventListener('close',finish,{once:true});
+btn?.addEventListener('click',finish,{once:true});
+openDialog('Announcement',(body)=>{
 const b=mk('div','nt-alert-box');
 const h=mk('div','nt-alert-hdr');
-h.append(mk('span','nt-tag nt-tag-urgent','ALERT'),mk('b','nt-alert-title',cleanTitle(a.title)));
-b.append(h,mk('p','nt-alert-content',a.content||''));
+h.append(mk('span','nt-tag nt-tag-urgent','ANNOUNCEMENT'),mk('b','nt-alert-title',cleanTitle(alert.title)));
+b.append(h,mk('p','nt-alert-content',alert.content||''));
 body.append(b);
-}
 });
 sfx('bonk');
 setTimeout(()=>sfx('ding'),120);
-announce(`Alert: ${alerts.map((a)=>cleanTitle(a.title)).join('. ')}`);
+announce(`Announcement: ${cleanTitle(alert.title)}`);
 }
 async function nfLoad(){
 if(nf.loading){nf.again=true;return;}
@@ -897,7 +908,10 @@ nf.all.sort((a,b)=>a.id-b.id);
 nfBadge();
 const acks=nfSeen().acks;
 const unack=nf.all.filter((n)=>notifKind(n.title)==='urgent'&&!acks.has(n.id));
-if(unack.length)openAlertDialog(unack);
+if(unack.length){
+const latest=unack[unack.length-1];
+openAlertDialog(latest,unack.map((a)=>a.id));
+}
 if(fresh.length){
 for(const it of fresh){
 const k=notifKind(it.title);
@@ -918,7 +932,7 @@ nf.loading=false;
 if(nf.again){nf.again=false;nfLoad();}
 }
 }
-const TAGS={urgent:'ALERT',release:'RELEASE',background:'UPDATE'};
+const TAGS={urgent:'ANNOUNCEMENT',release:'RELEASE',background:'UPDATE'};
 function nfOpen(bell){
 const s=nfSeen();
 store.set('seen',`${nfMax()}:${nf.ver??0}:${[...s.acks].join(',')}`);
@@ -942,8 +956,7 @@ body.append(list,p);
 },bell);
 }
 function nfRestarted(v){
-const s=nfSeen();
-return(nf.ver!==null&&v<nf.ver)||(s.ver!==null&&v<s.ver);
+return v===0&&(nf.ver>0||nfSeen().ver>0);
 }
 function initNotif(){
 for(const bell of $$('[data-notif]')){
@@ -956,7 +969,12 @@ nfOpen(bell);
 on('net',(r)=>{
 const v=r?.ok&&r.data&&!Array.isArray(r.data)?r.data.notif_ver:undefined;
 if(!Number.isFinite(v))return;
-if(nfRestarted(v)){nf.all=[];nf.prev=null;store.set('seen',`0:${v}`);}
+if(nfRestarted(v)){
+const s=nfSeen();
+nf.all=[];
+nf.prev=null;
+store.set('seen',`0:${v}:${[...s.acks].join(',')}`);
+}
 if(nf.ver===null||v!==nf.ver){nf.ver=v;nfLoad();}
 });
 nfLoad();
@@ -1110,6 +1128,175 @@ let ended=false;
 on('net',(r)=>{if(!ended&&r.error&&r.error.code==='auth_required'){ended=true;sessionEnded();}});
 document.addEventListener('visibilitychange',()=>audioVisibility(document.hidden));
 }
+const POLL_MS=15000;
+const IDLE_MS=180000;
+function followTicks({ver,onChange}){
+const s={ver,own:undefined,timer:0,last:Date.now(),busy:false};
+const schedule=()=>{
+clearTimeout(s.timer);
+if(document.hidden)return;
+const idle=Date.now()-s.last>IDLE_MS;
+s.timer=setTimeout(poll,idle?60000:POLL_MS+Math.round(Math.random()*6000-3000));
+};
+async function poll(){
+if(s.busy)return;
+s.busy=true;
+try{
+const t=await ticks();
+if(t.ok&&t.data){
+const moved=t.data.ver!==s.ver||(s.own!==undefined&&t.data.own!==s.own);
+if(s.own===undefined)s.own=t.data.own;
+if(moved&&(await onChange(t.data.ver))){s.ver=t.data.ver;s.own=t.data.own;}
+}
+}finally{s.busy=false;}
+schedule();
+}
+const touch=()=>{s.last=Date.now();};
+for(const evt of['pointerdown','keydown','scroll'])addEventListener(evt,touch,{passive:true,capture:true});
+document.addEventListener('visibilitychange',()=>{if(document.hidden)clearTimeout(s.timer);else poll();});
+schedule();
+return{poll};
+}
+function showBanner(b){
+const slot=$('[data-banner-slot]');
+if(!slot)return;
+const cur=$('[data-banner]',slot);
+if(!b){if(cur)cur.remove();return;}
+if(cur&&cur.dataset.banner===b.id)return;
+const p=mk('p',`banner ${b.cls}`);
+p.dataset.banner=b.id;
+p.append(mk('b','banner-lead',b.lead),` ${b.text}`);
+slot.replaceChildren(p);
+}
+const gd={root:null,grid:null,etag:null,epgTag:null,sig:null};
+const gdOrdinal=(n)=>{
+const k=n%100;
+return k>=11&&k<=13?`${n}th`:`${n}${({1:'st',2:'nd',3:'rd'})[n%10]||'th'}`;
+};
+const gdPct=(a,b)=>(b>0?Math.round((a/b)*100):0);
+function gdText(el,text){
+if(el&&el.textContent!==text)el.textContent=text;
+}
+function gdBar(el,pct){
+if(!el)return;
+for(const c of[...el.classList])if(/^pv-\d+$/.test(c))el.classList.remove(c);
+el.classList.add(`pv-${Math.max(0,Math.min(100,pct))}`);
+}
+function gdCount(el,to){
+if(!el)return;
+const from=Number(el.textContent);
+if(!Number.isFinite(from)||from===to||reduced()||document.hidden){el.textContent=String(to);return;}
+const token={};
+el.gdToken=token;
+const done=()=>{if(el.gdToken===token)el.textContent=String(to);};
+const t0=performance.now();
+const step=(t)=>{
+if(el.gdToken!==token)return;
+const k=Math.min(1,(t-t0)/700);
+if(k>=1){done();return;}
+el.textContent=String(Math.round(from+(to-from)*(1-(1-k)**3)));
+requestAnimationFrame(step);
+};
+requestAnimationFrame(step);
+setTimeout(done,760);
+}
+async function gdSwapGrid(sig){
+if(!gd.grid)return;
+const r=await guideEpg(gd.epgTag);
+if(r.ok&&r.notModified){gd.sig=sig;return;}
+if(!r.ok||typeof r.html!=='string')return;
+gd.epgTag=r.etag||gd.epgTag;
+const doc=new DOMParser().parseFromString(`<body>${r.html}</body>`,'text/html');
+const rows=$$('.epg-row',doc.body).map((row)=>document.importNode(row,true));
+const before=$$('.epg-b',gd.grid).length;
+const focused=document.activeElement&&gd.grid.contains(document.activeElement)?document.activeElement.getAttribute('href'):null;
+for(const row of rows)row.classList.add('swapped');
+gd.grid.replaceChildren(...rows);
+if(focused){const again=$$('.epg-b',gd.grid).find((a)=>a.getAttribute('href')===focused);if(again)again.focus({preventScroll:true});}
+gd.grid.dataset.sig=sig;
+gd.sig=sig;
+const after=$$('.epg-b',gd.grid).length;
+if(after>before)announce(`${after-before} new programme${after-before===1?' is':'s are'} on air.`);
+}
+function gdMembers(list){
+const lis=[];
+if($$('.gd-mem',gd.root).some((li)=>!list.some((m)=>String(m.id)===li.dataset.uid))){location.reload();return;}
+for(const m of list){
+const li=$(`.gd-mem[data-uid="${m.id}"]`,gd.root);
+if(!li){location.reload();return;}
+gdText($('[data-k="msolves"]',li),`${m.solves} ${m.solves===1?'solve':'solves'}`);
+gdText($('[data-k="mtrp"]',li),String(m.trp));
+gdBar($('.gd-mbar',li),m.pct);
+lis.push(li);
+}
+const ul=lis.length?lis[0].parentElement:null;
+if(ul&&lis.some((li,i)=>ul.children[i]!==li)){
+for(const li of lis)li.classList.add('swapped');
+ul.append(...lis);
+}
+}
+function gdCrew(t){
+const stat=$('[data-k="bonus"]',gd.root);
+const bonus=Number(t.bonus)||0;
+const items=$$('.gd-note-list li',gd.root);
+const notes=t.notes||[];
+const shown=items.map((li)=>`${$('b',li).textContent}\u0001${$('span',li).textContent}`).join('\u0002');
+const asked=notes.map((n)=>`${n.title}\u0001${n.content}`).join('\u0002');
+if((bonus!==0)!==!!stat||shown!==asked){location.reload();return true;}
+gdText(stat,`${bonus>0?'+':''}${bonus}`);
+return false;
+}
+function gdApply(d){
+const root=gd.root;
+const t=d.team;
+if(t){
+gdCount($('[data-k="score"]',root),t.score);
+gdText($('[data-k="place"]',root),t.place===null?(d.phase&&d.phase.frozen?'Ranks frozen':'Not ranked yet'):`${gdOrdinal(t.place)} of ${t.of}`);
+gdText($('[data-k="solves"]',root),String(t.solves));
+gdText($('[data-k="hints"]',root),String(t.hints_used));
+gdText($('[data-k="live"]',root),String(t.instances_live));
+gdMembers(t.members||[]);
+if(gdCrew(t))return;
+for(const c of t.by_channel){
+const li=$(`.gd-ch[data-ch="${c.channel}"]`,root);
+if(!li)continue;
+gdText($('[data-k="chn"]',li),`${c.solved} of ${c.total}`);
+gdBar($('[data-bar]',li),gdPct(c.solved,c.total));
+}
+}
+const s=d.story;
+const meter=$('[data-meter]',root);
+if(s&&meter){
+gdText($('[data-k="reels"]',root),String(s.reels));
+gdText($('[data-k="needed"]',root),String(s.reels_needed));
+gdText($('[data-k="air"]',root),String(Math.round(s.on_air*100)));
+meter.setAttribute('aria-valuenow',String(s.reels));
+meter.setAttribute('aria-valuemax',String(s.reels_needed));
+meter.setAttribute('aria-valuetext',`${s.reels} of ${s.reels_needed} reels`);
+gdBar(meter,gdPct(s.reels,s.reels_needed));
+}
+showBanner(d.banner);
+}
+async function gdLoad(){
+const r=await guide(gd.etag);
+if(!r.ok)return false;
+if(r.notModified||!r.data)return true;
+gd.etag=r.etag||gd.etag;
+gdApply(r.data);
+const grid=!!r.data.phase&&r.data.phase.state!=='before';
+if(grid!==!!gd.grid){location.reload();return true;}
+if(grid&&r.data.epg_sig!==gd.sig)await gdSwapGrid(r.data.epg_sig);
+return true;
+}
+function initGuide(){
+gd.root=$('[data-guide]');
+if(!gd.root)return;
+gd.grid=$('[data-epg]',gd.root);
+gd.sig=gd.grid?gd.grid.dataset.sig:null;
+const chan=$('[data-chan]',gd.root);
+if(chan&&location.hash==='#channels')chan.open=true;
+followTicks({ver:Number(gd.root.dataset.ver),onChange:gdLoad});
+}
 function run(name,fn){
 try{fn();}catch(err){console.error(`[l3m0n] ${name} failed`,err);}
 }
@@ -1117,4 +1304,5 @@ run('dialog',initDialog);
 run('prefs',initPrefs);
 run('shell',initShell);
 run('keys',initKeys);
+run('guide',initGuide);
 })();

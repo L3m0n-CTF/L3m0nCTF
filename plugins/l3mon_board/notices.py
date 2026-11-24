@@ -83,8 +83,8 @@ def _tag_notification(mapper, connection, target):
             pass
     if req_type:
         p = str(req_type).strip().upper()
-        if p in ("ALERT", "URGENT"):
-            target.title = f"[ALERT] {target.title}"
+        if p in ("ALERT", "URGENT", "ANNOUNCEMENT", "ANNOUNCE"):
+            target.title = f"[ANNOUNCEMENT] {target.title}"
         elif p in ("BACKGROUND", "SILENT", "UPDATE"):
             target.title = f"[BACKGROUND] {target.title}"
         elif p in ("TOAST", "RELEASE"):
