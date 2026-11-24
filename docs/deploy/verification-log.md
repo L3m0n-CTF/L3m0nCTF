@@ -717,3 +717,37 @@ Commit `2bb5ae3`, all ten CI jobs green (run 43845358303). The crew see what is 
 **Challenge host:** `l3mon-chal` started, rebuilt from the tag (`chal-from-tag.sh`; the agent now logs "Instance lifetime: at most 15 minutes, 0 renewal(s) allowed"), the real-host proof run: **108 passed, 1 failed, 0 warnings**, the failure being the proof tool's own address check, written before the https change of 22 Nov (it still expected `http://`); fixed in `real_host_proof.py` (branch `lead/proof-https-check`), the web group re-run on the host: 15 of 15, so the full proof is 109 of 109. It shows on the real host: a renewal is refused with 409 `renew_limit` and a message that says to start a new one, and an instance started from a manifest that says 45 minutes has 898 seconds left (the 15-minute ceiling). The VM was **stopped again** afterwards (its state before: the owner is testing by hand and starts it himself); the public TCP rule stays disabled.
 
 **Not exercised since the deploy:** the demo round through the platform with the 15-minute rule (needs the player gate closed: the owner's yes), the channel bonus on a real channel (needs challenges on production), and the Renew button on the page (still shown; a press answers "NOT YET"). **Unconfirmed by the owner:** the bonus amount (100 TRP, the lead's choice).
+
+## 2026-11-24: `release-2026-11-24a` DEPLOYED (Critical Alert modal, Toast, and Background notification tiers across play & crew)
+
+**The owner's request:** Differentiate notifications into three tiers:
+1. **Critical Alert**: an alert modal dialog (`<dialog class="dlg dlg-alert">`) that traps focus and requires the player to close or acknowledge before proceeding further on the platform, with sound cues (`bonk` + `ding`).
+2. **Toast**: standard floating toast dismissing after 5 seconds with audio chime.
+3. **Background**: silent update incrementing the bell badge counter (`[data-notif-n]`) and prepending to the ticker crawl without toast, popup, or sound.
+Must reflect on both `crew.l3m0nctf.xyz` and `play.l3m0nctf.xyz`.
+
+**UI Prototype & Export:**
+- Implemented `dlg-alert` styles in `platform-ui/src/css/lists.css`.
+- Implemented `openAlertDialog(alerts)` modal dialog with "Acknowledge" button, focus trapping, and local storage acknowledgement tracking in `platform-ui/src/js/notif.js`.
+- Cleaned up `bdNotify` in `platform-ui/src/js/board.js` to eliminate redundant/conflicting toasts.
+- Updated bundle budgets and tests in `platform-ui`: 393 passed, 0 failed.
+- Exported theme assets to `L3m0nCTF/ui/theme/l3mon`.
+
+**Backend & Platform:**
+- Added automatic notification title prefix tagging (`[ALERT] `, `[BACKGROUND] `, `[TOAST] `) via SQLAlchemy event listener in `plugins/l3mon_board/notices.py`.
+- Stripped bracket tags from live ticker crawl in `plugins/l3mon_theme/pages/board.py`.
+- Unit and hygiene tests passed: 75/75 passed, 0 hygiene findings.
+- Tagged `release-2026-11-24a` on commit `6670ab3`.
+
+**Deploy (the owner's explicit "ok go ahead for deployment"):**
+- Run by `deploy-24a.sh` from 14:41 to 14:44 UTC.
+- An encrypted full backup first: 809,352 bytes shipped to `~/backups/sink/full`.
+- **1,220 accounts and 625 studios before and after, 0 challenges, the same fingerprint `eb06e4a4c4cc7993`**.
+- `verify-image` 37 of 37 checks ok.
+- 17 services up, none unhealthy.
+- Gate unchanged (`default 0;`).
+- Crew account hidden: `[('l3m0n-main-admin', True)]`.
+- Nginx `http2` in 0 places and TLS 1.2 only.
+- Mail queue: 0 (caps 290 and 450).
+- Ledger chain ok over 9,365 lines with triggers in place.
+- External checks through Cloudflare: `/readyz`, `/login`, `/healthcheck` 200; `/crew` redirects 302; new JS bundle served containing `dlg-alert`.
