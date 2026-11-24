@@ -781,3 +781,37 @@ Must reflect on both `crew.l3m0nctf.xyz` and `play.l3m0nctf.xyz`.
 - Mail queue: 0 (caps 290 and 450).
 - Ledger chain ok over 9,546 lines with triggers in place.
 - External checks through Cloudflare: `/readyz`, `/login`, `/healthcheck` 200; new JS bundle `login.f6dff969ea.js` verified live with `ANNOUNCEMENT`.
+
+## 2026-11-24 (night): `release-2026-11-24c` DEPLOYED (HTML & Markdown rendering in Announcement modal and bracket tags hidden from players)
+
+**The owner's request:** Hide bracketed tags (`[ANNOUNCEMENT]`, `[BACKGROUND]`, `[TOAST]`) from being displayed to players; enable HTML and Markdown rendering so stylized cards/text format properly in the Announcement alert modal dialog.
+
+**UI Prototype & Export:**
+- Stripped all bracket prefix tags (`^\[[\w-]+\]\s*`) from player display in titles across the Announcement modal, ticker crawl, and bell notifications drawer.
+- Removed tag badges (`ANNOUNCEMENT`) from the modal header and notification list.
+- Implemented `mdToHtml` and `renderNotifContent` with safe DOM-based sanitization (`DOMParser`):
+  - Safely unwraps `<!DOCTYPE html>`, `<html>`, `<head>`, `<body>`, and `<title>` so embedded cards render cleanly.
+  - Scopes `<style>` elements to `.nt-alert-box` and neutralizes full-screen `height: 100vh;`.
+  - Supports Markdown headings (`#`), bold (`**`), italics (`*`), links (`[text](url)`), lists (`-`, `1.`), and blockquotes (`>`).
+  - Strips `<script>`, `<iframe>`, `<object>`, `<embed>`, `<noscript>`, `on*` event handlers, and `javascript:` URLs.
+- Compressed parser to keep `shell.js` and `register.js` strictly within gzip budgets; all 21 page audits pass; 396 UI unit tests passed, 0 failed.
+- Exported 43 theme files to `ui/theme/l3mon`.
+
+**Backend & Platform:**
+- Removed auto `[ANNOUNCEMENT]` title prefixing in `plugins/l3mon_board/notices.py` so database stores clean titles.
+- Intercepted `app.events_manager.publish` to publish SSE events with `type: "alert"`.
+- Unit tests and hygiene passed (0 findings).
+- Tagged `release-2026-11-24c` on commit `7df30bb`.
+
+**Deploy (the owner's explicit "go deploy"):**
+- Run by `deploy-24a.sh` from 17:08 to 17:10 UTC (22:38 to 22:40 IST).
+- Encrypted full backup: 840,072 bytes shipped to `~/backups/sink/full`.
+- **1,243 accounts and 635 studios before (1,244 / 636 after due to a live signup), 0 challenges, 0 solves**.
+- `verify-image` 37 of 37 checks ok.
+- 17 services up, none unhealthy.
+- Gate unchanged (`default 0;`).
+- Crew account hidden: `[('l3m0n-main-admin', True)]`.
+- Nginx `http2` in 0 places and TLS 1.2 only.
+- Mail queue: 0 (caps 290 and 450).
+- Ledger chain ok over 9,908 lines with triggers in place.
+- External checks through Cloudflare: `/readyz`, `/login`, `/healthcheck` 200; new JS bundles `login.ae74504486.js` and `shell.6535f66f23.js` verified live with `mdToHtml`.
