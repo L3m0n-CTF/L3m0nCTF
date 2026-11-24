@@ -27,6 +27,7 @@ from email.parser import BytesParser
 from email.policy import default
 from email.utils import formataddr, parseaddr
 from pathlib import Path
+import tempfile
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("mail-relay")
@@ -41,7 +42,7 @@ try:
     test_f.touch()
     test_f.unlink()
 except (PermissionError, OSError):
-    SPOOL_DIR = Path("/tmp/l3mon-mail")
+    SPOOL_DIR = Path(tempfile.gettempdir()) / "l3mon-mail"
     SPOOL_DIR.mkdir(parents=True, exist_ok=True)
 
 MAX_MESSAGE_BYTES = int(os.environ.get("MAX_MESSAGE_BYTES", "10485760"))  # 10 MB

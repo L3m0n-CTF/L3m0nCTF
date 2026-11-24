@@ -14,7 +14,10 @@ own view runs, for everyone but the crew:
 
 The crew keeps CTFd's own answers (they need the raw rows, and the admin pages use the event stream), and only the crew can write.
 """
-from flask import abort, request
+import re
+from flask import abort, request, has_request_context
+from sqlalchemy import event
+from CTFd.models import Notifications
 
 from CTFd.plugins.l3mon_board import envelope, news, viewer
 from CTFd.utils.user import is_admin
@@ -63,6 +66,29 @@ def after(response):
     if request.path.rstrip("/") == LIST and response.status_code == 403 and response.mimetype == "text/html":
         return envelope.fail("banned", 403, "This account has been suspended.")
     return response
+
+
+@event.listens_for(Notifications, "before_insert")
+def _tag_notification(mapper, connection, target):
+    if not target.title:
+        return
+    if re.match(r"^\[[\w-]+\]", target.title):
+        return
+    req_type = None
+    if has_request_context():
+        try:
+            data = request.get_json(silent=True) or request.form or {}
+            req_type = data.get("type") or data.get("kind")
+        except Exception:
+            pass
+    if req_type:
+        p = str(req_type).strip().upper()
+        if p in ("ALERT", "URGENT"):
+            target.title = f"[ALERT] {target.title}"
+        elif p in ("BACKGROUND", "SILENT", "UPDATE"):
+            target.title = f"[BACKGROUND] {target.title}"
+        elif p in ("TOAST", "RELEASE"):
+            target.title = f"[TOAST] {target.title}"
 
 
 def install(app):

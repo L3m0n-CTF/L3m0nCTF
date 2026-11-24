@@ -824,46 +824,104 @@ const devState=()=>apiCall('GET',ROUTES.devState,{retries:1});
 const devSet=(patch)=>apiCall('POST',ROUTES.devState,{body:patch});
 const SHOWN=20;
 const nf={all:[],ver:null,loading:false,again:false,prev:null};
+let initial=true;
 const nfSeen=()=>{
-const[a,b]=String(store.get('seen','0')).split(':');
-const id=Number(a);
-return{id:id>0?id:0,ver:b!==undefined?Number(b):null};
+const[a,b,c='']=String(store.get('seen','0')).split(':');
+return{id:Math.max(0,Number(a)||0),ver:b!==undefined?Number(b):null,acks:new Set(c?c.split(',').map(Number):[])};
 };
 const nfMax=()=>nf.all.reduce((m,n)=>Math.max(m,n.id),0);
-const nfUnread=()=>{const s=nfSeen().id;return nf.all.filter((n)=>n.id>s).length;};
+const nfUnread=()=>nf.all.filter((n)=>n.id>nfSeen().id).length;
 function nfBadge(){
 const n=nfUnread();
 const text=n>9?'9+':String(n);
 for(const b of $$('[data-notif-n]')){
-const changed=b.textContent!==text;
+const ch=b.textContent!==text;
 b.hidden=!n;
 b.textContent=n?text:'';
-if(n&&changed){b.classList.remove('pop');void b.offsetWidth;b.classList.add('pop');}
+if(n&&ch){b.classList.remove('pop');void b.offsetWidth;b.classList.add('pop');}
 }
 for(const bell of $$('[data-notif]'))bell.setAttribute('aria-label',n?`Notifications, ${n} new`:'Notifications');
 if(nf.prev!==null&&n>nf.prev&&!$('[data-board]'))announce(`${n} unread notification${n===1?'':'s'}.`);
 nf.prev=n;
 }
+const notifKind=(t='')=>/^\[(?:alert|urg|crit)/i.test(t)||/warn|alert|urg|crit/i.test(t)?'urgent':/^\[(?:back|sil|upd)/i.test(t)?'background':/^\[(?:toast|rel)/i.test(t)||/air|prog|rel/i.test(t)?'release':'general';
+const cleanTitle=(t='')=>String(t||'News').replace(/^\[[\w-]+\]\s*/i,'').trim()||'News';
+function saveAckAlerts(ids){
+const s=nfSeen();
+for(const id of ids)if(id>0)s.acks.add(id);
+store.set('seen',`${s.id}:${s.ver??0}:${[...s.acks].join(',')}`);
+}
+function openAlertDialog(alerts){
+if(!alerts?.length)return;
+const dlg=$('[data-dlg]');
+if(!dlg?.showModal)return;
+const ids=alerts.map((a)=>a.id);
+const btn=$('[data-dlg-close]',dlg);
+const prev=btn?.textContent||'Close';
+dlg.classList.add('dlg-alert');
+if(btn)btn.textContent='Acknowledge';
+dlg.addEventListener('close',()=>{
+saveAckAlerts(ids);
+dlg.classList.remove('dlg-alert');
+if(btn)btn.textContent=prev;
+},{once:true});
+openDialog('CRITICAL ALERT',(body)=>{
+for(const a of alerts){
+const b=mk('div','nt-alert-box');
+const h=mk('div','nt-alert-hdr');
+h.append(mk('span','nt-tag nt-tag-urgent','ALERT'),mk('b','nt-alert-title',cleanTitle(a.title)));
+b.append(h,mk('p','nt-alert-content',a.content||''));
+body.append(b);
+}
+});
+sfx('bonk');
+setTimeout(()=>sfx('ding'),120);
+announce(`Alert: ${alerts.map((a)=>cleanTitle(a.title)).join('. ')}`);
+}
 async function nfLoad(){
 if(nf.loading){nf.again=true;return;}
 nf.loading=true;
 try{
-const since=nfMax();
-const r=await notifications(since);
+const r=await notifications(nfMax());
 if(r.ok&&Array.isArray(r.data)){
 const have=new Set(nf.all.map((n)=>n.id));
-for(const n of r.data)if(Number.isInteger(n.id)&&!have.has(n.id))nf.all.push({id:n.id,title:String(n.title||'News'),content:String(n.content||'')});
+const fresh=[];
+for(const n of r.data){
+if(Number.isInteger(n.id)&&!have.has(n.id)){
+const it={id:n.id,title:String(n.title||'News'),content:String(n.content||'')};
+nf.all.push(it);
+fresh.push(it);
+}
+}
 nf.all.sort((a,b)=>a.id-b.id);
 nfBadge();
+const acks=nfSeen().acks;
+const unack=nf.all.filter((n)=>notifKind(n.title)==='urgent'&&!acks.has(n.id));
+if(unack.length)openAlertDialog(unack);
+if(fresh.length){
+for(const it of fresh){
+const k=notifKind(it.title);
+const line=`${cleanTitle(it.title).toUpperCase()}. ${it.content||''}`.trim();
+for(const list of $$('[data-crawl] .crawl-list'))list.prepend(mk('li',null,line));
+if(!initial&&k!=='urgent'&&k!=='background'){
+const el=$('[data-toast]');
+if(el)el.className=`toast toast-fixed show toast-${k}`;
+toast(line,5000);
+sfx(k==='release'?'tada':'ding');
+}
+}
+}
+initial=false;
 }
 }finally{
 nf.loading=false;
 if(nf.again){nf.again=false;nfLoad();}
 }
 }
-const notifKind=(t='')=>/warn|alert|urg|crit/i.test(t)?'urgent':/air|prog|rel/i.test(t)?'release':'general';
+const TAGS={urgent:'ALERT',release:'RELEASE',background:'UPDATE'};
 function nfOpen(bell){
-store.set('seen',`${nfMax()}:${nf.ver??0}`);
+const s=nfSeen();
+store.set('seen',`${nfMax()}:${nf.ver??0}:${[...s.acks].join(',')}`);
 nfBadge();
 openDialog('Notifications',(body)=>{
 const items=[...nf.all].reverse().slice(0,SHOWN);
@@ -872,7 +930,7 @@ const list=mk('ul','nt-dlg');
 for(const n of items){
 const k=notifKind(n.title);
 const li=mk('li','nt-'+k);
-li.append(mk('span','nt-tag nt-tag-'+k,k==='urgent'?'ALERT':k==='release'?'RELEASE':'NEWS'),' ',mk('b','nt-t',n.title));
+li.append(mk('span','nt-tag nt-tag-'+k,TAGS[k]||'NEWS'),' ',mk('b','nt-t',cleanTitle(n.title)));
 if(n.content)li.append(' ',mk('span','nt-c',n.content));
 list.append(li);
 }
@@ -888,9 +946,7 @@ const s=nfSeen();
 return(nf.ver!==null&&v<nf.ver)||(s.ver!==null&&v<s.ver);
 }
 function initNotif(){
-const bells=$$('[data-notif]');
-if(!bells.length)return;
-for(const bell of bells){
+for(const bell of $$('[data-notif]')){
 bell.addEventListener('click',(e)=>{
 if(e.defaultPrevented||e.button!==0||e.metaKey||e.ctrlKey||e.shiftKey||e.altKey)return;
 e.preventDefault();
@@ -898,11 +954,10 @@ nfOpen(bell);
 });
 }
 on('net',(r)=>{
-const v=r&&r.ok&&r.data&&!Array.isArray(r.data)?r.data.notif_ver:undefined;
+const v=r?.ok&&r.data&&!Array.isArray(r.data)?r.data.notif_ver:undefined;
 if(!Number.isFinite(v))return;
-const first=nf.ver===null;
 if(nfRestarted(v)){nf.all=[];nf.prev=null;store.set('seen',`0:${v}`);}
-if(first||v!==nf.ver){nf.ver=v;nfLoad();}
+if(nf.ver===null||v!==nf.ver){nf.ver=v;nfLoad();}
 });
 nfLoad();
 }
@@ -2594,19 +2649,6 @@ async function bdNotify(since=bd.notifId){
 const r=await notifications(since);
 if(!r.ok||!Array.isArray(r.data)||!r.data.length)return;
 for(const n of r.data)bd.notifId=Math.max(bd.notifId,Number(n.id)||0);
-const last=r.data[r.data.length-1];
-const kind=notifKind(last.title);
-const line=`${String(last.title||'News').toUpperCase()}. ${last.content||''}`.trim();
-const el=$('[data-toast]');
-if(el){
-el.classList.remove('toast-release','toast-urgent','toast-general');
-el.classList.add(`toast-${kind}`);
-}
-toast(line);
-if(kind==='urgent'){sfx('bonk');setTimeout(()=>sfx('ding'),120);}
-else if(kind==='release')sfx('tada');
-else sfx('ding');
-for(const list of $$('[data-crawl] .crawl-list'))list.prepend(mk('li',null,line));
 }
 function bdPolling(){
 document.addEventListener('visibilitychange',()=>{

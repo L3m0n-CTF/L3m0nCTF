@@ -373,3 +373,24 @@ def test_the_guarded_paths_still_ask(play, path):
     with mock.patch.object(notices, "is_admin", wraps=notices.is_admin) as asked:
         play.alice.get(path)
     assert asked.call_count >= 1, path
+
+
+def test_notification_type_tagging_via_api(play):
+    r = play.admin.post(LIST, json={"title": "Emergency Reboot", "content": "Save your work", "type": "alert"})
+    assert r.status_code == 200
+    alert_row = Notifications.query.filter_by(content="Save your work").one()
+    assert alert_row.title == "[ALERT] Emergency Reboot"
+
+    r2 = play.admin.post(LIST, json={"title": "Score Sync", "content": "Recalculated", "type": "background"})
+    assert r2.status_code == 200
+    bg_row = Notifications.query.filter_by(content="Recalculated").one()
+    assert bg_row.title == "[BACKGROUND] Score Sync"
+
+    r3 = play.admin.post(LIST, json={"title": "[TOAST] Hint Released", "content": "Check chal 1", "type": "alert"})
+    assert r3.status_code == 200
+    toast_row = Notifications.query.filter_by(content="Check chal 1").one()
+    assert toast_row.title == "[TOAST] Hint Released"
+
+    got = items(play.alice)
+    assert all(sorted(i) == ["content", "id", "title"] for i in got)
+

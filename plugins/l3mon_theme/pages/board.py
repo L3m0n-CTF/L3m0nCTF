@@ -435,7 +435,8 @@ def crawl_text(lines):
     """The crawl's lines from public notifications (oldest first, `[{title, content}]`): the newest first, each "title: text" (or the title alone)."""
     out = []
     for n in notice_lines(lines)[:CRAWL_LINES]:
-        out.append(f"{n['title']}: {n['content']}" if n["content"] else n["title"])
+        clean_title = re.sub(r"^\[[\w-]+\]\s*", "", n["title"] or "")
+        out.append(f"{clean_title}: {n['content']}" if n["content"] else clean_title)
     return out
 
 
