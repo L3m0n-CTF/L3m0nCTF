@@ -211,7 +211,9 @@ function initDialog(){
 const dlg=$('[data-dlg]');
 if(!dlg)return;
 $('[data-dlg-close]',dlg).addEventListener('click',()=>dlg.close());
-dlg.addEventListener('click',(e)=>{if(e.target===dlg)dlg.close();});
+dlg.addEventListener('click',(e)=>{
+if(e.target===dlg&&!dlg.classList.contains('dlg-alert'))dlg.close();
+});
 dlg.addEventListener('close',()=>{
 const o=dlg.opener;
 if(o&&o.focus&&document.contains(o))o.focus({preventScroll:true});
@@ -830,7 +832,7 @@ const[a,b,c='']=String(store.get('seen','0')).split(':');
 return{
 id:Math.max(0,Number(a)||0),
 ver:b!==undefined?Number(b):null,
-acks:new Set(c?c.split(',').map(Number).filter((n)=>n>0):[])
+acks:new Set(c?c.split(',').map(Number).filter(Boolean):[])
 };
 };
 const nfMax=()=>nf.all.reduce((m,n)=>Math.max(m,n.id),0);
@@ -838,7 +840,7 @@ const nfUnread=()=>nf.all.filter((n)=>n.id>nfSeen().id).length;
 function saveAckAlerts(ids){
 const s=nfSeen();
 for(const id of ids)if(id>0)s.acks.add(id);
-store.set('seen',`${s.id}:${s.ver??0}:${[...s.acks].join(',')}`);
+store.set('seen',`${s.id}:${s.ver??0}:${[...s.acks]}`);
 }
 function nfBadge(){
 const n=nfUnread();
@@ -854,40 +856,67 @@ if(nf.prev!==null&&n>nf.prev&&!$('[data-board]'))announce(`${n} unread notificat
 nf.prev=n;
 }
 const notifKind=(t='')=>
-/^\[(?:ann|alert|urg|crit)/i.test(t)||/announc|warn|alert|urg|crit/i.test(t)
-?'urgent'
-:/^\[(?:back|sil|upd)/i.test(t)
-?'background'
-:/^\[(?:toast|rel)/i.test(t)||/air|prog|rel/i.test(t)
-?'release'
-:'general';
-const cleanTitle=(t='')=>String(t||'News').replace(/^\[[\w-]+\]\s*/i,'').trim()||'News';
+/^\[(?:back|sil|upd)/i.test(t)?'background':/^\[(?:toast|rel)/i.test(t)?'release':'urgent';
+const cleanTitle=(t='')=>
+String(t||'News').replace(/^\[[\w-]+\]\s*/i,'').trim()||'News';
+function mdToHtml(m){
+let s=String(m||'').replace(/<title[^>]*>[\s\S]*?<\/title>/gi,'').replace(/<!DOCTYPE[^>]*>|<\/?(?:html|head|body|meta)[^>]*>/gi,'');
+if(!s.trim())return'';
+s=s.replace(/<style[^>]*>([\s\S]*?)<\/style>/gi,(_,c)=>`<style>${c.replace(/\bbody\b/g,'.nt-alert-box').replace(/height\s*:\s*100vh;?/gi,'')}</style>`)
+.replace(/^(#{1,6})\s+(.+)$/gm,(_,h,t)=>`<h${h.length}>${t.trim()}</h${h.length}>`)
+.replace(/^>\s+(.+)$/gm,'<blockquote>$1</blockquote>')
+.replace(/\*\*([^*\n]+)\*\*/g,'<strong>$1</strong>')
+.replace(/\*([^*\n]+)\*/g,'<em>$1</em>')
+.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g,'<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>')
+.replace(/^[-*]\s+(.+)$/gm,'<li>$1</li>')
+.replace(/(?:^|\n)(<li>.*?<\/li>(?:\n<li>.*?<\/li>)*)/g,(_,m)=>`\n<ul>${m}</ul>`);
+return(/<\/?(?:div|p|h[1-6]|ul|ol|li|pre|blockquote|style|table)\b/i.test(s)?s:s.split(/\n{2,}/).map((p)=>`<p>${p.replace(/\n/g,'<br>')}</p>`).join('')).trim();
+}
+function renderNotifContent(c,raw){
+if(!raw)return;
+const h=mdToHtml(raw);
+if(!h)return;
+try{
+const doc=new DOMParser().parseFromString(h,'text/html');
+for(const b of doc.querySelectorAll('script,iframe,object,embed,noscript'))b.remove();
+for(const n of doc.querySelectorAll('*')){
+for(const a of[...n.attributes])if(/^on/i.test(a.name)||/javascript:/i.test(a.value))n.removeAttribute(a.name);
+if(n.tagName==='A'){n.target='_blank';n.rel='noopener noreferrer';}
+}
+c.append(...doc.body.childNodes);
+}catch{
+c.textContent=raw;
+}
+}
 function openAlertDialog(alert,allUnackIds=[]){
 if(!alert)return;
 const dlg=$('[data-dlg]');
 if(!dlg?.showModal)return;
-const idsToAck=allUnackIds.length?allUnackIds:[alert.id];
+const ids=allUnackIds.length?allUnackIds:[alert.id];
 const btn=$('[data-dlg-close]',dlg);
 const prev=btn?.textContent||'Close';
 dlg.classList.add('dlg-alert');
 if(btn)btn.textContent='Acknowledge';
 const finish=()=>{
-saveAckAlerts(idsToAck);
+saveAckAlerts(ids);
 dlg.classList.remove('dlg-alert');
 if(btn)btn.textContent=prev;
 };
 dlg.addEventListener('close',finish,{once:true});
 btn?.addEventListener('click',finish,{once:true});
+const title=cleanTitle(alert.title);
 openDialog('Announcement',(body)=>{
 const b=mk('div','nt-alert-box');
 const h=mk('div','nt-alert-hdr');
-h.append(mk('span','nt-tag nt-tag-urgent','ANNOUNCEMENT'),mk('b','nt-alert-title',cleanTitle(alert.title)));
-b.append(h,mk('p','nt-alert-content',alert.content||''));
+h.append(mk('b','nt-alert-title',title));
+const c=mk('div','nt-alert-content');
+renderNotifContent(c,alert.content);
+b.append(h,c);
 body.append(b);
 });
 sfx('bonk');
 setTimeout(()=>sfx('ding'),120);
-announce(`Announcement: ${cleanTitle(alert.title)}`);
+announce(`Announcement: ${title}`);
 }
 async function nfLoad(){
 if(nf.loading){nf.again=true;return;}
@@ -932,10 +961,9 @@ nf.loading=false;
 if(nf.again){nf.again=false;nfLoad();}
 }
 }
-const TAGS={urgent:'ANNOUNCEMENT',release:'RELEASE',background:'UPDATE'};
 function nfOpen(bell){
 const s=nfSeen();
-store.set('seen',`${nfMax()}:${nf.ver??0}:${[...s.acks].join(',')}`);
+store.set('seen',`${nfMax()}:${nf.ver??0}:${[...s.acks]}`);
 nfBadge();
 openDialog('Notifications',(body)=>{
 const items=[...nf.all].reverse().slice(0,SHOWN);
@@ -944,8 +972,12 @@ const list=mk('ul','nt-dlg');
 for(const n of items){
 const k=notifKind(n.title);
 const li=mk('li','nt-'+k);
-li.append(mk('span','nt-tag nt-tag-'+k,TAGS[k]||'NEWS'),' ',mk('b','nt-t',cleanTitle(n.title)));
-if(n.content)li.append(' ',mk('span','nt-c',n.content));
+li.append(mk('b','nt-t',cleanTitle(n.title)));
+if(n.content){
+const c=mk('div','nt-c');
+renderNotifContent(c,n.content);
+li.append(c);
+}
 list.append(li);
 }
 const more=mk('a','nt-all','Open the full list');
@@ -973,7 +1005,7 @@ if(nfRestarted(v)){
 const s=nfSeen();
 nf.all=[];
 nf.prev=null;
-store.set('seen',`0:${v}:${[...s.acks].join(',')}`);
+store.set('seen',`0:${v}:${[...s.acks]}`);
 }
 if(nf.ver===null||v!==nf.ver){nf.ver=v;nfLoad();}
 });

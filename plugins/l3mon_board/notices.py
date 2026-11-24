@@ -71,7 +71,7 @@ def after(response):
 @event.listens_for(Notifications, "before_insert")
 def _tag_notification(mapper, connection, target):
     if not target.title:
-        return
+        target.title = "Announcement"
     if re.match(r"^\[[\w-]+\]", target.title):
         return
     req_type = None
@@ -81,14 +81,11 @@ def _tag_notification(mapper, connection, target):
             req_type = data.get("type") or data.get("kind")
         except Exception:
             pass
-    if req_type:
-        p = str(req_type).strip().upper()
-        if p in ("ALERT", "URGENT", "ANNOUNCEMENT", "ANNOUNCE"):
-            target.title = f"[ANNOUNCEMENT] {target.title}"
-        elif p in ("BACKGROUND", "SILENT", "UPDATE"):
-            target.title = f"[BACKGROUND] {target.title}"
-        elif p in ("TOAST", "RELEASE"):
-            target.title = f"[TOAST] {target.title}"
+    p = str(req_type or "").strip().upper()
+    if p in ("BACKGROUND", "SILENT", "UPDATE"):
+        target.title = f"[BACKGROUND] {target.title}"
+    elif p in ("TOAST", "RELEASE"):
+        target.title = f"[TOAST] {target.title}"
 
 
 def install(app):
@@ -96,3 +93,28 @@ def install(app):
         app.extensions["l3mon_board_notices"] = True
         app.before_request(guard)
         app.after_request(after)
+
+        try:
+            from CTFd.forms.notifications import NotificationForm
+            NotificationForm.type.kwargs["default"] = "alert"
+        except Exception:
+            pass
+
+        if hasattr(app, "events_manager") and hasattr(app.events_manager, "publish"):
+            orig_publish = app.events_manager.publish
+
+            def publish_wrapper(*args, **kwargs):
+                data = kwargs.get("data")
+                if data is None and args:
+                    data = args[0]
+                if isinstance(data, dict):
+                    title = str(data.get("title") or "")
+                    if title.startswith("[TOAST]"):
+                        data["type"] = "toast"
+                    elif title.startswith("[BACKGROUND]"):
+                        data["type"] = "background"
+                    else:
+                        data["type"] = "alert"
+                return orig_publish(*args, **kwargs)
+
+            app.events_manager.publish = publish_wrapper
