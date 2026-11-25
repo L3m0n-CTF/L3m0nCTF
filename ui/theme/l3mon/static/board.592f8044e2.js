@@ -860,7 +860,7 @@ const notifKind=(t='')=>
 const cleanTitle=(t='')=>
 String(t||'News').replace(/^\[[\w-]+\]\s*/i,'').trim()||'News';
 function mdToHtml(m){
-let s=String(m||'').replace(/<title[^>]*>[\s\S]*?<\/title>/gi,'').replace(/<!DOCTYPE[^>]*>|<\/?(?:html|head|body|meta)[^>]*>/gi,'');
+let s=String(m||'').replace(/<title[^>]*>[\s\S]*?<\/title>|<!DOCTYPE[^>]*>|<\/?(?:html|head|body|meta)[^>]*>/gi,'');
 if(!s.trim())return'';
 s=s.replace(/<style[^>]*>([\s\S]*?)<\/style>/gi,(_,c)=>`<style>${c.replace(/\bbody\b/g,'.nt-alert-box, .nt-c').replace(/height\s*:\s*100vh;?/gi,'')}</style>`)
 .replace(/^(#{1,6})\s+(.+)$/gm,(_,h,t)=>`<h${h.length}>${t.trim()}</h${h.length}>`)
@@ -943,13 +943,14 @@ openAlertDialog(latest,unack.map((a)=>a.id));
 }
 if(fresh.length){
 for(const it of fresh){
-const k=notifKind(it.title);
-const line=`${cleanTitle(it.title).toUpperCase()}. ${it.content||''}`.trim();
-for(const list of $$('[data-crawl] .crawl-list'))list.prepend(mk('li',null,line));
-if(!initial&&k!=='urgent'&&k!=='background'){
+const k=notifKind(it.title),t=cleanTitle(it.title).toUpperCase(),c=it.content||'';
+if(k==='background'){
+const txt=c.replace(/<[^>]+>/g,' ').trim();
+for(const list of $$('[data-crawl] .crawl-list'))list.prepend(mk('li',null,txt?`${t}: ${txt}`:t));
+}else if(!initial&&k!=='urgent'){
 const el=$('[data-toast]');
 if(el)el.className=`toast toast-fixed show toast-${k}`;
-toast(line,5000);
+toast(`${t}. ${c}`.trim(),5000);
 sfx(k==='release'?'tada':'ding');
 }
 }
@@ -1103,16 +1104,15 @@ function initCrawl(){
 const crawl=$('[data-crawl]');
 if(!crawl)return;
 const lists=$$('.crawl-list',crawl);
-if(lists.length!==2)return;
+if(!lists.length)return;
 const btn=mk('button','crawl-btn');
-btn.type='button';
 btn.setAttribute('aria-label','Pause news crawl');
 btn.setAttribute('aria-pressed','false');
-btn.addEventListener('click',()=>btn.setAttribute('aria-pressed',String(crawl.classList.toggle('paused'))));
+btn.onclick=()=>btn.setAttribute('aria-pressed',String(crawl.classList.toggle('paused')));
 crawl.append(btn);
-const fit=()=>crawl.style.setProperty('--crawl-d',`${Math.max(12,lists[0].scrollWidth/80).toFixed(1)}s`);
+const fit=()=>crawl.style.setProperty('--crawl-d',`${Math.max(12,(lists[0].scrollWidth+crawl.clientWidth)/80).toFixed(1)}s`);
 fit();
-if('ResizeObserver'in window)new ResizeObserver(fit).observe(lists[0]);
+window.ResizeObserver&&new ResizeObserver(fit).observe(crawl);
 }
 function initBurst(){
 if(typeof matchMedia!=='function'||!matchMedia('(hover: hover) and (pointer: fine)').matches)return;

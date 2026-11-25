@@ -860,7 +860,7 @@ const notifKind=(t='')=>
 const cleanTitle=(t='')=>
 String(t||'News').replace(/^\[[\w-]+\]\s*/i,'').trim()||'News';
 function mdToHtml(m){
-let s=String(m||'').replace(/<title[^>]*>[\s\S]*?<\/title>/gi,'').replace(/<!DOCTYPE[^>]*>|<\/?(?:html|head|body|meta)[^>]*>/gi,'');
+let s=String(m||'').replace(/<title[^>]*>[\s\S]*?<\/title>|<!DOCTYPE[^>]*>|<\/?(?:html|head|body|meta)[^>]*>/gi,'');
 if(!s.trim())return'';
 s=s.replace(/<style[^>]*>([\s\S]*?)<\/style>/gi,(_,c)=>`<style>${c.replace(/\bbody\b/g,'.nt-alert-box, .nt-c').replace(/height\s*:\s*100vh;?/gi,'')}</style>`)
 .replace(/^(#{1,6})\s+(.+)$/gm,(_,h,t)=>`<h${h.length}>${t.trim()}</h${h.length}>`)
@@ -943,13 +943,14 @@ openAlertDialog(latest,unack.map((a)=>a.id));
 }
 if(fresh.length){
 for(const it of fresh){
-const k=notifKind(it.title);
-const line=`${cleanTitle(it.title).toUpperCase()}. ${it.content||''}`.trim();
-for(const list of $$('[data-crawl] .crawl-list'))list.prepend(mk('li',null,line));
-if(!initial&&k!=='urgent'&&k!=='background'){
+const k=notifKind(it.title),t=cleanTitle(it.title).toUpperCase(),c=it.content||'';
+if(k==='background'){
+const txt=c.replace(/<[^>]+>/g,' ').trim();
+for(const list of $$('[data-crawl] .crawl-list'))list.prepend(mk('li',null,txt?`${t}: ${txt}`:t));
+}else if(!initial&&k!=='urgent'){
 const el=$('[data-toast]');
 if(el)el.className=`toast toast-fixed show toast-${k}`;
-toast(line,5000);
+toast(`${t}. ${c}`.trim(),5000);
 sfx(k==='release'?'tada':'ding');
 }
 }
@@ -1103,16 +1104,15 @@ function initCrawl(){
 const crawl=$('[data-crawl]');
 if(!crawl)return;
 const lists=$$('.crawl-list',crawl);
-if(lists.length!==2)return;
+if(!lists.length)return;
 const btn=mk('button','crawl-btn');
-btn.type='button';
 btn.setAttribute('aria-label','Pause news crawl');
 btn.setAttribute('aria-pressed','false');
-btn.addEventListener('click',()=>btn.setAttribute('aria-pressed',String(crawl.classList.toggle('paused'))));
+btn.onclick=()=>btn.setAttribute('aria-pressed',String(crawl.classList.toggle('paused')));
 crawl.append(btn);
-const fit=()=>crawl.style.setProperty('--crawl-d',`${Math.max(12,lists[0].scrollWidth/80).toFixed(1)}s`);
+const fit=()=>crawl.style.setProperty('--crawl-d',`${Math.max(12,(lists[0].scrollWidth+crawl.clientWidth)/80).toFixed(1)}s`);
 fit();
-if('ResizeObserver'in window)new ResizeObserver(fit).observe(lists[0]);
+window.ResizeObserver&&new ResizeObserver(fit).observe(crawl);
 }
 function initBurst(){
 if(typeof matchMedia!=='function'||!matchMedia('(hover: hover) and (pointer: fine)').matches)return;
@@ -1176,174 +1176,68 @@ let ended=false;
 on('net',(r)=>{if(!ended&&r.error&&r.error.code==='auth_required'){ended=true;sessionEnded();}});
 document.addEventListener('visibilitychange',()=>audioVisibility(document.hidden));
 }
-const POLL_MS=15000;
-const IDLE_MS=180000;
-function followTicks({ver,onChange}){
-const s={ver,own:undefined,timer:0,last:Date.now(),busy:false};
-const schedule=()=>{
-clearTimeout(s.timer);
-if(document.hidden)return;
-const idle=Date.now()-s.last>IDLE_MS;
-s.timer=setTimeout(poll,idle?60000:POLL_MS+Math.round(Math.random()*6000-3000));
-};
-async function poll(){
-if(s.busy)return;
-s.busy=true;
-try{
-const t=await ticks();
-if(t.ok&&t.data){
-const moved=t.data.ver!==s.ver||(s.own!==undefined&&t.data.own!==s.own);
-if(s.own===undefined)s.own=t.data.own;
-if(moved&&(await onChange(t.data.ver))){s.ver=t.data.ver;s.own=t.data.own;}
+function initShow(form){
+const btn=$('[data-show]',form);
+const input=$('#f-password',form);
+if(!btn||!input)return;
+btn.addEventListener('click',()=>{
+const show=input.type==='password';
+input.type=show?'text':'password';
+btn.setAttribute('aria-pressed',String(show));
+});
+form.addEventListener('submit',()=>{input.type='password';btn.setAttribute('aria-pressed','false');});
 }
-}finally{s.busy=false;}
-schedule();
+function initRetry(form){
+const s=Number(form.dataset.retryAfter);
+if(!(s>0))return;
+const btn=$('[data-submit]',form);
+const wait=$('[data-wait]',form);
+btn.disabled=true;
+wait.hidden=false;
+countdown(s,(left)=>{
+const m=Math.ceil(left/60);
+wait.textContent=left>90?`You can try again in about ${m} minutes.`:`You can try again in ${left} s.`;
+},()=>{
+btn.disabled=false;
+wait.textContent='You can try again now.';
+});
 }
-const touch=()=>{s.last=Date.now();};
-for(const evt of['pointerdown','keydown','scroll'])addEventListener(evt,touch,{passive:true,capture:true});
-document.addEventListener('visibilitychange',()=>{if(document.hidden)clearTimeout(s.timer);else poll();});
-schedule();
-return{poll};
+function initLogin(){
+const form=$('[data-login]');
+if(!form)return;
+const name=$('#f-name',form);
+const pass=$('#f-password',form);
+const btn=$('[data-submit]',form);
+const host=form.parentElement;
+initShow(form);
+initRetry(form);
+for(const input of[name,pass])input.addEventListener('input',()=>{if(input.value)clearFieldError(input);});
+let sent=false;
+form.addEventListener('submit',(e)=>{
+if(sent||btn.getAttribute('aria-disabled')==='true'||btn.disabled){e.preventDefault();return;}
+const problems=[];
+for(const[input,msg]of[[name,'Enter your username or email.'],[pass,'Enter your password.']]){
+if(!input.value.trim()){fieldError(input,msg);problems.push({id:input.id,text:msg});}else clearFieldError(input);
 }
-function showBanner(b){
-const slot=$('[data-banner-slot]');
-if(!slot)return;
-const cur=$('[data-banner]',slot);
-if(!b){if(cur)cur.remove();return;}
-if(cur&&cur.dataset.banner===b.id)return;
-const p=mk('p',`banner ${b.cls}`);
-p.dataset.banner=b.id;
-p.append(mk('b','banner-lead',b.lead),` ${b.text}`);
-slot.replaceChildren(p);
+if(problems.length){
+e.preventDefault();
+showSummary(host,problems);
+sfx('bonk');
+return;
 }
-const gd={root:null,grid:null,etag:null,epgTag:null,sig:null};
-const gdOrdinal=(n)=>{
-const k=n%100;
-return k>=11&&k<=13?`${n}th`:`${n}${({1:'st',2:'nd',3:'rd'})[n%10]||'th'}`;
-};
-const gdPct=(a,b)=>(b>0?Math.round((a/b)*100):0);
-function gdText(el,text){
-if(el&&el.textContent!==text)el.textContent=text;
-}
-function gdBar(el,pct){
-if(!el)return;
-for(const c of[...el.classList])if(/^pv-\d+$/.test(c))el.classList.remove(c);
-el.classList.add(`pv-${Math.max(0,Math.min(100,pct))}`);
-}
-function gdCount(el,to){
-if(!el)return;
-const from=Number(el.textContent);
-if(!Number.isFinite(from)||from===to||reduced()||document.hidden){el.textContent=String(to);return;}
-const token={};
-el.gdToken=token;
-const done=()=>{if(el.gdToken===token)el.textContent=String(to);};
-const t0=performance.now();
-const step=(t)=>{
-if(el.gdToken!==token)return;
-const k=Math.min(1,(t-t0)/700);
-if(k>=1){done();return;}
-el.textContent=String(Math.round(from+(to-from)*(1-(1-k)**3)));
-requestAnimationFrame(step);
-};
-requestAnimationFrame(step);
-setTimeout(done,760);
-}
-async function gdSwapGrid(sig){
-if(!gd.grid)return;
-const r=await guideEpg(gd.epgTag);
-if(r.ok&&r.notModified){gd.sig=sig;return;}
-if(!r.ok||typeof r.html!=='string')return;
-gd.epgTag=r.etag||gd.epgTag;
-const doc=new DOMParser().parseFromString(`<body>${r.html}</body>`,'text/html');
-const rows=$$('.epg-row',doc.body).map((row)=>document.importNode(row,true));
-const before=$$('.epg-b',gd.grid).length;
-const focused=document.activeElement&&gd.grid.contains(document.activeElement)?document.activeElement.getAttribute('href'):null;
-for(const row of rows)row.classList.add('swapped');
-gd.grid.replaceChildren(...rows);
-if(focused){const again=$$('.epg-b',gd.grid).find((a)=>a.getAttribute('href')===focused);if(again)again.focus({preventScroll:true});}
-gd.grid.dataset.sig=sig;
-gd.sig=sig;
-const after=$$('.epg-b',gd.grid).length;
-if(after>before)announce(`${after-before} new programme${after-before===1?' is':'s are'} on air.`);
-}
-function gdMembers(list){
-const lis=[];
-if($$('.gd-mem',gd.root).some((li)=>!list.some((m)=>String(m.id)===li.dataset.uid))){location.reload();return;}
-for(const m of list){
-const li=$(`.gd-mem[data-uid="${m.id}"]`,gd.root);
-if(!li){location.reload();return;}
-gdText($('[data-k="msolves"]',li),`${m.solves} ${m.solves===1?'solve':'solves'}`);
-gdText($('[data-k="mtrp"]',li),String(m.trp));
-gdBar($('.gd-mbar',li),m.pct);
-lis.push(li);
-}
-const ul=lis.length?lis[0].parentElement:null;
-if(ul&&lis.some((li,i)=>ul.children[i]!==li)){
-for(const li of lis)li.classList.add('swapped');
-ul.append(...lis);
-}
-}
-function gdCrew(t){
-const stat=$('[data-k="bonus"]',gd.root);
-const bonus=Number(t.bonus)||0;
-const items=$$('.gd-note-list li',gd.root);
-const notes=t.notes||[];
-const shown=items.map((li)=>`${$('b',li).textContent}\u0001${$('span',li).textContent}`).join('\u0002');
-const asked=notes.map((n)=>`${n.title}\u0001${n.content}`).join('\u0002');
-if((bonus!==0)!==!!stat||shown!==asked){location.reload();return true;}
-gdText(stat,`${bonus>0?'+':''}${bonus}`);
-return false;
-}
-function gdApply(d){
-const root=gd.root;
-const t=d.team;
-if(t){
-gdCount($('[data-k="score"]',root),t.score);
-gdText($('[data-k="place"]',root),t.place===null?(d.phase&&d.phase.frozen?'Ranks frozen':'Not ranked yet'):`${gdOrdinal(t.place)} of ${t.of}`);
-gdText($('[data-k="solves"]',root),String(t.solves));
-gdText($('[data-k="hints"]',root),String(t.hints_used));
-gdText($('[data-k="live"]',root),String(t.instances_live));
-gdMembers(t.members||[]);
-if(gdCrew(t))return;
-for(const c of t.by_channel){
-const li=$(`.gd-ch[data-ch="${c.channel}"]`,root);
-if(!li)continue;
-gdText($('[data-k="chn"]',li),`${c.solved} of ${c.total}`);
-gdBar($('[data-bar]',li),gdPct(c.solved,c.total));
-}
-}
-const s=d.story;
-const meter=$('[data-meter]',root);
-if(s&&meter){
-gdText($('[data-k="reels"]',root),String(s.reels));
-gdText($('[data-k="needed"]',root),String(s.reels_needed));
-gdText($('[data-k="air"]',root),String(Math.round(s.on_air*100)));
-meter.setAttribute('aria-valuenow',String(s.reels));
-meter.setAttribute('aria-valuemax',String(s.reels_needed));
-meter.setAttribute('aria-valuetext',`${s.reels} of ${s.reels_needed} reels`);
-gdBar(meter,gdPct(s.reels,s.reels_needed));
-}
-showBanner(d.banner);
-}
-async function gdLoad(){
-const r=await guide(gd.etag);
-if(!r.ok)return false;
-if(r.notModified||!r.data)return true;
-gd.etag=r.etag||gd.etag;
-gdApply(r.data);
-const grid=!!r.data.phase&&r.data.phase.state!=='before';
-if(grid!==!!gd.grid){location.reload();return true;}
-if(grid&&r.data.epg_sig!==gd.sig)await gdSwapGrid(r.data.epg_sig);
-return true;
-}
-function initGuide(){
-gd.root=$('[data-guide]');
-if(!gd.root)return;
-gd.grid=$('[data-epg]',gd.root);
-gd.sig=gd.grid?gd.grid.dataset.sig:null;
-const chan=$('[data-chan]',gd.root);
-if(chan&&location.hash==='#channels')chan.open=true;
-followTicks({ver:Number(gd.root.dataset.ver),onChange:gdLoad});
+sent=true;
+setPending(btn,'Tuning in…');
+sfx('click');
+const card=$('[data-card]');
+if(card&&!reduced())card.classList.add('flick');
+});
+addEventListener('pageshow',(e)=>{
+if(!e.persisted)return;
+sent=false;
+clearPending(btn);
+const card=$('[data-card]');
+if(card)card.classList.remove('flick');
+});
 }
 function run(name,fn){
 try{fn();}catch(err){console.error(`[l3m0n] ${name} failed`,err);}
@@ -1352,5 +1246,5 @@ run('dialog',initDialog);
 run('prefs',initPrefs);
 run('shell',initShell);
 run('keys',initKeys);
-run('guide',initGuide);
+run('login',initLogin);
 })();

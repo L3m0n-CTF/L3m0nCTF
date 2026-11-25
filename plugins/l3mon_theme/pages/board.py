@@ -434,9 +434,21 @@ CRAWL_LINES = 8  # the news crawl shows the newest public notifications
 def crawl_text(lines):
     """The crawl's lines from public notifications (oldest first, `[{title, content}]`): the newest first, each "title: text" (or the title alone)."""
     out = []
-    for n in notice_lines(lines)[:CRAWL_LINES]:
+    bg_lines = [
+        n for n in lines
+        if re.match(r"^\[(?:background|silent|update)\]", str(n.get("title") or ""), re.IGNORECASE)
+    ]
+    candidate_lines = bg_lines if bg_lines else [
+        n for n in lines
+        if not re.match(r"^\[(?:alert|urgent|announcement|toast|release)\]", str(n.get("title") or ""), re.IGNORECASE)
+        and not str(n.get("content") or "").strip().lower().startswith("<!doctype")
+        and not str(n.get("content") or "").strip().lower().startswith("<html")
+    ]
+    for n in notice_lines(candidate_lines)[:CRAWL_LINES]:
         clean_title = re.sub(r"^\[[\w-]+\]\s*", "", n["title"] or "")
-        out.append(f"{clean_title}: {n['content']}" if n["content"] else clean_title)
+        clean_content = re.sub(r"<[^>]+>", " ", n["content"] or "").strip()
+        clean_content = re.sub(r"\s+", " ", clean_content)
+        out.append(f"{clean_title}: {clean_content}" if clean_content else clean_title)
     return out
 
 
@@ -449,7 +461,7 @@ def crawl():
         db.session.query(Notifications.id, Notifications.title, Notifications.content)
         .filter(Notifications.team_id.is_(None), Notifications.user_id.is_(None))
         .order_by(Notifications.id.desc())
-        .limit(CRAWL_LINES)
+        .limit(50)
         .all()
     )
     return crawl_text([{"id": i, "title": t, "content": c} for i, t, c in reversed(rows)])
