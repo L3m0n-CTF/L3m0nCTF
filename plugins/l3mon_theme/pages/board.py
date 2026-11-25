@@ -440,10 +440,12 @@ def crawl_text(lines):
     ]
     candidate_lines = bg_lines if bg_lines else (lines if all(not re.match(r"^\[[\w-]+\]", str(n.get("title") or "")) for n in lines) else [])
     for n in notice_lines(candidate_lines)[:CRAWL_LINES]:
-        clean_title = re.sub(r"^\[[\w-]+\]\s*", "", n["title"] or "")
+        clean_title = re.sub(r"^\[[\w-]+\]\s*", "", n["title"] or "").strip()
         clean_content = re.sub(r"<[^>]+>", " ", n["content"] or "").strip()
         clean_content = re.sub(r"\s+", " ", clean_content)
-        out.append(f"{clean_title}: {clean_content}" if clean_content else clean_title)
+        line = f"{clean_title}: {clean_content}" if clean_content else clean_title
+        if line and line not in out:
+            out.append(line)
     return out
 
 

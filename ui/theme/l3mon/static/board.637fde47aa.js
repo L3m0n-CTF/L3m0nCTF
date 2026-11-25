@@ -945,8 +945,12 @@ if(fresh.length){
 for(const it of fresh){
 const k=notifKind(it.title),t=cleanTitle(it.title).toUpperCase(),c=it.content||'';
 if(k==='background'){
-const txt=c.replace(/<[^>]+>/g,' ').trim();
-for(const list of $$('[data-crawl] .crawl-list'))list.prepend(mk('li',null,txt?`${t}: ${txt}`:t));
+if(!initial){
+const txt=c.replace(/<[^>]+>/g,' ').trim(),line=txt?`${t}: ${txt}`:t;
+for(const list of $$('[data-crawl] .crawl-list')){
+if(![...list.children].some((li)=>li.textContent.trim().toUpperCase()===line.toUpperCase()))list.prepend(mk('li',null,line));
+}
+}
 }else if(!initial&&k!=='urgent'){
 const el=$('[data-toast]');
 if(el)el.className=`toast toast-fixed show toast-${k}`;
