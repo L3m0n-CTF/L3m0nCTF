@@ -899,3 +899,37 @@ Must reflect on both `crew.l3m0nctf.xyz` and `play.l3m0nctf.xyz`.
 - Crew account hidden: `[('l3m0n-main-admin', True)]`.
 - Activity ledger: chain ok over 12,559 lines with triggers in place.
 - External checks through Cloudflare: `/readyz` 200, `/login` 200 on both `play.l3m0nctf.xyz` and `crew.l3m0nctf.xyz`.
+
+## 2026-11-25: `release-2026-11-25c` DEPLOYED (Strict Background Crawl, Continuous Motion Keyframe, Removal of Crawl Play Button)
+
+**The owner's request:**
+- Bottom crawl downbar must strictly and solely display notifications in the `background` category (never announcements, alerts, or raw HTML/CSS).
+- Crawl downbar must animate continuously in motion from right (`100vw`) to left (`-100%`) without pausing on hover.
+- Play/pause button on the right edge of the ticker must be completely removed.
+
+**Implementation:**
+- In `L3m0nCTF-ui`:
+  - `platform-ui/src/css/motion.css`: Updated `@keyframes crawl` to use standard viewport units `0% { transform: translateX(100vw); } 100% { transform: translateX(-100%); }` instead of `100cqw` which was rejected by Chromium's CSS engine.
+  - `platform-ui/src/css/shell.css`: Removed `.crawl:hover .crawl-track { animation-play-state: paused; }` and `.crawl.paused`; hid `.crawl-btn` with `display: none !important`.
+  - `platform-ui/src/js/shell.js`: Removed `crawl-btn` DOM element creation and pause event listeners; dynamically computes `--crawl-d` duration using `(list.scrollWidth + window.innerWidth) / 80` seconds to maintain constant 80 px/s speed.
+  - `platform-ui/src/js/notif.js`: Restricted `nfLoad()` live event crawl insertion so only items where `notifKind() === 'background'` are prepended to `[data-crawl] .crawl-list`.
+- In `L3m0nCTF`:
+  - `plugins/l3mon_theme/pages/board.py`: `crawl()` strictly queries and filters notifications where title matches `^\[(?:background|silent|update)\]`. If none exist, returns an empty list `[]` instead of falling back to untagged announcements.
+  - `plugins/l3mon_board/notices.py`: `_tag_notification` defaults non-background/non-toast notices to `[ANNOUNCEMENT] ...`.
+  - `plugins/l3mon_theme/tests/theme_a_world.py`: Updated `add_notification` test helper to prefix untagged notices with `[BACKGROUND] ` so CTFd integration tests pass.
+  - Exported 43 theme files to `ui/theme/l3mon`.
+- Verified all page budgets green (`scoreboard` 16.9/17 KB, `settings` 43.8/44 KB).
+- Verified hygiene scan 0 findings (`python -m l3mon hygiene --root ..`).
+- Verified all platform-ui tests passed (`6/6` in `notif-*.test.mjs`).
+
+**Deploy:**
+- Run by `deploy-24a.sh` from 13:28 to 13:30 UTC (18:58 to 19:00 IST).
+- Encrypted full backup: 1,024,440 bytes shipped to `~/backups/sink/full`.
+- **1,357 accounts and 684 studios before and after, 0 challenges, 0 solves, identical fingerprint `9902f3c8f82acb08`**.
+- `verify-image` 37 of 37 checks ok.
+- 17 services up, none unhealthy.
+- Gate unchanged (`default 0;`).
+- Crew account hidden: `[('l3m0n-main-admin', True)]`.
+- Activity ledger: chain ok over 12,560 lines with triggers in place.
+- External checks through Cloudflare: `/readyz` 200, `/login` 200; new live bundles `app.2ba4e277fc.css` and `shell.11ef2fea08.js` verified live.
+
