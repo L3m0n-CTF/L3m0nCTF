@@ -1,4 +1,4 @@
-"""Tests for Discord first, second, and third blood notifications."""
+"""Tests for Discord first, second, and third blood notifications (Embed format)."""
 from unittest.mock import MagicMock, patch
 from types import SimpleNamespace
 
@@ -26,67 +26,81 @@ def test_ordinal():
     assert blood.ordinal(45) == "45th"
     assert blood.ordinal(101) == "101st"
 
+    # Crucial regression test for 1stth bug:
+    assert blood.ordinal("1st") == "1st"
+    assert blood.ordinal("2nd") == "2nd"
+    assert blood.ordinal("3rd") == "3rd"
+    assert blood.ordinal("4th") == "4th"
+    assert blood.ordinal("35th") == "35th"
+    assert blood.ordinal("1stth") == "1st"
 
-def test_format_blood_message():
-    # First Blood
-    fb = blood.format_blood_message(
+
+def test_create_blood_embed():
+    # First Blood - exactly matching screenshot
+    fb = blood.create_blood_embed(
         blood_index=0,
-        team_name="5n1ck3rD00dl3",
-        challenge_name="Echoes of the Abyss",
-        rank=34,
-        score=6100,
-        challenge_value=500,
+        team_name="Hydra",
+        challenge_name="Physics Trauma",
+        rank="2nd",
+        score=19215,
     )
-    assert "🩸 First Blood" in fb
-    assert "First Blood claimed!" in fb
-    assert "Congratulations to 5n1ck3rD00dl3 for being the first to solve Echoes of the Abyss!" in fb
-    assert "They now hold 34th place on the leaderboard with 6,100 points." in fb
+    assert fb["title"] == "First Blood!"
+    assert "🩸" not in fb["title"]
+    assert "🩸" not in fb["description"]
+    assert fb["description"] == "Hydra got first blood on Physics Trauma and is now in 2nd place with 19215 points!"
+    assert fb["color"] == 16765503
 
-    # Second Blood
-    sb = blood.format_blood_message(
+    # Second Blood - exactly matching screenshot
+    sb = blood.create_blood_embed(
         blood_index=1,
-        team_name="Bro_Code",
-        challenge_name="Shattered Echoes",
-        rank=4,
-        score=16965,
-        challenge_value=300,
+        team_name="Null Hunters",
+        challenge_name="The Cicada Archives",
+        rank=35,
+        score=5985,
     )
-    assert "🩸 Second Blood" in sb
-    assert ("Bro_Code" in sb) and ("Shattered Echoes" in sb)
-    assert ("4th place" in sb) and ("16,965 points" in sb)
+    assert sb["title"] == "Second Blood!"
+    assert "🩸" not in sb["title"]
+    assert "🩸" not in sb["description"]
+    assert sb["description"] == "Null Hunters got second blood on The Cicada Archives and is now in 35th place with 5985 points!"
+    assert sb["color"] == 14866672
 
     # Third Blood
-    tb = blood.format_blood_message(
+    tb = blood.create_blood_embed(
         blood_index=2,
         team_name="AutoBots",
         challenge_name="Echoes of the Abyss",
-        rank=45,
+        rank="1st",
         score=2900,
-        challenge_value=200,
     )
-    assert "🩸 Third Blood" in tb
-    assert "Third Blood claimed!" in tb
-    assert "The race continues! AutoBots was the third team to solve Echoes of the Abyss, earning 200 points and securing 45th place on the leaderboard." in tb
+    assert tb["title"] == "Third Blood!"
+    assert "🩸" not in tb["title"]
+    assert "🩸" not in tb["description"]
+    assert tb["description"] == "AutoBots got third blood on Echoes of the Abyss and is now in 1st place with 2900 points!"
+    assert "1stth" not in tb["description"]
+    assert tb["color"] == 13467442
 
-    # 4th solve produces empty
-    assert blood.format_blood_message(3, "T", "C", 5, 100, 100) == ""
+    # 4th solve produces empty dict
+    assert blood.create_blood_embed(3, "T", "C", 5, 100) == {}
 
 
-def test_notify_sends_webhook_for_first_second_third_blood():
-    chal = SimpleNamespace(id=1, name="Echoes of the Abyss", value=500)
-    team = SimpleNamespace(id=10, name="5n1ck3rD00dl3", hidden=False, banned=False, get_score=lambda **_: 6100, get_place=lambda **_: 34)
+def test_notify_sends_webhook_embed():
+    chal = SimpleNamespace(id=1, name="Physics Trauma", value=500)
+    team = SimpleNamespace(id=10, name="Hydra", hidden=False, banned=False, get_score=lambda **_: 19215, get_place=lambda **_: 2)
     solve = SimpleNamespace(id=999)
 
     sent = []
 
-    def mock_send(url, content):
-        sent.append((url, content))
+    def mock_send(url, payload):
+        sent.append((url, payload))
 
     with patch.object(blood, "_send_webhook", side_effect=mock_send):
         # 1st blood (earlier_count = 0)
         blood.notify(chal, team, solve, earlier_count=0)
         assert len(sent) == 1
-        assert "🩸 First Blood" in sent[0][1]
+        payload = sent[0][1]
+        assert "embeds" in payload
+        assert payload["embeds"][0]["title"] == "First Blood!"
+        assert "Hydra got first blood on Physics Trauma and is now in 2nd place with 19215 points!" in payload["embeds"][0]["description"]
 
         # Duplicate solve ID should not send again
         blood.notify(chal, team, solve, earlier_count=0)
@@ -106,6 +120,6 @@ def test_notify_sends_webhook_for_first_second_third_blood():
 
 if __name__ == "__main__":
     test_ordinal()
-    test_format_blood_message()
-    test_notify_sends_webhook_for_first_second_third_blood()
+    test_create_blood_embed()
+    test_notify_sends_webhook_embed()
     print("ALL BLOOD TESTS PASSED!")

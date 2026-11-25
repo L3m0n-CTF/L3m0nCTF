@@ -7,7 +7,7 @@ Webhook:
 import json
 import logging
 import os
-import random
+import re
 import threading
 import urllib.request
 
@@ -16,6 +16,11 @@ log = logging.getLogger("l3mon.blood")
 DEFAULT_WEBHOOK = "https://discord.com/api/webhooks/1449642076215181464/dRFI-C8I-nEvSSIbdTgdbzcwZ7fWe_wze784J5n3z4ICDskCEaddRUaFB_PzqZ6TPBhn"
 _LOCK = threading.Lock()
 _NOTIFIED_SOLVES = set()
+
+# Embed left accent border colors (decimal RGB)
+COLOR_FIRST_BLOOD = 16765503   # Gold / Yellow (#ffd23f)
+COLOR_SECOND_BLOOD = 14866672  # Silver / Light Grey (#e2e8f0)
+COLOR_THIRD_BLOOD = 13467442   # Bronze / Amber (#cd7f32)
 
 
 def get_webhook_url() -> str:
@@ -29,15 +34,19 @@ def get_webhook_url() -> str:
 def ordinal(n) -> str:
     if n is None:
         return "1st"
-    try:
-        n = int(n)
-    except (ValueError, TypeError):
-        return f"{n}th"
-    if 11 <= (n % 100) <= 13:
+    s = str(n).strip()
+    # If it's already an ordinal like '1st', '2nd', '3rd', '35th'
+    if re.search(r"^\d+(?:st|nd|rd|th)$", s, re.IGNORECASE):
+        return s.lower()
+    m = re.search(r"\d+", s)
+    if not m:
+        return "1st"
+    val = int(m.group())
+    if 11 <= (val % 100) <= 13:
         suffix = "th"
     else:
-        suffix = {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
-    return f"{n}{suffix}"
+        suffix = {1: "st", 2: "nd", 3: "rd"}.get(val % 10, "th")
+    return f"{val}{suffix}"
 
 
 def get_team_rank_and_score(team):
@@ -48,7 +57,12 @@ def get_team_rank_and_score(team):
     except Exception:
         pass
     try:
-        rank = team.get_place(admin=True)
+        rank = team.get_place(numeric=True, admin=True)
+    except TypeError:
+        try:
+            rank = team.get_place(admin=True)
+        except Exception:
+            pass
     except Exception:
         pass
     if rank is None:
@@ -64,47 +78,36 @@ def get_team_rank_and_score(team):
     return rank, score
 
 
-def format_blood_message(blood_index: int, team_name: str, challenge_name: str, rank: int, score: int, challenge_value: int) -> str:
-    """Format the blood notification message.
+def create_blood_embed(blood_index: int, team_name: str, challenge_name: str, rank, score: int) -> dict:
+    """Create a Discord Embed payload matching the BloodSeeker style:
     blood_index: 0 for First Blood, 1 for Second Blood, 2 for Third Blood.
     """
     rank_str = ordinal(rank)
-    points_str = f"{score:,}"
-    earned_str = f"{challenge_value:,}" if challenge_value else points_str
 
     if blood_index == 0:
-        return (
-            "🩸 First Blood\n"
-            "First Blood claimed!\n\n"
-            f"Congratulations to {team_name} for being the first to solve {challenge_name}!\n"
-            f"They now hold {rank_str} place on the leaderboard with {points_str} points."
-        )
+        return {
+            "title": "First Blood!",
+            "description": f"{team_name} got first blood on {challenge_name} and is now in {rank_str} place with {score} points!",
+            "color": COLOR_FIRST_BLOOD,
+        }
     elif blood_index == 1:
-        if random.random() < 0.5:
-            return (
-                "🩸 Second Blood\n"
-                "Second Blood secured!\n\n"
-                f"Well played, {team_name}, for being the second solver of {challenge_name}!\n"
-                f"They have climbed to {rank_str} place with an impressive {points_str} points."
-            )
-        else:
-            return (
-                "🩸 Second Blood\n"
-                "Another Second Blood!\n\n"
-                f"{team_name} secured the second solve on {challenge_name} and currently stand at {rank_str} place with {points_str} points."
-            )
+        return {
+            "title": "Second Blood!",
+            "description": f"{team_name} got second blood on {challenge_name} and is now in {rank_str} place with {score} points!",
+            "color": COLOR_SECOND_BLOOD,
+        }
     elif blood_index == 2:
-        return (
-            "🩸 Third Blood\n"
-            "Third Blood claimed!\n\n"
-            f"The race continues! {team_name} was the third team to solve {challenge_name}, earning {earned_str} points and securing {rank_str} place on the leaderboard."
-        )
-    return ""
+        return {
+            "title": "Third Blood!",
+            "description": f"{team_name} got third blood on {challenge_name} and is now in {rank_str} place with {score} points!",
+            "color": COLOR_THIRD_BLOOD,
+        }
+    return {}
 
 
-def _send_webhook(url: str, content: str):
+def _send_webhook(url: str, payload_data: dict):
     try:
-        payload = json.dumps({"content": content}).encode("utf-8")
+        payload = json.dumps(payload_data).encode("utf-8")
         req = urllib.request.Request(
             url,
             data=payload,
@@ -120,7 +123,7 @@ def _send_webhook(url: str, content: str):
 
 
 def notify(challenge, team, solve, earlier_count=None):
-    """Check if this solve qualifies as 1st, 2nd, or 3rd blood, and send a Discord webhook notification."""
+    """Check if this solve qualifies as 1st, 2nd, or 3rd blood, and send a Discord webhook embed."""
     if challenge is None or team is None or solve is None:
         return
     # Exclude hidden or banned teams (e.g. crew / test accounts)
@@ -151,22 +154,16 @@ def notify(challenge, team, solve, earlier_count=None):
         return  # 4th solve or later
 
     rank, score = get_team_rank_and_score(team)
-    challenge_val = getattr(challenge, "value", None)
-    if challenge_val is None:
-        try:
-            challenge_val = int(challenge.value or 0)
-        except Exception:
-            challenge_val = 0
 
-    message = format_blood_message(
+    embed = create_blood_embed(
         blood_index=earlier_count,
         team_name=team.name,
         challenge_name=challenge.name,
         rank=rank,
         score=score,
-        challenge_value=challenge_val,
     )
 
-    if message:
-        t = threading.Thread(target=_send_webhook, args=(webhook_url, message), daemon=True)
+    if embed:
+        payload_data = {"embeds": [embed]}
+        t = threading.Thread(target=_send_webhook, args=(webhook_url, payload_data), daemon=True)
         t.start()
