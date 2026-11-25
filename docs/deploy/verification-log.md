@@ -838,3 +838,31 @@ Must reflect on both `crew.l3m0nctf.xyz` and `play.l3m0nctf.xyz`.
 - Crew account hidden: `[('l3m0n-main-admin', True)]`.
 - Activity ledger: chain ok over 10,215 lines with triggers in place.
 - External checks through Cloudflare: `/readyz`, `/login`, `/healthcheck` 200; new live bundle `shell.de0e0d848d.js` verified live with `initNotifPage`.
+
+## 2026-11-25: `release-2026-11-25a` DEPLOYED (Crawl bar filters to background-only and loops strictly after exiting left)
+
+**The owner's request:**
+1. In the bottom bar (news ticker crawl), ONLY notifications belonging to the `background` category should be displayed (raw HTML/CSS and announcement modals/toasts must not leak into the downbar).
+2. The crawl text must not repeat multiple times simultaneously across the bar; once the message goes out completely from the left side, only then should it enter from the right side.
+
+**UI Prototype & Export:**
+- In `notif.js`: updated `nfLoad()` so only notifications where `k === 'background'` are prepended to the crawl list (`[data-crawl] .crawl-list`). HTML tags are stripped from content. Announcements and toasts are never sent to the crawl.
+- In `shell.css` & `motion.css`:
+  - Added `container-type: inline-size` to `.crawl`.
+  - Set `.crawl-list + .crawl-list { display: none !important; }` to eliminate duplicate second list.
+  - Updated `@keyframes crawl`: `0% { transform: translateX(100cqw); } 100% { transform: translateX(-100%); }`. The content enters smoothly from the right, traverses the full screen, and loops strictly after completely exiting the left side.
+- In `shell.js`: updated `initCrawl()` to dynamically compute duration based on `(lists[0].scrollWidth + crawl.clientWidth) / 80` seconds to maintain an exact, smooth 80 px/s speed.
+- In `board.py`: `crawl_text()` filters for background notifications (`[BACKGROUND]`, `[SILENT]`, `[UPDATE]`), excludes alert/toast tags and raw HTML documents, and strips any embedded HTML tags.
+- Verified all 396 UI tests passed, new crawl filter tests passed, and page budgets green.
+- Exported 43 theme files to `ui/theme/l3mon`.
+
+**Deploy:**
+- Run by `deploy-24a.sh` from 13:13 to 13:15 UTC (18:43 to 18:45 IST).
+- Encrypted full backup: 1,024,440 bytes shipped to `~/backups/sink/full`.
+- **1,356 accounts and 684 studios before and after, 0 challenges, 0 solves, identical fingerprint `279b1adb0c860a23`**.
+- `verify-image` 37 of 37 checks ok.
+- 17 services up, none unhealthy.
+- Gate unchanged (`default 0;`).
+- Crew account hidden: `[('l3m0n-main-admin', True)]`.
+- Activity ledger: chain ok over 12,527 lines with triggers in place.
+- External checks through Cloudflare: `/readyz`, `/login` 200; new live bundles `app.ad416d169c.css` and `shell.9e2ef557f0.js` verified live.
