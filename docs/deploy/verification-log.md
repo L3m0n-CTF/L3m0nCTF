@@ -933,3 +933,33 @@ Must reflect on both `crew.l3m0nctf.xyz` and `play.l3m0nctf.xyz`.
 - Activity ledger: chain ok over 12,560 lines with triggers in place.
 - External checks through Cloudflare: `/readyz` 200, `/login` 200; new live bundles `app.2ba4e277fc.css` and `shell.11ef2fea08.js` verified live.
 
+## 2026-11-25: `release-2026-11-25d` DEPLOYED (Discord Embeds for First, Second, and Third Blood, Emoji Removal, Ordinal 1stth Fix)
+
+**The owner's request:**
+- Fix `1stth` ordinal bug in Discord notifications so it renders correctly as `1st`.
+- Remove `🩸` emoji.
+- Send messages as Discord Embeds with colored vertical accent borders matching BloodSeeker style:
+  - First Blood: Title `First Blood!`, Description `{team} got first blood on {challenge} and is now in {rank} place with {points} points!`, Color Gold/Yellow (`#ffd23f` / `16765503`).
+  - Second Blood: Title `Second Blood!`, Description `{team} got second blood on {challenge} and is now in {rank} place with {points} points!`, Color Silver/Light Grey (`#e2e8f0` / `14866672`).
+  - Third Blood: Title `Third Blood!`, Description `{team} got third blood on {challenge} and is now in {rank} place with {points} points!`, Color Bronze/Amber (`#cd7f32` / `13467442`).
+
+**Implementation:**
+- In `plugins/l3mon_board/blood.py`:
+  - `ordinal(n)`: Handles existing ordinal strings (`1st`, `2nd`, `3rd`, `35th`) and extracts numeric values safely; avoids any redundant `th` appending.
+  - `get_team_rank_and_score()`: Requests `numeric=True` from `team.get_place()` to ensure raw numeric integer values are obtained.
+  - `create_blood_embed()`: Builds Discord embed dictionary with `title`, `description`, and left border accent `color` matching BloodSeeker theme without emojis.
+  - Sends payload via `{"embeds": [embed]}` over Discord webhook.
+- Updated unit tests in `plugins/l3mon_board/tests/test_blood.py` covering ordinal conversions, regression test against `1stth`, and embed dictionary generation. All tests pass.
+- Hygiene scan: 0 findings.
+
+**Deploy:**
+- Run by `deploy-24a.sh` from 13:42 to 13:44 UTC (19:12 to 19:14 IST).
+- Encrypted full backup: 1,034,680 bytes shipped to `~/backups/sink/full`.
+- **1,362 accounts, 686 studios, 2 challenges, 1 solve, 2 submissions before and after, identical fingerprint `49d049d5e2115b15`**.
+- `verify-image` 37 of 37 checks ok.
+- 17 services up, none unhealthy.
+- Gate unchanged (`default 1;`).
+- Crew account hidden: `[('l3m0n-main-admin', True)]`.
+- Activity ledger: chain ok over 12,715 lines with triggers in place.
+- Live verification: Tested Discord webhook embed generation; live site responsive at 200.
+
