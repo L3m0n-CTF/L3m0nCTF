@@ -9,12 +9,13 @@ Provides:
     POST /team/members/<id>/remove   remove a member; what they earned stays with the studio (captain only)
     POST /settings                   update username, email, or password
 """
+import datetime
 import logging
 from flask import abort, redirect, request, session, url_for
 
 from CTFd.cache import clear_team_session, clear_user_session
 from CTFd.constants.sessions import Session
-from CTFd.models import Teams, Users, db
+from CTFd.models import Awards, Challenges, Solves, Teams, Users, db
 from CTFd.plugins.l3mon_board import board
 from CTFd.plugins.l3mon_core import activity, studio_rules
 from CTFd.plugins.l3mon_core.clock import current_phase
@@ -110,6 +111,47 @@ def studio_context() -> dict:
     else:
         standing = f"Not ranked yet · {score} TRP"
 
+    # Solves and player-wise points for this studio
+    solves_query = (
+        db.session.query(
+            Solves.challenge_id,
+            Solves.date,
+            Challenges.name,
+            Challenges.category,
+            Challenges.value,
+            Users.name,
+            Solves.user_id,
+        )
+        .join(Challenges, Solves.challenge_id == Challenges.id)
+        .join(Users, Solves.user_id == Users.id)
+        .filter(Solves.account_id == team.id)
+        .order_by(Solves.date.desc())
+    )
+    solves_rows = solves_query.all()
+
+    solves_data = []
+    member_scores = {}
+    for cid, sdate, cname, ccat, cval, solver_name, solver_uid in solves_rows:
+        ist_time = sdate + datetime.timedelta(hours=5, minutes=30) if sdate else None
+        time_str = ist_time.strftime("%d %b, %H:%M IST") if ist_time else ""
+        val = int(cval or 0)
+        solves_data.append({
+            "name": cname or "Programme",
+            "category": ccat or "",
+            "trp": val,
+            "solver": solver_name or "Teammate",
+            "time": time_str,
+        })
+        member_scores[solver_uid] = member_scores.get(solver_uid, 0) + val
+
+    awards_rows = (
+        db.session.query(Awards.user_id, Awards.value)
+        .filter(Awards.team_id == team.id, Awards.user_id.isnot(None))
+        .all()
+    )
+    for auid, aval in awards_rows:
+        member_scores[auid] = member_scores.get(auid, 0) + int(aval or 0)
+
     # Active members, captain first, then viewer, then alphabetical
     user_rows = (
         db.session.query(Users.id, Users.name)
@@ -126,12 +168,15 @@ def studio_context() -> dict:
             tag_parts.append("captain")
         if is_you:
             tag_parts.append("you")
+        m_score = member_scores.get(uid, 0)
         members_data.append({
             "id": str(uid),
             "name": uname,
             "ini": uname[:1].upper() if uname else "P",
             "tag": " · ".join(tag_parts),
             "cls": "is-you" if is_you else "",
+            "score": m_score,
+            "trp": m_score,
             "_captain": is_cap,
             "_you": is_you,
         })
@@ -172,7 +217,10 @@ def studio_context() -> dict:
     meta_text = " · ".join(meta_parts)
 
     captain_user = next((m for m in members_data if m["_captain"]), None)
-    captain_name = captain_user["name"] if captain_user else ""
+    if not captain_user and members_data:
+        captain_name = members_data[0]["name"]
+    else:
+        captain_name = captain_user["name"] if captain_user else ""
 
     flashed_notice = _take_flash(FLASH_NOTICE_KEY)
     notice_text = NOTICES.get(flashed_notice, "")
@@ -215,6 +263,10 @@ def studio_context() -> dict:
         "affiliation": team.affiliation or "",
         "country": team.country or "",
         "countries": countries,
+        "solves": solves_data,
+        "solves_count": len(solves_data),
+        "solvesCount": str(len(solves_data)),
+        "hasSolves": len(solves_data) > 0,
         "hasNotice": bool(notice_text),
         "notice": notice_text,
         "hasSummary": len(summary) > 0,
