@@ -866,3 +866,36 @@ Must reflect on both `crew.l3m0nctf.xyz` and `play.l3m0nctf.xyz`.
 - Crew account hidden: `[('l3m0n-main-admin', True)]`.
 - Activity ledger: chain ok over 12,527 lines with triggers in place.
 - External checks through Cloudflare: `/readyz`, `/login` 200; new live bundles `app.ad416d169c.css` and `shell.9e2ef557f0.js` verified live.
+
+## 2026-11-25: `release-2026-11-25b` DEPLOYED (Discord First, Second, and Third Blood webhook notifications)
+
+**The owner's request:**
+- Automatically post notifications to Discord via webhook (`https://discord.com/api/webhooks/1449642076215181464/dRFI-C8I-nEvSSIbdTgdbzcwZ7fWe_wze784J5n3z4ICDskCEaddRUaFB_PzqZ6TPBhn`) for:
+  - 🩸 **First Blood**: "First Blood claimed!\n\nCongratulations to [Team Name] for being the first to solve [Challenge Name]!\nThey now hold [Rank]th place on the leaderboard with [Points] points."
+  - 🩸 **Second Blood**: "Second Blood secured!\n\nWell played, [Team Name], for being the second solver of [Challenge Name]!\nThey have climbed to [Rank]th place with an impressive [Points] points." (with alternate "Another Second Blood!\n\n[Team Name] secured the second solve on [Challenge Name] and currently stand at [Rank]th place with [Points] points.")
+  - 🩸 **Third Blood**: "Third Blood claimed!\n\nThe race continues! [Team Name] was the third team to solve [Challenge Name], earning [Points] points and securing [Rank]th place on the leaderboard."
+
+**Implementation:**
+- Created `plugins/l3mon_board/blood.py`:
+  - Webhook URL configurable via `L3MON_DISCORD_BLOOD_WEBHOOK` / `DISCORD_BLOOD_WEBHOOK` (defaults to the provided Discord BloodSeeker webhook).
+  - Accurate ordinal helper (`ordinal(n)`) producing 1st, 2nd, 3rd, 4th, 34th, 45th, etc.
+  - Formats team points with comma separators (`f"{points:,}"`).
+  - Thread-safe deduplication `_NOTIFIED_SOLVES` set so each solve ID is notified at most once.
+  - Dispatched asynchronously in background daemon thread with timeout and silent error recovery to protect player solve response times.
+  - Excludes solves from hidden and banned teams (e.g. crew accounts).
+- In `plugins/l3mon_board/replies.py`:
+  - On correct flag submission in `_correct()`, accurately counts earlier solves of the challenge by non-hidden, non-banned teams (`earlier_count = earlier_query.count()`).
+  - Triggers `blood.notify(challenge, team, own, earlier_count=earlier_count)`.
+- Verified all standalone tests in `plugins/l3mon_board/tests/test_blood.py` pass.
+- Verified hygiene scan 0 findings.
+
+**Deploy:**
+- Run by `deploy-24a.sh` from 13:21 to 13:23 UTC (18:51 to 18:53 IST).
+- Encrypted full backup: 1,024,440 bytes shipped to `~/backups/sink/full`.
+- **1,357 accounts and 684 studios before and after, 0 challenges, 0 solves, identical fingerprint `9902f3c8f82acb08`**.
+- `verify-image` 37 of 37 checks ok.
+- 17 services up, none unhealthy.
+- Gate unchanged (`default 0;`).
+- Crew account hidden: `[('l3m0n-main-admin', True)]`.
+- Activity ledger: chain ok over 12,559 lines with triggers in place.
+- External checks through Cloudflare: `/readyz` 200, `/login` 200 on both `play.l3m0nctf.xyz` and `crew.l3m0nctf.xyz`.
