@@ -963,3 +963,31 @@ Must reflect on both `crew.l3m0nctf.xyz` and `play.l3m0nctf.xyz`.
 - Activity ledger: chain ok over 12,715 lines with triggers in place.
 - Live verification: Tested Discord webhook embed generation; live site responsive at 200.
 
+## 2026-11-25: `release-2026-11-25e` DEPLOYED (Crawl Message Deduplication and Title Strip)
+
+**The owner's request:**
+- Fix background notification showing two times in the bottom crawl downbar for a single message (e.g. `HELLO GUYS: BACKGROUND MSG` alongside `HELLO GUYS : BACKGROUND MSG`).
+
+**Implementation:**
+- In `L3m0nCTF-ui`:
+  - `platform-ui/src/js/notif.js`: Restricted `nfLoad()` crawl prepending with `if (!initial)` so that background notifications already rendered into the HTML by server-side Jinja templates are not prepended a second time on initial page load. Added `![...list.children].some(...)` check to guarantee live event deduplication.
+  - Exported 43 updated theme files to `ui/theme/l3mon` with new bundle `shell.27e063fb30.js`.
+  - All 397 platform-ui tests passed, 0 failures.
+  - Page budgets green (`scoreboard` 17.0/17 KB, `settings` 43.9/44 KB).
+- In `L3m0nCTF`:
+  - `plugins/l3mon_theme/pages/board.py`: Added `.strip()` to `clean_title` to remove any trailing whitespace before the colon, and added `if line and line not in out:` deduplication.
+  - Hygiene scan: 0 findings (`python -m l3mon hygiene --root ..`).
+  - Unit tests: 12 passed in `test_hygiene.py`.
+
+**Deploy:**
+- Run by `deploy-24a.sh` from 13:59 to 14:02 UTC (19:29 to 19:32 IST).
+- Encrypted full backup: 1,044,920 bytes shipped to `~/backups/sink/full`.
+- **1,370 accounts, 688 studios, 3 challenges, 2 solves, 5 submissions before and after, identical fingerprint `c838bb40b75b393e`**.
+- `verify-image` 37 of 37 checks ok.
+- 17 services up, none unhealthy.
+- Gate unchanged (`default 1;`).
+- Crew account hidden: `[('l3m0n-main-admin', True)]`.
+- Activity ledger: chain ok over 12,856 lines with triggers in place.
+- External checks through Cloudflare: `/login` 200, new bundle `/themes/l3mon/static/shell.27e063fb30.js` verified live with HTTP 200.
+
+
