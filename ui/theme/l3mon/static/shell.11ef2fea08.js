@@ -1103,16 +1103,14 @@ else if(['busy','restarting','maintenance','waiting_room'].includes(code))pillSh
 function initCrawl(){
 const crawl=$('[data-crawl]');
 if(!crawl)return;
-const lists=$$('.crawl-list',crawl);
-if(!lists.length)return;
-const btn=mk('button','crawl-btn');
-btn.setAttribute('aria-label','Pause news crawl');
-btn.setAttribute('aria-pressed','false');
-btn.onclick=()=>btn.setAttribute('aria-pressed',String(crawl.classList.toggle('paused')));
-crawl.append(btn);
-const fit=()=>crawl.style.setProperty('--crawl-d',`${Math.max(12,(lists[0].scrollWidth+crawl.clientWidth)/80).toFixed(1)}s`);
+const list=$('.crawl-list',crawl);
+if(!list)return;
+const fit=()=>{
+const totalDist=list.scrollWidth+window.innerWidth;
+crawl.style.setProperty('--crawl-d',`${Math.max(12,totalDist/80).toFixed(1)}s`);
+};
 fit();
-window.ResizeObserver&&new ResizeObserver(fit).observe(crawl);
+window.ResizeObserver?new ResizeObserver(fit).observe(list):window.addEventListener('resize',fit);
 }
 function initBurst(){
 if(typeof matchMedia!=='function'||!matchMedia('(hover: hover) and (pointer: fine)').matches)return;

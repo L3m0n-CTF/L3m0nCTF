@@ -86,6 +86,8 @@ def _tag_notification(mapper, connection, target):
         target.title = f"[BACKGROUND] {target.title}"
     elif p in ("TOAST", "RELEASE"):
         target.title = f"[TOAST] {target.title}"
+    else:
+        target.title = f"[ANNOUNCEMENT] {target.title}"
 
 
 def install(app):

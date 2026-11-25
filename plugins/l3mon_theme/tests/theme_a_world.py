@@ -81,6 +81,8 @@ def add_notification(title, content, team_id=None, user_id=None, when=None):
     """A CTFd notification row straight in the database (the crew's route also pushes it to open event streams, which a test does not need)."""
     from CTFd.models import Notifications
 
+    if not re.match(r"^\[[\w-]+\]", str(title or "")):
+        title = f"[BACKGROUND] {title}"
     row = Notifications(title=title, content=content, team_id=team_id, user_id=user_id)
     if when is not None:
         row.date = when

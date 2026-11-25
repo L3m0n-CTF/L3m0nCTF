@@ -438,12 +438,7 @@ def crawl_text(lines):
         n for n in lines
         if re.match(r"^\[(?:background|silent|update)\]", str(n.get("title") or ""), re.IGNORECASE)
     ]
-    candidate_lines = bg_lines if bg_lines else [
-        n for n in lines
-        if not re.match(r"^\[(?:alert|urgent|announcement|toast|release)\]", str(n.get("title") or ""), re.IGNORECASE)
-        and not str(n.get("content") or "").strip().lower().startswith("<!doctype")
-        and not str(n.get("content") or "").strip().lower().startswith("<html")
-    ]
+    candidate_lines = bg_lines if bg_lines else (lines if all(not re.match(r"^\[[\w-]+\]", str(n.get("title") or "")) for n in lines) else [])
     for n in notice_lines(candidate_lines)[:CRAWL_LINES]:
         clean_title = re.sub(r"^\[[\w-]+\]\s*", "", n["title"] or "")
         clean_content = re.sub(r"<[^>]+>", " ", n["content"] or "").strip()
@@ -454,7 +449,7 @@ def crawl_text(lines):
 
 @value("crawl", default=())
 def crawl():
-    """The news crawl of the board: the newest public notifications (never a studio's private line). Empty when there are none."""
+    """The news crawl of the board: the newest public notifications in the background category. Empty when there are none."""
     from CTFd.models import Notifications, db
 
     rows = (
@@ -464,7 +459,12 @@ def crawl():
         .limit(50)
         .all()
     )
-    return crawl_text([{"id": i, "title": t, "content": c} for i, t, c in reversed(rows)])
+    # Strictly background notifications only
+    bg_rows = [
+        (i, t, c) for i, t, c in rows
+        if re.match(r"^\[(?:background|silent|update)\]", str(t or ""), re.IGNORECASE)
+    ]
+    return crawl_text([{"id": i, "title": t, "content": c} for i, t, c in reversed(bg_rows)])
 
 
 @value("start_text", default="")
