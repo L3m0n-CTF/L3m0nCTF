@@ -111,6 +111,28 @@ bash tools/ops/demo-round.sh status
 
 `cleanup` ends `cleanup done; notifications now: 0`. `counts` must show `challenges 0 ... channels 0 programmes 0`, `test users: 0` and `instance rows: 0 | live ones: 0`. `gate.sh open` ends `GATE IS OPEN: the channels answer players. (confirmed from outside ...)`. `status` must show the challenge VM `TERMINATED` and the TCP rule `DISABLED: True`. Your own player account and studio are never touched by `cleanup`: it removes only what is named `test-inst-`, the channel `crew-test` and the five sample challenges (their solves with them).
 
+## F. Your own challenge (what the crew does for each live challenge until a challenge sync exists)
+
+Written 25 Nov 2026 and **run once through on the real stack with a sample challenge** (start through the platform 201, address through Cloudflare serving the studio's own flag after 1.4 s, flag accepted, channel bonus paid and taken away again by `cleanup`). It needs the challenge VM and the instance gate open (A above), and it does **not** need the player gate closed, but read the two warnings first.
+
+**Two warnings, because `play` is open and the event window is live:**
+
+1. **Players can see what is on air.** Anything on the channel `crew-test` is on the Channels page of every signed-in player until `cleanup`. `own_setup` therefore puts only a **placeholder** on the platform (a challenge named "Crew test <Slug>", 0 TRP, no text, no files); the real challenge is only its instance. A player who finds that tile and presses Start would get your real challenge's instance, so keep the time short and **close the player gate (`tools/ops/gate.sh close --yes`, open it again at the end) when the challenge is a real one you do not want seen before the event.** The sample challenges need no gate.
+2. **A studio that solves every programme of a channel is paid the channel bonus (100 TRP by default), and your studio is on the scoreboard.** `cleanup` takes that bonus away again (since 25 Nov), but until then your studio shows it. Solve your challenge in a studio you do not mind, or leave one programme of the channel unsolved (run `setup_programme` first: the five samples share the channel and you solve only yours).
+
+```bash
+# 1. the host: build your folder (a Dockerfile at its top), pin it, write its stanza, restart the agent   (about 1 minute; the first build pulls base images)
+bash tools/ops/demo-round.sh add-challenge /d/work/challenge-intake-2026-11-21/adapted/delos delos http 8000 128
+# 2. the platform: put it on air on the channel crew-test, silently (no "New on air" notice)
+bash tools/ops/demo-round.sh run own_setup delos
+```
+
+`add-challenge <folder> <slug> <http|tcp> <port> [mem_mb]`: the **port** is the one your challenge listens on inside its container (the `EXPOSE` or the one in the server's code); `mem_mb` is the limit (64 to 128 for most; give a challenge that writes much to `/tmp` more). Write the folder with forward slashes. It prints `ADDED: <slug> ...` when the agent has read the new manifest; it first checks the new manifest with the agent's own loader, so a typo cannot take the host down, and keeps the old one as `/etc/l3mon/challenges.toml.before-add`. Adding the same slug again replaces it (use that after changing the folder). The adaptation rules of docs/deploy/instancer.md section 4d apply: if Start answers "could not be started just now", read the agent's log on the challenge VM (`sudo docker logs l3mon-challenge-host-agent-1`) and the container's own output.
+
+Then, as in B: sign in as your player, **Channels, Crew test**, the programme "Crew test <Slug>": Start, open the address, solve it with your reference solution, paste the flag. The flag the platform expects is **derived per studio and passed to the container as `FLAG`**: your challenge must serve exactly that value at the end of its solution (nothing is baked into the image). For a raw-TCP challenge see D (the public rule must be opened for your address first, and you connect to the host's IP address).
+
+End as in E: `run cleanup` removes the placeholder, the channel, every instance and any bonus. `cleanup` does **not** remove the challenge from the host's manifest or the image from its registry: they are harmless and are replaced when you add the same slug again.
+
 ## Things that went wrong on 22 Nov, and what each meant
 
 | Seen | Cause | What to do |

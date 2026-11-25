@@ -5,5 +5,6 @@
 set -euo pipefail
 CMD="${1:?usage: run_platform_demo.sh <setup_programme|setup|probe|counts|functional|burst|hostdown_during|hostdown_after|gone|after_gone|reset|expected_tcp|cleanup>}"
 SCRIPT="${2:-$HOME/L3m0nCTF/services/instancer/tools/platform_demo_round.py}"
+shift $(($# < 2 ? $# : 2)) # what is left are the words the command takes (the slugs of own_setup)
 cd "$HOME/L3m0nCTF"
-docker exec "$(tools/compose.sh ps -q ctfd)" l3mon-run /opt/venv/bin/python -c "$(cat "$SCRIPT")" "$CMD" 2>&1 | grep -vE "Loaded module|^ \* |DeprecationWarning|alembic|LegacyAPIWarning"
+docker exec "$(tools/compose.sh ps -q ctfd)" l3mon-run /opt/venv/bin/python -c "$(cat "$SCRIPT")" "$CMD" "$@" 2>&1 | grep -vE "Loaded module|^ \* |DeprecationWarning|alembic|LegacyAPIWarning"

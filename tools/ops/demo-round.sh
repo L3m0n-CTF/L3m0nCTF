@@ -4,7 +4,11 @@
 #   bash tools/ops/demo-round.sh status          the two machines, the public TCP rule, and what the player gate says
 #   bash tools/ops/demo-round.sh vm-start        start the challenge VM and wait until its host stack answers
 #   bash tools/ops/demo-round.sh vm-stop         stop the challenge VM (every instance on it ends)
-#   bash tools/ops/demo-round.sh run <command>   ship platform_demo_round.py to the platform VM and run one command of it there (see the list below)
+#   bash tools/ops/demo-round.sh run <command> [slug ...]   ship platform_demo_round.py to the platform VM and run one command of it there (see the list below)
+#   bash tools/ops/demo-round.sh add-challenge <folder> <slug> <http|tcp> <port> [mem_mb]
+#                                                put YOUR challenge on the challenge host: ships the folder (a Dockerfile at its top), builds and pins it there,
+#                                                writes its stanza into the host's manifest and restarts the agent (1 to 3 minutes). Write the folder with
+#                                                forward slashes (/d/work/x). Test hosts only (services/instancer/tools/add_challenge.sh says why).
 #   bash tools/ops/demo-round.sh instance-gate open|crew   who may open an instance's address: open = everybody who has it (for a round with sample challenges
 #                                                          and the player gate closed), crew = nobody until Cloudflare Access is set up (the resting state).
 #                                                          Restarts only the central router; players are not affected. Without `open` every address answers
@@ -18,7 +22,9 @@
 #   functional        the 24 checks of one studio's whole life with an instance (needs `setup`)       about 2.5 minutes
 #   burst             24 studios start at the same moment (creates 24 more hidden test studios)        about 1 minute
 #   hostdown_during / hostdown_after / gone / after_gone / expected_tcp / reset    the parts of the host-down and recovery checks (the runbook says when)
-#   cleanup           takes everything above away again (programmes, channel, sample challenges, test studios, their solves and instances)
+#   own_setup <slug> [slug ...]   puts YOUR challenge (already on the host through add-challenge) on the channel "crew-test" and on air WITHOUT the "New on air"
+#                     notice: a placeholder of 0 TRP named after the slug, so players see only that name. You test in your own studio, no test studio is made.
+#   cleanup           takes everything above away again (programmes, channel, sample and own challenges, test studios, their solves, instances and any channel bonus)
 #
 # It needs, on this laptop: bash (Git Bash on Windows), gcloud signed in, and the Google Cloud project id in CLOUDSDK_CORE_PROJECT (no id is written here).
 # The gate itself is opened and closed with tools/ops/gate.sh. Everything can be changed without editing: L3MON_GCLOUD (gcloud), L3MON_GCLOUD_CONFIG (l3mon-new),
@@ -89,9 +95,23 @@ case "$ACTION" in
   run)
     CMD="${2:-}"
     [[ "$CMD" =~ ^[a-z_]+$ ]] || usage
+    shift 2
+    for word in "$@"; do [[ "$word" =~ ^[a-z0-9][a-z0-9_-]{0,47}$ ]] || usage; done # the only words a command takes are slugs
     g compute scp --zone="$ZONE" --tunnel-through-iap --quiet \
       "$HERE/services/instancer/tools/platform_demo_round.py" "$HERE/services/instancer/tools/run_platform_demo.sh" "$APP":/tmp/
-    on_vm "$APP" "sed -i 's/\\r\$//' /tmp/platform_demo_round.py /tmp/run_platform_demo.sh; bash /tmp/run_platform_demo.sh $CMD /tmp/platform_demo_round.py"
+    on_vm "$APP" "sed -i 's/\\r\$//' /tmp/platform_demo_round.py /tmp/run_platform_demo.sh; bash /tmp/run_platform_demo.sh $CMD /tmp/platform_demo_round.py $*"
+    ;;
+
+  add-challenge)
+    FOLDER="${2:-}" SLUG="${3:-}" PROTO="${4:-}" PORT="${5:-}" MEM="${6:-128}"
+    [[ -d "$FOLDER" && -f "$FOLDER/Dockerfile" ]] || { echo "the folder must exist and have a Dockerfile at its top (write it with forward slashes): $FOLDER" >&2; exit 2; }
+    [[ "$SLUG" =~ ^[a-z0-9][a-z0-9_-]{0,47}$ && "$PROTO" =~ ^(http|tcp)$ && "$PORT" =~ ^[0-9]{1,5}$ && "$MEM" =~ ^[0-9]{2,4}$ ]] || usage
+    PACK_DIR="$(mktemp -d)"
+    trap 'rm -rf "$PACK_DIR"' EXIT
+    tar -czf "$PACK_DIR/addchal-$SLUG.tgz" --exclude=.git --exclude=node_modules -C "$FOLDER" .
+    echo "shipping the folder ($(du -h "$PACK_DIR/addchal-$SLUG.tgz" | cut -f1)) to the challenge VM ..."
+    g compute scp --zone="$ZONE" --tunnel-through-iap --quiet "$PACK_DIR/addchal-$SLUG.tgz" "$HERE/services/instancer/tools/add_challenge.sh" "$CHAL":/tmp/
+    on_vm "$CHAL" "sed -i 's/\\r\$//' /tmp/add_challenge.sh; bash /tmp/add_challenge.sh $SLUG $PROTO $PORT $MEM /tmp/addchal-$SLUG.tgz"
     ;;
 
   *) usage ;;

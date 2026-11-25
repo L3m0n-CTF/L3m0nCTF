@@ -77,7 +77,8 @@ def call(c, nonce, method, path, body=None):
         return r.status_code, None
 
 
-def setup(with_studios=True):
+def setup(with_studios=True, items=None):
+    items = DEMOS if items is None else items
     from CTFd.plugins.l3mon_core import audit
     from CTFd.plugins.l3mon_core.clock import now
     from CTFd.plugins.l3mon_core.models import Channel, Programme
@@ -89,8 +90,8 @@ def setup(with_studios=True):
     rc.announce = lambda *a, **k: None
     notes_before = Notifications.query.count()
     ids = []
-    for slug, name, number in DEMOS:
-        row = Challenges.query.filter_by(name=name).first()
+    for slug, name, number in items:
+        row = Challenges.query.filter_by(name=name, category="crew-test").first()
         if row is None:
             row = Challenges(name=name, category="crew-test", description="Crew test of the instancer. Not part of the contest.", value=0, state="hidden", type="standard", max_attempts=0)
             db.session.add(row)
@@ -128,6 +129,31 @@ def setup(with_studios=True):
             uid, tid = make_studio(i)
             out(f"studio {i}: user {uid}, team {tid}")
     return 0
+
+
+def own_setup():
+    """Your own challenge(s), already on the challenge host (add-challenge), on the channel "crew-test" and on air, the same silent way as the samples.
+
+    Each slug is the slug in the host's manifest. The challenge made here is a placeholder (0 TRP, category crew-test, named "Crew test <Slug>"): nothing of the
+    real challenge's text or files is put on the platform, only its instance. It is never matched with a real challenge by name, and `cleanup` takes it away.
+    """
+    import re
+    from CTFd.plugins.l3mon_core.models import Programme
+    slugs = sys.argv[2:]
+    if not slugs or not all(re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,47}", s) for s in slugs):
+        out("usage: own_setup <slug> [slug ...]   (a slug is the one given to add-challenge: lower-case letters, digits, - and _)")
+        return 2
+    taken = {p.number for p in Programme.query.all()}
+    items = []
+    for slug in slugs:
+        name = "Crew test " + slug.replace("-", " ").replace("_", " ").title()
+        have = Programme.query.filter_by(slug=slug).first()
+        number = have.number if have is not None else 906
+        while have is None and number in taken:
+            number += 1
+        taken.add(number)
+        items.append((slug, name, number))
+    return setup(False, items)
 
 
 def probe():
@@ -441,6 +467,14 @@ def cleanup():
     serialize()
     ch = Channel.query.filter_by(slug=CHANNEL).first()
     if ch is not None:
+        # a studio that solved every programme of the channel was paid the channel bonus (an award in the studio's own total): take those awards away too,
+        # whoever the studio is (your own studio included), before the channel and its bonus records go
+        from CTFd.plugins.l3mon_core.models import ChannelBonus
+        award_ids = [b.award_id for b in ChannelBonus.query.filter_by(channel_id=ch.id).all() if b.award_id]
+        if award_ids:
+            Awards.query.filter(Awards.id.in_(award_ids)).delete(synchronize_session=False)
+            db.session.commit()
+            out("channel bonus awards taken away:", len(award_ids))
         for p in Programme.query.filter_by(channel_id=ch.id).all():
             slug = p.slug
             db.session.delete(p)
@@ -491,11 +525,12 @@ def counts():
     from CTFd.plugins.l3mon_core.models import Channel, Programme
     out("users", Users.query.count(), "teams", Teams.query.count(), "challenges", Challenges.query.count(), "solves", Solves.query.count(),
         "submissions", Submissions.query.count(), "channels", Channel.query.count(), "programmes", Programme.query.count())
-    out("test users:", Users.query.filter(Users.name.like(PREFIX + "-%")).count())
+    from CTFd.plugins.l3mon_core.models import ChannelBonus
+    out("test users:", Users.query.filter(Users.name.like(PREFIX + "-%")).count(), "| channel bonus rows:", ChannelBonus.query.count())
     from CTFd.plugins.l3mon_instances.models import L3monInstance
     out("instance rows:", L3monInstance.query.count(), "| live ones:", L3monInstance.query.filter(L3monInstance.state.in_(["starting", "running"])).count())
     return 0
 
 
 with app.app_context():
-    sys.exit({"setup": setup, "probe": probe, "counts": counts, "setup_programme": lambda: setup(False), "functional": functional, "reset": reset, "burst": burst, "hostdown_during": hostdown_during, "hostdown_after": hostdown_after, "gone": gone, "after_gone": after_gone, "cleanup": cleanup, "expected_tcp": expected_tcp}[CMD]())
+    sys.exit({"setup": setup, "probe": probe, "counts": counts, "setup_programme": lambda: setup(False), "own_setup": own_setup, "functional": functional, "reset": reset, "burst": burst, "hostdown_during": hostdown_during, "hostdown_after": hostdown_after, "gone": gone, "after_gone": after_gone, "cleanup": cleanup, "expected_tcp": expected_tcp}[CMD]())

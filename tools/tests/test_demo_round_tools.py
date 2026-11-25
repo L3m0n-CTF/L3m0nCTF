@@ -20,6 +20,7 @@ ROOT = Path(__file__).resolve().parents[2]
 WRAPPER = ROOT / "tools" / "ops" / "demo-round.sh"
 RUNNER = ROOT / "services" / "instancer" / "tools" / "run_platform_demo.sh"
 SCRIPT = ROOT / "services" / "instancer" / "tools" / "platform_demo_round.py"
+ADDER = ROOT / "services" / "instancer" / "tools" / "add_challenge.sh"
 RUNBOOK = ROOT / "docs" / "runbooks" / "19-instancer-demo-round.md"
 GIT_BASH = "C:/Program Files/Git/bin/bash.exe"
 BASH = os.environ.get("L3MON_BASH") or (GIT_BASH if sys.platform == "win32" and os.path.exists(GIT_BASH) else "bash")
@@ -72,7 +73,7 @@ def test_the_script_does_not_print_a_flag_or_a_password():
 
 
 def test_the_shell_files_are_valid_and_executable_in_the_repository():
-    for path in (WRAPPER, RUNNER):
+    for path in (WRAPPER, RUNNER, ADDER):
         done = subprocess.run([BASH, "-n", str(path)], capture_output=True, text=True)
         assert done.returncode == 0, f"{path.name}: {done.stderr}"
 
@@ -170,3 +171,83 @@ def test_the_runbook_tells_when_to_open_and_close_the_instance_gate():
     assert runbook.index("instance-gate open") < runbook.index("## B."), "the instance gate must be opened before the by-hand steps"
     assert runbook.index("instance-gate crew") > runbook.index("## E."), "and put back at the end"
     assert "open to the organising crew only for now" in runbook, "the message a person sees when it was forgotten must be in the table of problems"
+
+
+# ---- your own challenge: add-challenge (the host) and own_setup (the platform) --------------------------------------------------------------------------------
+
+@pytest.fixture
+def folder(tmp_path):
+    d = tmp_path / "my challenge"
+    d.mkdir()
+    (d / "Dockerfile").write_text("FROM scratch\n", encoding="utf-8")
+    return d
+
+
+@pytest.mark.parametrize("args", [
+    ("{folder}", "Bad Slug", "http", "8000"),
+    ("{folder}", "../x", "http", "8000"),
+    ("{folder}", "x", "udp", "8000"),
+    ("{folder}", "x", "http", "80;id"),
+    ("{folder}", "x", "http", "8000", "9"),
+    ("/no/such/folder", "x", "http", "8000"),
+    ("{folder}", "", "http", "8000"),
+])
+def test_add_challenge_refuses_what_it_cannot_ship_and_sends_nothing(fake, folder, args):
+    env, log = fake
+    done = run_wrapper(env, "add-challenge", *[a.replace("{folder}", str(folder)) for a in args])
+    assert done.returncode == 2, done.stderr
+    assert log.read_text(encoding="utf-8") == ""
+
+
+def test_a_folder_without_a_dockerfile_is_refused(fake, tmp_path):
+    env, log = fake
+    (tmp_path / "empty").mkdir()
+    done = run_wrapper(env, "add-challenge", str(tmp_path / "empty"), "x", "http", "8000")
+    assert done.returncode == 2 and "Dockerfile" in done.stderr
+    assert log.read_text(encoding="utf-8") == ""
+
+
+def test_add_challenge_ships_the_folder_and_the_script_to_the_challenge_vm_only(fake, folder):
+    env, log = fake
+    done = run_wrapper(env, "add-challenge", str(folder), "own-delos", "tcp", "9004", "64")
+    assert done.returncode == 0, done.stderr
+    scp, ssh = log.read_text(encoding="utf-8").splitlines()
+    assert "compute scp" in scp and "--tunnel-through-iap" in scp and "addchal-own-delos.tgz" in scp and "add_challenge.sh" in scp and "l3mon-chal:/tmp/" in scp
+    assert "compute ssh l3mon-chal" in ssh and "--tunnel-through-iap" in ssh
+    assert "bash /tmp/add_challenge.sh own-delos tcp 9004 64 /tmp/addchal-own-delos.tgz" in ssh
+    assert "l3mon-app" not in scp + ssh, "adding a challenge to the host never touches the platform VM"
+
+
+def test_run_hands_slugs_to_the_command_and_refuses_any_other_word(fake):
+    env, log = fake
+    assert run_wrapper(env, "run", "own_setup", "own-delos", "second_one").returncode == 0
+    ssh = log.read_text(encoding="utf-8").splitlines()[-1]
+    assert "bash /tmp/run_platform_demo.sh own_setup /tmp/platform_demo_round.py own-delos second_one" in ssh
+    log.write_text("", encoding="utf-8")
+    for bad in ("a b", "x;id", "$(id)", "Up", "../x", ""):
+        assert run_wrapper(env, "run", "own_setup", bad).returncode == 2, bad
+    assert log.read_text(encoding="utf-8") == "", "nothing may be sent to a machine for a refused word"
+
+
+def test_the_adder_checks_the_manifest_with_the_agents_own_loader_before_it_restarts_the_agent():
+    text = ADDER.read_text(encoding="utf-8")
+    assert "from services.instancer.manifest import load_manifest" in text
+    assert text.index("load_manifest") < text.index("docker restart") if "docker restart" in text else text.index("load_manifest") < text.index("$D restart")
+    assert "challenges.toml.before-add" in text or '"$MANIFEST.before-add"' in text, "the old manifest is kept"
+    assert "ttl_minutes = 15" in text and "max_per_team = 1" in text
+
+
+def test_own_setup_is_silent_never_matches_a_real_challenge_and_cleanup_takes_the_channel_bonus_away():
+    """The platform side of your own challenge: it must not tell players 'New on air' (the phase is live during the rehearsal window), must not grab a real
+    challenge that happens to have the same name, and `cleanup` must take away the bonus a studio was paid for finishing the crew-test channel."""
+    text = SCRIPT.read_text(encoding="utf-8")
+    tree = ast.parse(text)
+    functions = {n.name: n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)}
+    assert "own_setup" in functions
+    setup_src = ast.get_source_segment(text, functions["setup"])
+    assert "rc.announce = lambda" in setup_src, "release without the 'New on air' notice"
+    assert 'category="crew-test"' in setup_src, "a challenge is found by name only among the crew-test ones"
+    own_src = ast.get_source_segment(text, functions["own_setup"])
+    assert '"Crew test "' in own_src and "setup(False, items)" in own_src
+    cleanup_src = ast.get_source_segment(text, functions["cleanup"])
+    assert "ChannelBonus" in cleanup_src and cleanup_src.index("ChannelBonus") < cleanup_src.index("db.session.delete(ch)"), "the awards go before the channel does"
