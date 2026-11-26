@@ -1,1 +1,2 @@
 private-key tools/tests/test_deploy_check.py@3f73b57caf51  # a stand-in certificate text in a test (MIIBfake), not a key; the test builds it from pieces since the next commit. Published history is not rewritten.
+flag docs/authors/01-build-a-challenge-image-guide-for-ai-agents.md@9e6bba2d19cd  # two example commands that make a RANDOM test flag on the author's own computer (generators, not flags), pushed by mistake on 27 Nov 2026 and corrected in the very next commit; the owner asked for the CI to be fixed. Published history is not rewritten.
