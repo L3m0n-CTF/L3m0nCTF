@@ -4,6 +4,8 @@
 #   bash tools/ops/demo-round.sh status          the two machines, the public TCP rule, and what the player gate says
 #   bash tools/ops/demo-round.sh vm-start        start the challenge VM and wait until its host stack answers
 #   bash tools/ops/demo-round.sh vm-stop         stop the challenge VM (every instance on it ends)
+#   bash tools/ops/demo-round.sh tcp-check      READ-ONLY preflight for raw-TCP instances: does the name the page shows (h1.inst.l3m0nctf.xyz) point at the challenge VM, DNS only?
+#                                                what does the public TCP rule say? Prints OK / NOTE / PROBLEM lines; exits 1 on a PROBLEM. Run it before every TCP test and on the day.
 #   bash tools/ops/demo-round.sh tcp-open <your-public-IPv4>   switch the public raw-TCP rule ON for YOUR address only (a /32; ports 30000-30199 of the challenge VM).
 #                                                Needed to reach a raw-TCP instance (Zero Cool, Jarvis) from your own computer: the rule rests OFF.
 #   bash tools/ops/demo-round.sh tcp-tunnel <port>   reach a raw-TCP instance from a network that blocks high ports (the Amrita Wi-Fi allows 443 and 8080 only): opens
@@ -59,6 +61,8 @@ fi
 g() { "$GCLOUD" --configuration="$CONFIG" "$@"; }
 # a command given to a machine must NOT begin with a path (Git Bash would rewrite it); every one below begins with a word
 on_vm() { g compute ssh "$1" --zone="$ZONE" --tunnel-through-iap --quiet --command "$2"; }
+# the public address of one of our machines (both have a reserved one, so it is there even while the machine is stopped)
+ip_of() { g compute instances describe "$1" --zone="$ZONE" --format="value(networkInterfaces[0].accessConfigs[0].natIP)"; }
 
 case "$ACTION" in
   help) usage ;;
@@ -99,6 +103,41 @@ case "$ACTION" in
     g compute instances list --format="table(name,machineType.basename(),status)"
     ;;
 
+  tcp-check)
+    # Read-only. Says in plain words whether a raw-TCP instance can be reached by a player's computer: does the name the page shows point at the challenge VM, and what the
+    # firewall rule says. (26 Nov 2026: the owner made the record `chall.instance` instead of `h1.inst`, and for two attempts nobody could tell what was wrong.)
+    NAME="${L3MON_TCP_NAME:-h1.inst.l3m0nctf.xyz}" # the name in the platform's /etc/l3mon/hosts.json (public_tcp_host)
+    CHAL_IP="$(ip_of "$CHAL" 2>/dev/null || true)"
+    STATE="$(g compute instances describe "$CHAL" --zone="$ZONE" --format="value(status)" 2>/dev/null || true)"
+    # Ask Cloudflare's public resolver over HTTPS (port 443, so it works on a network that blocks DNS to outside resolvers; Windows' own nslookup timed out from Git Bash
+    # on 26 Nov). Only the public name is sent. Answers are the `data` fields that are IPv4 addresses.
+    RESP=""
+    for _try in 1 2 3; do # one request in a while is dropped on a bad network: ask up to three times before saying the service cannot be reached
+      RESP="$("${L3MON_CURL:-curl}" -s -m 12 -H 'accept: application/dns-json' "https://cloudflare-dns.com/dns-query?name=$NAME&type=A" 2>/dev/null || true)"
+      [[ -n "$RESP" ]] && break
+      sleep "${L3MON_RETRY_PAUSE:-2}"
+    done
+    ANSWERS="$(grep -oE '"data":"([0-9]{1,3}\.){3}[0-9]{1,3}"' <<<"$RESP" | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' | sort -u | tr '\n' ' ' | sed 's/ $//' || true)"
+    RULE="$(g compute firewall-rules describe l3mon-chal-allow-tcp-relays --format="value(disabled,sourceRanges.list())" 2>/dev/null || true)"
+    BAD=0
+    echo "challenge VM $CHAL: ${STATE:-unknown}  (public address ${CHAL_IP:-unknown})"
+    if [[ -z "$RESP" ]]; then
+      echo "PROBLEM  could not ask the DNS service (no internet from this computer?): the name $NAME was not checked"; BAD=1
+    elif [[ -n "$CHAL_IP" && "$ANSWERS" == "$CHAL_IP" ]]; then
+      echo "OK       the name the page shows, $NAME, points at the challenge VM ($ANSWERS), DNS only"
+    elif [[ -z "$ANSWERS" ]]; then
+      echo "PROBLEM  the name the page shows, $NAME, does not exist in DNS yet: add an A record named h1.inst with address ${CHAL_IP:-<the address of the challenge VM>}, proxy status DNS only (grey cloud)"; BAD=1
+    else
+      echo "PROBLEM  the name the page shows, $NAME, points at $ANSWERS, not at the challenge VM (${CHAL_IP:-unknown}). If these are 104.x or 172.67.x it is Cloudflare's orange cloud (the wildcard record): add or rename a record to h1.inst, address ${CHAL_IP:-<the address of the challenge VM>}, DNS only"; BAD=1
+    fi
+    case "$RULE" in
+      "True"*) echo "OK       the public TCP rule is OFF (resting state)" ;;
+      "False"*) echo "NOTE     the public TCP rule is ON for: ${RULE#False}   (put it back with tcp-close when you are done)" ;;
+      *) echo "PROBLEM  could not read the public TCP rule"; BAD=1 ;;
+    esac
+    exit "$BAD"
+    ;;
+
   tcp-open)
     # The rule `l3mon-chal-allow-tcp-relays` is what lets the internet reach a raw-TCP instance. It rests OFF. This opens it for ONE address, never for everybody:
     # a single public IPv4 address, not a private one, as a /32. (On 25 Nov 2026 the owner's first raw-TCP test failed because the rule was off all day.)
@@ -126,7 +165,6 @@ case "$ACTION" in
       echo "give the PORT the page shows for your instance (30000 to 30199), e.g.  tcp-tunnel 30000" >&2
       exit 2
     fi
-    ip_of() { g compute instances describe "$1" --zone="$ZONE" --format="value(networkInterfaces[0].accessConfigs[0].natIP)"; }
     APP_IP="$(ip_of "$APP")"
     CHAL_IP="$(ip_of "$CHAL")"
     OCT='(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])'

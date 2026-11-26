@@ -97,7 +97,13 @@ Resolve-DnsName h1.inst.l3m0nctf.xyz -Server 1.1.1.1 -Type A
 
 (Your computer may keep the old answer for up to 5 minutes: `ipconfig /flushdns`.)
 
-**Which name?** The page shows the name in the platform's `/etc/l3mon/hosts.json` (`public_tcp_host`), read once when the platform app starts: today `h1.inst.l3m0nctf.xyz`. Any DNS-only record that points at the host's address reaches the host: the host does not look at the name. On 26 Nov 2026 the owner created **`chall.instance.l3m0nctf.xyz` -> `34.180.12.8` (DNS only)** instead of `h1.inst`; it resolves correctly (checked against 1.1.1.1, 8.8.8.8 and his own resolver). While `hosts.json` still says `h1.inst`, the page shows `h1.inst.l3m0nctf.xyz` (which still points at Cloudflare and will not connect): **connect to `chall.instance.l3m0nctf.xyz` and the PORT the page shows**. Before the event pick one, so that players can copy the address from the page: add a second DNS-only record `h1.inst` -> `34.180.12.8` (no change to the platform), or change `public_tcp_host` to `chall.instance.l3m0nctf.xyz` in `/etc/l3mon/hosts.json` on the platform VM and restart the platform app (a production change: the owner's yes, a quiet moment).
+**One name: `h1.inst`.** The page shows the name in the platform's `/etc/l3mon/hosts.json` (`public_tcp_host`), which is `h1.inst.l3m0nctf.xyz`; it is read once when the platform app starts, so the DNS record must carry exactly that name (a second host would be `h2.inst`). On 26 Nov 2026 the record was first created as `chall.instance` by mistake: it pointed at the right address but the page never shows that name, so a player copying the address from the page still went to Cloudflare. **Rename the record** (Cloudflare, DNS, Records, edit it, change Name to `h1.inst`, keep DNS only, Save) rather than changing the platform, which would mean a restart of production. Then ask the machine, it takes seconds and changes nothing:
+
+```bash
+bash tools/ops/demo-round.sh tcp-check
+```
+
+It prints `OK`, `NOTE` or `PROBLEM` lines in words: whether the name points at the challenge VM (and, if not, where it points instead), and what the public TCP rule says. Run it before every TCP test and on the morning of the event. It needs `nslookup` (on Windows it is there already).
 
 **2. The Google firewall rule `l3mon-chal-allow-tcp-relays` must be ON for the connecting address.** It rests OFF, with source `0.0.0.0/0`. For a test, switch it on for your own public address only, and switch it off afterwards (`status` shows its state; neither command touches a machine):
 
@@ -111,11 +117,9 @@ Your public address is the `ip=` line of `https://1.1.1.1/cdn-cgi/trace` (open i
 **Connect.** Windows has no `nc`; use `ncat` (it comes with Nmap, already installed on the owner's computer) with the host and port the page shows:
 
 ```powershell
-ncat chall.instance.l3m0nctf.xyz <port>
-Test-NetConnection chall.instance.l3m0nctf.xyz -Port <port>
+ncat h1.inst.l3m0nctf.xyz <port>
+Test-NetConnection h1.inst.l3m0nctf.xyz -Port <port>
 ```
-
-(`chall.instance...` is the record the owner made; use `h1.inst...` once that record exists too and the page shows it.)
 
 `Test-NetConnection` only says whether the port answers (`TcpTestSucceeded : True`). The sample `demo-tcp` answers one line of greeting and, after you send `flag` and a newline, one flag line. On the host the same name is **not** needed: from the challenge VM itself the check uses the private address, which is why that check passed on 22 Nov without any of the above.
 
@@ -127,7 +131,7 @@ foreach ($p in 443, 8080, 30000) { $c = Test-NetConnection portquiz.net -Port $p
 
 If 30000 is `BLOCKED`, no setting of ours can help from that network. Two ways round it for a test:
 
-1. **The tunnel (works from any network that allows the `gcloud` commands, proved from the owner's laptop on the Amrita Wi-Fi):** start the instance on the page, note its port, then in ONE PowerShell window `bash tools/ops/demo-round.sh tcp-tunnel <port>` (it opens the rule for the platform VM's address only and holds an SSH forward open; the port must be 30000 to 30199), and in ANOTHER window connect to **`localhost`** and the same port: `ncat localhost <port>`, or `remote('localhost', <port>)` in a script. The first window prints the line that closes it; run that in a third PowerShell window (Ctrl+C was tried on 26 Nov and did **not** stop the forward): `Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'putty.exe' -and $_.CommandLine -match '-L <port>:' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }`, after which the first window ends by itself (tried: nothing was left behind); then `tcp-close`. The forward opens about 20 seconds after you start the tool. The route is laptop, IAP (port 443), platform VM, the host's public address, the relay: the same public path a player takes, apart from the first leg.
+1. **The tunnel (works from any network that allows the `gcloud` commands, proved from the owner's laptop on the Amrita Wi-Fi):** start the instance on the page, note its port, then in ONE PowerShell window `bash tools/ops/demo-round.sh tcp-tunnel <port>` (it opens the rule for the platform VM's address only and holds an SSH forward open; the port must be 30000 to 30199), and in ANOTHER window connect to **`localhost`** and the same port: `ncat localhost <port>`, or `remote('localhost', <port>)` in a script. For Zero Cool the owner's solver takes `[host] [port] [binary]`: `python D:\work\challenge-intake-2026-11-21\sivaa\Pwn\Zero_Cool\solution\solve.py localhost <port> D:\work\challenge-intake-2026-11-21\sivaa\Pwn\Zero_Cool\challenge_files\zero_cool` prints `FLAG FOUND: ...` (it solves the 21-bit proof of work by itself and retries on a new connection). The first window prints the line that closes it; run that in a third PowerShell window (Ctrl+C was tried on 26 Nov and did **not** stop the forward): `Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'putty.exe' -and $_.CommandLine -match '-L <port>:' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }`, after which the first window ends by itself (tried: nothing was left behind); then `tcp-close`. The forward opens about 20 seconds after you start the tool. The route is laptop, IAP (port 443), platform VM, the host's public address, the relay: the same public path a player takes, apart from the first leg.
 2. **A phone hotspot:** switch the laptop to it, read the address again (it changes with the network and, on a mobile or campus network, even within the hour: `157.51.60.219`, `202.88.252.190` and `103.5.112.80` were all this one laptop on 26 Nov), run `tcp-open <that address>` and connect to the name and port as above.
 
 **For players** this is the same wall: a team on a network that lets only web ports out cannot reach a raw-TCP challenge, whatever we do. The rules and the FAQ should say that the raw-TCP challenges use ports 30000 to 30199 and that a phone hotspot or a VPN is the way round. (The on-campus finals network is a decision for the Amrita IT team: ask them to allow outbound TCP 30000 to 30199 to the host, or to allow the finalists' addresses.)

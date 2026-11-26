@@ -360,3 +360,118 @@ def test_tcp_tunnel_refuses_when_the_challenge_vm_has_no_address_and_opens_nothi
 def test_the_runbook_explains_the_blocked_network_and_the_tunnel():
     runbook = RUNBOOK.read_text(encoding="utf-8")
     assert "tcp-tunnel" in runbook and "Amrita" in runbook and "portquiz" in runbook
+
+
+# ---- tcp-check: the read-only preflight ---------------------------------------------------------------------------------------------------------------------
+# 26 Nov 2026: the DNS record was made as `chall.instance` instead of `h1.inst` and nothing said so. tcp-check says it, in words, before anybody spends VM time.
+
+FAKE_GCLOUD_CHECK = """#!/usr/bin/env bash
+echo "gcloud $*" >> "$FAKE_LOG"
+case "$*" in
+  *"value(status)"*) echo "${FAKE_STATE-TERMINATED}" ;;
+  *natIP*) echo "${FAKE_CHAL_IP-198.51.100.20}" ;;
+  *"firewall-rules describe"*) printf '%b\n' "${FAKE_RULE-True\t0.0.0.0/0}" ;;
+esac
+exit 0
+"""
+
+FAKE_CURL = """#!/usr/bin/env bash
+# a fake of curl for the DNS-over-HTTPS question: FAKE_NS_ADDRS is a space separated list of answers; empty = a name with no answer; FAKE_NS_DOWN=1 = no internet
+[ -n "${FAKE_NS_DOWN-}" ] && exit 6
+echo "curl $*" >> "$FAKE_LOG"
+printf '{"Status":0,"TC":false,"Question":[{"name":"x","type":1}]'
+if [ -n "${FAKE_NS_ADDRS-198.51.100.20}" ]; then
+  printf ',"Answer":[{"name":"x","type":5,"TTL":300,"data":"alias.example.net."}'
+  for a in ${FAKE_NS_ADDRS-198.51.100.20}; do printf ',{"name":"x","type":1,"TTL":300,"data":"%s"}' "$a"; done
+  printf ']'
+fi
+printf '}\\n'
+"""
+
+
+@pytest.fixture
+def check_env(fake):
+    env, log = fake
+    bindir = Path(env["PATH"].split(os.pathsep)[0])
+    (bindir / "gcloud").write_text(FAKE_GCLOUD_CHECK, encoding="utf-8", newline="\n")
+    (bindir / "curl").write_text(FAKE_CURL, encoding="utf-8", newline="\n")
+    os.chmod(bindir / "curl", 0o755)
+    env["L3MON_CURL"] = (bindir / "curl").as_posix()  # Git Bash puts its own curl ahead of anything on the inherited PATH
+    env["L3MON_RETRY_PAUSE"] = "0"
+    return env, log
+
+
+def test_tcp_check_is_happy_when_the_name_points_at_the_challenge_vm_and_the_rule_is_off(check_env):
+    env, log = check_env
+    done = run_wrapper(env, "tcp-check")
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert "OK       the name the page shows, h1.inst.l3m0nctf.xyz, points at the challenge VM (198.51.100.20), DNS only" in done.stdout
+    assert "OK       the public TCP rule is OFF" in done.stdout
+    assert "PROBLEM" not in done.stdout and "challenge VM l3mon-chal: TERMINATED" in done.stdout
+
+
+def test_tcp_check_names_the_cloudflare_problem(check_env):
+    env, log = check_env
+    env["FAKE_NS_ADDRS"] = "172.67.132.148 104.21.4.230"
+    done = run_wrapper(env, "tcp-check")
+    assert done.returncode == 1
+    assert "PROBLEM  the name the page shows" in done.stdout and "172.67.132.148" in done.stdout and "104.21.4.230" in done.stdout and "Cloudflare" in done.stdout and "h1.inst" in done.stdout
+
+
+def test_tcp_check_names_a_missing_record(check_env):
+    env, log = check_env
+    env["FAKE_NS_ADDRS"] = ""
+    done = run_wrapper(env, "tcp-check")
+    assert done.returncode == 1 and "does not exist in DNS yet" in done.stdout and "198.51.100.20" in done.stdout
+
+
+def test_tcp_check_counts_only_the_address_answers_not_a_name_or_a_number_in_the_reply(check_env):
+    """The reply holds a CNAME (`data` is a host name), a TTL of 300 and a status: only the IPv4 `data` fields are answers."""
+    env, log = check_env
+    done = run_wrapper(env, "tcp-check")
+    assert done.returncode == 0 and "(198.51.100.20)" in done.stdout and "300" not in done.stdout.replace("198.51.100.20", "")
+
+
+def test_tcp_check_says_so_when_it_cannot_ask_the_dns_service(check_env):
+    env, log = check_env
+    env["FAKE_NS_DOWN"] = "1"
+    done = run_wrapper(env, "tcp-check")
+    assert done.returncode == 1 and "could not ask the DNS service" in done.stdout
+    assert log.read_text(encoding="utf-8").count("curl ") == 0, "the fake is down: no request was recorded"
+
+
+def test_tcp_check_asks_again_when_one_request_is_dropped(check_env, tmp_path):
+    """A request that fails once and then works must not produce a PROBLEM (the owner's network dropped one on 26 Nov)."""
+    env, log = check_env
+    counter = tmp_path / "count"
+    counter.write_text("0", encoding="utf-8")
+    flaky = (tmp_path / "flaky_curl")
+    flaky.write_text("#!/usr/bin/env bash\nn=$(cat \"%s\"); echo $((n+1)) > \"%s\"\n[ \"$n\" -lt 2 ] && exit 28\nexec \"%s\" \"$@\"\n" % (counter.as_posix(), counter.as_posix(), env["L3MON_CURL"]), encoding="utf-8", newline="\n")
+    os.chmod(flaky, 0o755)
+    env["L3MON_CURL"] = flaky.as_posix()
+    done = run_wrapper(env, "tcp-check")
+    assert done.returncode == 0 and "OK       the name the page shows" in done.stdout, done.stdout
+    assert counter.read_text(encoding="utf-8").strip() == "3", "two dropped requests, then the answer"
+
+
+def test_tcp_check_reports_the_rule_when_it_is_on_and_still_exits_clean(check_env):
+    env, log = check_env
+    env["FAKE_RULE"] = "False\t157.51.60.219/32"
+    done = run_wrapper(env, "tcp-check")
+    assert done.returncode == 0
+    assert "NOTE     the public TCP rule is ON for:" in done.stdout and "157.51.60.219/32" in done.stdout and "tcp-close" in done.stdout
+
+
+def test_tcp_check_changes_nothing(check_env):
+    env, log = check_env
+    run_wrapper(env, "tcp-check")
+    calls = log.read_text(encoding="utf-8")
+    assert "describe" in calls
+    for verb in ("update", "start", "stop", "compute ssh", "compute scp", "delete", "create"):
+        assert verb not in calls, f"tcp-check is read-only but called `{verb}`"
+
+
+def test_the_runbook_names_the_check_and_the_one_dns_name():
+    runbook = RUNBOOK.read_text(encoding="utf-8")
+    assert "tcp-check" in runbook
+    assert "chall.instance" in runbook and "h1.inst" in runbook, "the runbook says what happened with the wrongly named record"
