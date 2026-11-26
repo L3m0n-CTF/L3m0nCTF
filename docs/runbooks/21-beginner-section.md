@@ -40,7 +40,7 @@ sudo sh -c 'printf "BEGINNER_TAG=<tag>\nBEGINNER_SECRET_KEY=%s\n" "$(openssl ran
 set -a; . /etc/l3mon/production.env; set +a; tools/compose.sh up -d --wait
 ```
 
-The nginx block answers only the exact name `beginner.l3m0nctf.xyz` (a different domain means editing the `server_name` line in `deploy/nginx/beginner/beginner.conf`). Check from outside: `https://beginner.l3m0nctf.xyz/` answers and a lesson opens (`/c/behind-the-curtain`); the platform (`/readyz`, `/login`) still answers. The block's upstream is looked up per request: if the container is not there, only `beginner.` answers 502.
+Nothing to add in Cloudflare: the wildcard record `*.l3m0nctf.xyz` is proxied (checked on 26 Nov: `beginner.` already resolves to the same Cloudflare addresses as `play.`) and the origin certificate covers `*.l3m0nctf.xyz`. Until the block is deployed the name answers Cloudflare's 525 (nothing at the origin answers to it), which is correct. The nginx block answers only the exact name `beginner.l3m0nctf.xyz` (a different domain means editing the `server_name` line in `deploy/nginx/beginner/beginner.conf`). Check from outside: `https://beginner.l3m0nctf.xyz/` answers and a lesson opens (`/c/behind-the-curtain`); the platform (`/readyz`, `/login`) still answers. The block's upstream is looked up per request: if the container is not there, only `beginner.` answers 502.
 
 The challenges, with a dry run first (nothing is written without `--apply`; the flags file is the author's `flags/beginner_flags.json` and stays on this computer except for the length of the call):
 
