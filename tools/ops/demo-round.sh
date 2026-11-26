@@ -4,6 +4,9 @@
 #   bash tools/ops/demo-round.sh status          the two machines, the public TCP rule, and what the player gate says
 #   bash tools/ops/demo-round.sh vm-start        start the challenge VM and wait until its host stack answers
 #   bash tools/ops/demo-round.sh vm-stop         stop the challenge VM (every instance on it ends)
+#   bash tools/ops/demo-round.sh tcp-open <your-public-IPv4>   switch the public raw-TCP rule ON for YOUR address only (a /32; ports 30000-30199 of the challenge VM).
+#                                                Needed to reach a raw-TCP instance (Zero Cool, Jarvis) from your own computer: the rule rests OFF.
+#   bash tools/ops/demo-round.sh tcp-close       put the rule back to its resting state (OFF, source 0.0.0.0/0). Run it when the TCP test is over.
 #   bash tools/ops/demo-round.sh run <command> [slug ...]   ship platform_demo_round.py to the platform VM and run one command of it there (see the list below)
 #   bash tools/ops/demo-round.sh add-challenge <folder> <slug> <http|tcp> <port> [mem_mb]
 #                                                put YOUR challenge on the challenge host: ships the folder (a Dockerfile at its top), builds and pins it there,
@@ -90,6 +93,30 @@ case "$ACTION" in
   vm-stop)
     g compute instances stop "$CHAL" --zone="$ZONE" --quiet
     g compute instances list --format="table(name,machineType.basename(),status)"
+    ;;
+
+  tcp-open)
+    # The rule `l3mon-chal-allow-tcp-relays` is what lets the internet reach a raw-TCP instance. It rests OFF. This opens it for ONE address, never for everybody:
+    # a single public IPv4 address, not a private one, as a /32. (On 25 Nov 2026 the owner's first raw-TCP test failed because the rule was off all day.)
+    IP="${2:-}"
+    OCT='(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])'
+    if ! [[ "$IP" =~ ^$OCT\.$OCT\.$OCT\.$OCT$ ]]; then
+      echo "give YOUR public IPv4 address, e.g.  tcp-open 203.0.113.7   (open https://1.1.1.1/cdn-cgi/trace in a browser: the line 'ip=' is it)" >&2
+      exit 2
+    fi
+    if [[ "$IP" =~ ^(0\.|10\.|127\.|169\.254\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.|100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.|22[4-9]\.|2[3-5][0-9]\.) ]]; then
+      echo "$IP is not a public address (private, loopback, link-local, carrier-grade NAT or reserved): the rule needs the address the internet sees you as" >&2
+      exit 2
+    fi
+    g compute firewall-rules update l3mon-chal-allow-tcp-relays --source-ranges="$IP/32" --no-disabled
+    g compute firewall-rules describe l3mon-chal-allow-tcp-relays --format="table(name,disabled,sourceRanges.list():label=FROM,allowed[].map().firewall_rule().list():label=PORTS)"
+    echo "THE PUBLIC TCP RULE IS ON for $IP only. Put it back with:  bash tools/ops/demo-round.sh tcp-close"
+    ;;
+
+  tcp-close)
+    g compute firewall-rules update l3mon-chal-allow-tcp-relays --source-ranges="0.0.0.0/0" --disabled
+    g compute firewall-rules describe l3mon-chal-allow-tcp-relays --format="table(name,disabled,sourceRanges.list():label=FROM,allowed[].map().firewall_rule().list():label=PORTS)"
+    echo "the public TCP rule is OFF again (resting state)."
     ;;
 
   run)

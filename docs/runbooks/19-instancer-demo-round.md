@@ -85,16 +85,37 @@ bash tools/ops/demo-round.sh run hostdown_after
 
 Expect: while the agent is stopped a start by a studio with no instance is refused at once ("No instancer host has capacity", retry in 30 s) and a studio's running instance is shown as `error`; after the start a fresh start works within seconds and the instance is `running` again (the platform keeps a "host down" mark for 30 s, so `hostdown_after` waits). Add `--project` to the `gcloud` lines if `CLOUDSDK_CORE_PROJECT` is not set. For an instance that disappears from the host: `run gone` prints an instance id of studio 2; on the challenge VM find its container with `sudo docker ps -a --format '{{.ID}} {{.Names}} {{.Labels}}' | grep <instance id>` and remove it with `sudo docker rm -f <container id>`; then `run after_gone` expects the platform to stop showing it as running at once.
 
-## D. One raw-TCP check (optional; opens the public rule for your address only)
+## D. A raw-TCP instance (Zero Cool, Jarvis, the sample `demo-tcp`): what must be true BEFORE `ncat` can work
 
-The public rule `l3mon-chal-allow-tcp-relays` is disabled, so from your computer a TCP instance cannot be reached. To try it, give the rule your address for an hour, enable it, and put it back afterwards. This changes the cloud firewall: do it only on purpose. (These two lines are ordinary gcloud and were **not** run in the 22 Nov round: the round connected from inside the host's own network. Check the rule afterwards with `bash tools/ops/demo-round.sh status`.)
+The page gives a TCP instance a name and a port: `h1.inst.l3m0nctf.xyz` and a number from 30000 to 30199. For a player's connection to reach the challenge host, **two things outside the platform must be true**. The first raw-TCP test from a real computer (25 Nov 2026, Zero Cool) failed because **neither was**: the audit log of the Google project shows nobody touched the firewall rule between 24 Nov and the end of the session, and `h1.inst.l3m0nctf.xyz` resolved to the same two Cloudflare addresses as `play.l3m0nctf.xyz`. (The 22 Nov round had connected from inside the host's own network, which needs neither, so it never showed.)
 
-```bash
-gcloud --configuration=l3mon-new compute firewall-rules update l3mon-chal-allow-tcp-relays --source-ranges="<your public IP>/32" --no-disabled
-gcloud --configuration=l3mon-new compute firewall-rules update l3mon-chal-allow-tcp-relays --source-ranges="0.0.0.0/0" --disabled
+**1. DNS: the name must point at the host, with the orange cloud OFF.** Cloudflare, `l3m0nctf.xyz`, DNS, Records, Add record: Type `A`, Name `h1.inst`, IPv4 address `34.180.12.8`, Proxy status **DNS only** (the grey cloud), TTL Auto, Save. The wildcard `*` record stays as it is (orange): it serves the random instance names of web challenges, and a record with an exact name always wins over it. Cloudflare's orange cloud carries web traffic only; a raw-TCP connection sent through it is never answered. Check from your computer (PowerShell), it must print `34.180.12.8` and **not** `104.21.x.x` or `172.67.x.x`:
+
+```powershell
+Resolve-DnsName h1.inst.l3m0nctf.xyz -Server 1.1.1.1 -Type A
 ```
 
-Connect to the host's **public IP address** (`34.180.12.8`) and the port the page shows, not to the name: the name `h1.inst.l3m0nctf.xyz` points at Cloudflare through the wildcard record, which does not carry raw TCP. For the event that name needs its own **DNS-only (grey cloud)** record to the host's address. The sample answers one line of greeting and, after you send `flag` and a newline, one flag line. The second command above is not optional: it puts the rule back to what it was.
+(Your computer may keep the old answer for up to 5 minutes: `ipconfig /flushdns`.)
+
+**2. The Google firewall rule `l3mon-chal-allow-tcp-relays` must be ON for the connecting address.** It rests OFF, with source `0.0.0.0/0`. For a test, switch it on for your own public address only, and switch it off afterwards (`status` shows its state; neither command touches a machine):
+
+```bash
+bash tools/ops/demo-round.sh tcp-open <your public IPv4 address>
+bash tools/ops/demo-round.sh tcp-close
+```
+
+Your public address is the `ip=` line of `https://1.1.1.1/cdn-cgi/trace` (open it in a browser on the same network you will test from; on a phone hotspot or at home it is a different address than on the campus network). `tcp-open` refuses anything that is not one public address, so it can never open the rule to everybody. **For the event** the rule must be ON for everybody (`--source-ranges=0.0.0.0/0 --no-disabled`) when players may start TCP instances: that is a decision for the day, not a thing this tool does.
+
+**Connect.** Windows has no `nc`; use `ncat` (it comes with Nmap, already installed on the owner's computer) with the host and port the page shows:
+
+```powershell
+ncat h1.inst.l3m0nctf.xyz <port>
+Test-NetConnection h1.inst.l3m0nctf.xyz -Port <port>
+```
+
+`Test-NetConnection` only says whether the port answers (`TcpTestSucceeded : True`). The sample `demo-tcp` answers one line of greeting and, after you send `flag` and a newline, one flag line. On the host the same name is **not** needed: from the challenge VM itself the check uses the private address, which is why that check passed on 22 Nov without any of the above.
+
+If both are true and it still fails: try a phone hotspot (a campus or home network can block outbound connections to high ports; unverified), start a fresh instance (the relay port is chosen at Start), and read the agent's log on the challenge VM (`sudo docker logs --tail 40 l3mon-challenge-host-agent-1`) and the router's (`l3mon-challenge-host-router-1`).
 
 ## E. End (about 3 minutes)
 
@@ -102,12 +123,13 @@ Connect to the host's **public IP address** (`34.180.12.8`) and the port the pag
 bash tools/ops/demo-round.sh run cleanup
 bash tools/ops/demo-round.sh run counts
 bash tools/ops/demo-round.sh instance-gate crew
+bash tools/ops/demo-round.sh tcp-close
 bash tools/ops/gate.sh open
 bash tools/ops/demo-round.sh vm-stop
 bash tools/ops/demo-round.sh status
 ```
 
-`instance-gate crew` puts the router back to its resting mode (`INSTANCE_ACCESS_MODE=crew`).
+`instance-gate crew` puts the router back to its resting mode (`INSTANCE_ACCESS_MODE=crew`). `tcp-close` is safe to run even when `tcp-open` never was (it sets the rule to its resting state, OFF with source `0.0.0.0/0`); `gate.sh open` only if you closed the player gate.
 
 `cleanup` ends `cleanup done; notifications now: 0`. `counts` must show `challenges 0 ... channels 0 programmes 0`, `test users: 0` and `instance rows: 0 | live ones: 0`. `gate.sh open` ends `GATE IS OPEN: the channels answer players. (confirmed from outside ...)`. `status` must show the challenge VM `TERMINATED` and the TCP rule `DISABLED: True`. Your own player account and studio are never touched by `cleanup`: it removes only what is named `test-inst-`, the channel `crew-test` and the five sample challenges (their solves with them).
 
@@ -129,7 +151,7 @@ bash tools/ops/demo-round.sh run own_setup delos
 
 `add-challenge <folder> <slug> <http|tcp> <port> [mem_mb]`: the **port** is the one your challenge listens on inside its container (the `EXPOSE` or the one in the server's code); `mem_mb` is the limit (64 to 128 for most; give a challenge that writes much to `/tmp` more). Write the folder with forward slashes. It prints `ADDED: <slug> ...` when the agent has read the new manifest; it first checks the new manifest with the agent's own loader, so a typo cannot take the host down, and keeps the old one as `/etc/l3mon/challenges.toml.before-add`. Adding the same slug again replaces it (use that after changing the folder). The adaptation rules of docs/deploy/instancer.md section 4d apply: if Start answers "could not be started just now", read the agent's log on the challenge VM (`sudo docker logs l3mon-challenge-host-agent-1`) and the container's own output.
 
-Then, as in B: sign in as your player, **Channels, Crew test**, the programme "Crew test <Slug>": Start, open the address, solve it with your reference solution, paste the flag. The flag the platform expects is **derived per studio and passed to the container as `FLAG`**: your challenge must serve exactly that value at the end of its solution (nothing is baked into the image). For a raw-TCP challenge see D (the public rule must be opened for your address first, and you connect to the host's IP address).
+Then, as in B: sign in as your player, **Channels, Crew test**, the programme "Crew test <Slug>": Start, open the address, solve it with your reference solution, paste the flag. The flag the platform expects is **derived per studio and passed to the container as `FLAG`**: your challenge must serve exactly that value at the end of its solution (nothing is baked into the image). For a raw-TCP challenge see D first: the DNS-only record `h1.inst` must exist and `tcp-open <your IP>` must have been run; you then connect to the name and port the page shows.
 
 End as in E: `run cleanup` removes the placeholder, the channel, every instance and any bonus. `cleanup` does **not** remove the challenge from the host's manifest or the image from its registry: they are harmless and are replaced when you add the same slug again.
 
@@ -144,6 +166,8 @@ End as in E: `run cleanup` removes the placeholder, the channel, every instance 
 | an unsafe call answers 403 although signed in | CTFd checks its CSRF header only for a JSON request | send `{}` as the body (the page already does) |
 | `host back: the studio's earlier instance is still error` right after the start | the platform keeps its "host down" mark for 30 s | wait 30 s; the check polls for it |
 | an address answers for about 9 s after Stop | the container's 5-second stop grace and the routers' two polling cycles | normal |
+| `ncat` / `nc` to a raw-TCP instance hangs or times out (25 Nov, Zero Cool) | two causes at once: `h1.inst.l3m0nctf.xyz` pointed at Cloudflare (the wildcard record), which does not carry raw TCP, and the Google rule `l3mon-chal-allow-tcp-relays` was OFF | the DNS-only record `h1.inst` and `tcp-open <your IP>` (section D); `tcp-close` afterwards |
+| `nc` is not recognised in PowerShell | Windows has no `nc` | use `ncat` (Nmap) or `Test-NetConnection` (section D) |
 | the instance link did not open when clicked (fixed 22 Nov) | the agent gave an `http://` address; Cloudflare serves 443 only | `INSTANCE_URL_SCHEME` (empty = https for a real domain) |
 
 ## What the wrapper does (to repeat it by hand)

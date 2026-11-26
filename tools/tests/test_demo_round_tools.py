@@ -251,3 +251,52 @@ def test_own_setup_is_silent_never_matches_a_real_challenge_and_cleanup_takes_th
     assert '"Crew test "' in own_src and "setup(False, items)" in own_src
     cleanup_src = ast.get_source_segment(text, functions["cleanup"])
     assert "ChannelBonus" in cleanup_src and cleanup_src.index("ChannelBonus") < cleanup_src.index("db.session.delete(ch)"), "the awards go before the channel does"
+
+
+# ---- the public raw-TCP rule: tcp-open (one address, never everybody) and tcp-close -------------------------------------------------------------------------
+# On 25 Nov 2026 the owner's first raw-TCP test (Zero Cool) failed: the Google rule `l3mon-chal-allow-tcp-relays` rests OFF and nothing had switched it on all
+# day (the audit log shows no change), and the address the page gave, h1.inst.l3m0nctf.xyz, pointed at Cloudflare. These two actions make the rule's use safe.
+
+def test_tcp_open_switches_the_rule_on_for_one_address_only(fake):
+    env, log = fake
+    done = run_wrapper(env, "tcp-open", "203.0.113.7")
+    assert done.returncode == 0, done.stderr
+    calls = log.read_text(encoding="utf-8").splitlines()
+    update = [c for c in calls if "firewall-rules update" in c]
+    assert len(update) == 1
+    assert "l3mon-chal-allow-tcp-relays" in update[0] and "--source-ranges=203.0.113.7/32" in update[0] and "--no-disabled" in update[0]
+    assert "0.0.0.0/0" not in update[0], "the rule is never opened to everybody by this tool"
+    assert all("instances" not in c for c in calls), "no machine is started, stopped or changed"
+    assert "PUBLIC TCP RULE IS ON" in done.stdout
+
+
+@pytest.mark.parametrize("bad", ["", "0.0.0.0", "0.0.0.0/0", "203.0.113.7/24", "256.1.1.1", "1.2.3", "a.b.c.d", "10.0.0.5", "127.0.0.1", "192.168.1.20", "172.16.4.4",
+                                 "172.31.255.1", "169.254.169.254", "100.64.0.1", "100.127.1.1", "224.0.0.1", "255.255.255.255", "203.0.113.7 -x", "$(id)", "203.0.113.7;id"])
+def test_tcp_open_refuses_anything_that_is_not_one_public_address_and_sends_nothing(fake, bad):
+    env, log = fake
+    done = run_wrapper(env, "tcp-open", bad)
+    assert done.returncode == 2, (bad, done.stdout, done.stderr)
+    assert log.read_text(encoding="utf-8") == ""
+
+
+@pytest.mark.parametrize("good", ["1.2.3.4", "8.8.8.8", "100.63.255.255", "100.128.0.1", "172.15.0.1", "172.32.0.1", "203.0.113.7", "223.255.255.254"])
+def test_tcp_open_accepts_public_addresses_next_to_the_private_ranges(fake, good):
+    env, log = fake
+    assert run_wrapper(env, "tcp-open", good).returncode == 0
+    assert f"--source-ranges={good}/32" in log.read_text(encoding="utf-8")
+
+
+def test_tcp_close_puts_the_rule_back_to_its_resting_state(fake):
+    env, log = fake
+    done = run_wrapper(env, "tcp-close")
+    assert done.returncode == 0, done.stderr
+    update = [c for c in log.read_text(encoding="utf-8").splitlines() if "firewall-rules update" in c]
+    assert len(update) == 1 and "l3mon-chal-allow-tcp-relays" in update[0] and "--source-ranges=0.0.0.0/0" in update[0]
+    assert update[0].rstrip().endswith("--disabled") and "--no-disabled" not in update[0], "the resting state is OFF"
+
+
+def test_the_runbook_tells_the_dns_record_and_the_open_and_close_of_the_tcp_rule():
+    runbook = RUNBOOK.read_text(encoding="utf-8")
+    assert "tcp-open" in runbook and "tcp-close" in runbook
+    assert "DNS only" in runbook and "h1.inst" in runbook and "34.180.12.8" in runbook, "the DNS-only record is what makes the name reach the host"
+    assert runbook.index("tcp-open") < runbook.index("tcp-close"), "open before close"
