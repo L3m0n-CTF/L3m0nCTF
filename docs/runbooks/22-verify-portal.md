@@ -15,7 +15,7 @@ unique across all categories. **Organiser codes are the exception:** the organis
 permanent, so an ORG code may hold any five capital letters or digits (section 2). PAR, ACH and APP codes are never written by hand: the tool
 draws them when the codes are issued, after the qualifiers (section 3) and after the finals (section 4).
 **One code per person:** a qualifier who reaches the finals ends with the finals code only (the qualifier code's page then says "replaced" and links to
-the new one). How codes reach people: qualifiers see theirs on the platform's studio page (a later platform release, switched on by the organiser);
+the new one). How codes reach people: qualifiers see theirs on the platform's studio page (step 7 below: loaded with one command, released by any crew account);
 finalists get printed certificates.
 
 ## How it works (and why it can run for years)
@@ -148,6 +148,36 @@ editing its one `server_name` line. The origin certificate already covers `*.l3m
 whole zone. **Access:** the portal must stay public. If the crew Access application ever carries the wildcard `*.l3m0nctf.xyz` (the strict instancer
 set-up, docs/deploy/instancer.md), add a **Bypass** application for `verify.l3m0nctf.xyz`, exactly as for `play`: the most specific hostname wins.
 Optional: a Cloudflare rate-limit rule for `verify.l3m0nctf.xyz` (nginx already allows 60 requests a minute per address).
+
+## 7. The qualifiers' certificates on the platform (after step 6)
+
+Each qualifier participant sees a **"Your certificate"** card at the top of their own studio page (`/team`): their code, a QR code of the
+certificate's address and an "Open your certificate" button. Nobody sees anybody else's code. Nothing shows until a crew account releases
+the certificates, and every player then gets **one** notification, "Certificates are ready" (a short pop-up and the bell, never the
+blocking announcement). Plugin: `plugins/l3mon_certificates`.
+
+1. On the laptop, write the platform's list (the VALID qualifier codes, by platform player id; it is PRIVATE: usernames and codes):
+   ```bash
+   python -m l3mon verify export-platform D:/l3m0nCTF/private-verify/credentials.sqlite D:/l3m0nCTF/private-verify/certificates.json
+   ```
+2. Copy it up (same gcloud configuration as in step 3) and look first: without `--apply` nothing is written, it only says what would change
+   (how many new, changed, removed; player ids with no account; players who renamed themselves, who keep their code):
+   ```bash
+   gcloud compute scp D:\l3m0nCTF\private-verify\certificates.json <platform VM>:/tmp/certificates.json --zone=<zone> --tunnel-through-iap --quiet
+   # on the VM
+   cd ~/L3m0nCTF && set -a && . /etc/l3mon/production.env && set +a
+   docker exec -i "$(tools/compose.sh ps -q ctfd)" bash -c "source /usr/local/lib/l3mon-env.sh; cd /opt/CTFd; python -m CTFd.plugins.l3mon_certificates.loader" < /tmp/certificates.json
+   ```
+3. If it is right, the same command with `loader --apply`, then **delete the copy**: `rm /tmp/certificates.json`. The platform's table is
+   now exactly the list (one line in the audit trail, `certificates.import`). Importing releases nothing.
+4. Release: crew host, **Admin -> Certificates** (`/admin/l3mon/certificates`): **Release now**, or a day and time (IST) and **Release at
+   this time**. Any crew account can; every change is in the audit trail (`certificates.release`, with who did it). **Hide them** takes the
+   card off every studio page at once; the codes stay valid on the portal. The notification is sent once only, ever: releasing again after
+   hiding sends none.
+5. Check: sign in as a test player that has a code and open `/team`: the card shows that player's code, the QR code opens the portal's page.
+
+After a later `issue`, `withdraw` or the finals run, repeat 1-3: a withdrawn code, or a qualifier code replaced by a finals code, leaves the
+platform at the next import (the finalist then has no card: their certificate is printed).
 
 ## Check that it works
 
