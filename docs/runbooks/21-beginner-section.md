@@ -11,7 +11,7 @@ A player opens a programme on the platform, follows the link in its task text, l
 
 ## What is NOT in this repository, on purpose
 
-The source of the site (`app.py`, `challenges.py`, `templates/`, `static/`) holds **every flag** (the lessons need them), and this repository is public. It lives in the owner's private repository and in the author's zip. `tools/ops/beginner.sh pack` makes the archive the image is built from (the author's four things plus our `serve.py` and `guard.py`, which put a time and size limit under the SQL labs so that one heavy query cannot take the site down: the lesson still works), and the repository's scanner (`hygiene`) would fail the build if a flag ever got in here.
+The source of the site (`app.py`, `challenges.py`, `templates/`, `static/`) holds **every flag** (the lessons need them), and this repository is public. It lives in the owner's private repository and in the author's zip. `tools/ops/beginner.sh pack` makes the archive the image is built from (the author's four things plus our `serve.py` and `guard.py`, which put a time budget (half a second), a size limit, a cap of 64 MB on all the memory SQLite may use, and tight limits on one statement (short LIKE pattern, few compound terms, no ATTACH) under the SQL labs so that one heavy query cannot take the site down: the lesson still works), and the repository's scanner (`hygiene`) would fail the build if a flag ever got in here.
 
 ## Decisions that are the owner's (and his superiors'), not the code's
 
