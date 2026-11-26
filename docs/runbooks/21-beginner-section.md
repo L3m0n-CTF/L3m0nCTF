@@ -11,7 +11,7 @@ A player opens a programme on the platform, follows the link in its task text, l
 
 ## What is NOT in this repository, on purpose
 
-The source of the site (`app.py`, `challenges.py`, `templates/`, `static/`) holds **every flag** (the lessons need them), and this repository is public. It lives in the owner's private repository and in the author's zip. `tools/ops/beginner.sh pack` makes the archive the image is built from, and the repository's scanner (`hygiene`) would fail the build if a flag ever got in here.
+The source of the site (`app.py`, `challenges.py`, `templates/`, `static/`) holds **every flag** (the lessons need them), and this repository is public. It lives in the owner's private repository and in the author's zip. `tools/ops/beginner.sh pack` makes the archive the image is built from (the author's four things plus our `serve.py` and `guard.py`, which put a time and size limit under the SQL labs so that one heavy query cannot take the site down: the lesson still works), and the repository's scanner (`hygiene`) would fail the build if a flag ever got in here.
 
 ## Decisions that are the owner's (and his superiors'), not the code's
 
@@ -40,7 +40,7 @@ sudo sh -c 'printf "BEGINNER_TAG=<tag>\nBEGINNER_SECRET_KEY=%s\n" "$(openssl ran
 set -a; . /etc/l3mon/production.env; set +a; tools/compose.sh up -d --wait
 ```
 
-Check from outside: `https://beginner.l3m0nctf.xyz/` answers and a lesson opens (`/c/behind-the-curtain`); the platform (`/readyz`, `/login`) still answers. The block's upstream is looked up per request: if the container is not there, only `beginner.` answers 502.
+The nginx block answers only the exact name `beginner.l3m0nctf.xyz` (a different domain means editing the `server_name` line in `deploy/nginx/beginner/beginner.conf`). Check from outside: `https://beginner.l3m0nctf.xyz/` answers and a lesson opens (`/c/behind-the-curtain`); the platform (`/readyz`, `/login`) still answers. The block's upstream is looked up per request: if the container is not there, only `beginner.` answers 502.
 
 The challenges, with a dry run first (nothing is written without `--apply`; the flags file is the author's `flags/beginner_flags.json` and stays on this computer except for the length of the call):
 

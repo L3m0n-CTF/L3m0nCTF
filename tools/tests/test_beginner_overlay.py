@@ -63,10 +63,10 @@ GOOD = {"BEGINNER_TAG": "test1", "BEGINNER_SECRET_KEY": "a-long-random-string-fo
 
 # ------------------------------------------------------------------ the image
 
-def test_the_image_can_hold_only_the_four_things_its_copy_lines_name():
+def test_the_image_can_hold_only_what_its_copy_lines_name():
     lines = [l.strip() for l in text(DOCKERFILE).splitlines() if l.strip().startswith("COPY")]
     sources = sorted(re.sub(r"--\S+\s*", "", l)[len("COPY "):].rsplit(" ", 1)[0].strip() for l in lines)
-    assert sources == ["app.py challenges.py", "static", "templates"], sources
+    assert sources == ["app.py challenges.py serve.py guard.py", "static", "templates"], sources
     body = text(DOCKERFILE)
     assert not re.search(r"COPY\s+(--\S+\s+)*\.\s", body), "never copy the whole folder: it holds the flags export and the tests"
     for word in ("flags", "tests", "build_files", "export_flags", "requirements.txt"):
@@ -79,7 +79,8 @@ def test_the_image_runs_as_a_normal_user_on_a_pinned_base_shared_with_the_instan
     base = re.search(r"^FROM (python:\S+@sha256:[0-9a-f]{64})$", body, re.M)
     assert base, "the base image is pinned by digest"
     assert base.group(1) in text(ROOT / "services" / "instancer" / "Dockerfile"), "the same base (and so the same scanned layers) as the instancer's image"
-    assert "waitress-serve" in body and "--threads=8" in body and "HEALTHCHECK" in body
+    assert 'CMD ["python", "serve.py"]' in body and "HEALTHCHECK" in body, "started by serve.py, which installs the SQL safety net first"
+    assert "threads=8" in text(ROOT / "deploy" / "beginner" / "serve.py") and "guard.install()" in text(ROOT / "deploy" / "beginner" / "serve.py")
 
 
 def test_the_dependencies_are_pinned_exactly():
@@ -144,7 +145,8 @@ def test_the_block_looks_its_upstream_up_at_request_time_so_a_missing_container_
     assert not re.search(r"^\s*upstream\s+\w+\s*\{", conf, re.M), "an upstream block is resolved when nginx starts: a missing container would stop nginx (and the platform with it)"
     assert "resolver 127.0.0.11" in conf and "set $beginner_upstream http://beginner:8000;" in conf
     assert conf.count("proxy_pass $beginner_upstream;") == 2
-    assert 'server_name "~^beginner\\.";' in conf
+    assert 'server_name "~^beginner\\.l3m0nctf\\.xyz$";' in conf, "anchored to the exact name at both ends (a security review of 26 Nov 2026)"
+    assert not re.search(r'server_name[^;]*~\^beginner\\\."', conf), "never a name that merely starts with beginner."
     for forbidden in ("ctfd_app", "platform-server.conf", "proxy.conf", "instance_router"):
         assert forbidden not in conf, f"the beginner block must not share the platform's rules or upstreams ({forbidden})"
 
@@ -204,6 +206,8 @@ def make_source(folder: Path, junk=True):
     (folder / "challenges.py").write_text("FLAGS = {}\n", encoding="utf-8")
     (folder / "templates" / "index.html").write_text("<p>hi</p>", encoding="utf-8")
     (folder / "static" / "files" / "x" / "download.bin").write_bytes(b"\x00\x01")
+    (folder / "static" / "files" / "x" / "tool").write_bytes(b"ELF")  # a pair like the real strings_attached and strings_attached.exe (MSYS cp merges them)
+    (folder / "static" / "files" / "x" / "tool.exe").write_bytes(b"MZ")
     if junk:
         for name in ("flags", "tests", "build", "__pycache__", ".git"):
             (folder / name).mkdir()
@@ -226,7 +230,7 @@ def test_pack_keeps_only_the_four_allowed_things_whatever_else_the_folder_holds(
     assert done.returncode == 0, done.stdout + done.stderr
     with tarfile.open(out) as tar:
         names = [m.name for m in tar.getmembers() if m.isfile()]
-    assert sorted(names) == ["app.py", "challenges.py", "static/files/x/download.bin", "templates/index.html"], names
+    assert sorted(names) == ["app.py", "challenges.py", "guard.py", "serve.py", "static/files/x/download.bin", "static/files/x/tool", "static/files/x/tool.exe", "templates/index.html"], names
     assert "sha256" in done.stdout and "keep it out of every repository" in done.stdout
 
 

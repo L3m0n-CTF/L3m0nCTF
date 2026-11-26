@@ -5,7 +5,8 @@
 #   mkdir src && tar -xzf out.tgz -C src
 #   docker build -f deploy/beginner/Dockerfile -t l3mon/beginner:<tag> src
 #
-# The image never contains the author's flags/ folder, tests, build files or compiled leftovers: only the four things listed in the COPY lines can get in, whatever else the
+# `pack` adds two small files of ours to the archive (guard.py and serve.py: a time and size limit on the SQL labs, see guard.py); the author's files are not edited.
+# The image never contains the author's flags/ folder, tests, build files or compiled leftovers: only the things listed in the COPY lines can get in, whatever else the
 # folder holds. It runs as an unprivileged user with nothing writable (the compose overlay makes the root file system read-only), and listens on 8000 inside its own network.
 FROM python:3.11-slim@sha256:e88e9763f943ec1834f992a4b51e0f24500486803e8bc534e5767af9ea65f6ce
 
@@ -18,7 +19,7 @@ RUN pip install --no-cache-dir --disable-pip-version-check \
  && useradd -u 10003 -g beginner -M -s /usr/sbin/nologin beginner
 
 WORKDIR /app
-COPY --chown=root:root app.py challenges.py /app/
+COPY --chown=root:root app.py challenges.py serve.py guard.py /app/
 COPY --chown=root:root templates /app/templates
 COPY --chown=root:root static /app/static
 RUN chmod -R a=rX /app
@@ -29,4 +30,4 @@ EXPOSE 8000
 HEALTHCHECK --interval=15s --timeout=4s --retries=5 --start-period=10s \
   CMD ["python", "-c", "import sys, urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/robots.txt', timeout=3).status == 200 else 1)"]
 
-CMD ["waitress-serve", "--host=0.0.0.0", "--port=8000", "--threads=8", "--connection-limit=200", "app:app"]
+CMD ["python", "serve.py"]

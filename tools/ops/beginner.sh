@@ -3,7 +3,8 @@
 #
 #   bash tools/ops/beginner.sh pack <folder> <out.tgz>
 #       Make the source archive the image is built from. <folder> is the Beginners Section (the one with app.py). The archive holds ONLY app.py, challenges.py, templates/ and
-#       static/ (copied by name: nothing else in the folder can get in) and is checked once more before it is kept: no flags export, no tests, no build leftovers, no
+#       static/ of the author (copied by name: nothing else in the folder can get in) and our two files serve.py and guard.py (deploy/beginner/: a time and size limit under
+#       the SQL labs, so that nobody can take the site down with one heavy query). It is checked once more before it is kept: no flags export, no tests, no build leftovers, no
 #       compiled files. It refuses to overwrite a file. challenges.py and the downloads hold the flags (a lesson needs them): the archive is as secret as the flags are.
 #
 #   bash tools/ops/beginner.sh import [--apply] <flags.json>
@@ -14,6 +15,7 @@
 # Overrides: L3MON_GCLOUD, L3MON_GCLOUD_CONFIG (l3mon-new), L3MON_ZONE (asia-south1-a), L3MON_APP_VM (l3mon-app).
 set -euo pipefail
 
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 GCLOUD="${L3MON_GCLOUD:-gcloud}"
 CONFIG="${L3MON_GCLOUD_CONFIG:-l3mon-new}"
 ZONE="${L3MON_ZONE:-asia-south1-a}"
@@ -30,8 +32,14 @@ case "$ACTION" in
       [[ -e "$FOLDER/$need" ]] || { echo "this is not the Beginners Section: $FOLDER/$need is missing" >&2; exit 2; }
     done
     [[ ! -e "$OUT" ]] || { echo "refusing to overwrite $OUT" >&2; exit 2; }
-    # through a redirect, not a file name: GNU tar on Windows reads `C:/...` as a remote host
-    tar -czf - --exclude='__pycache__' --exclude='*.pyc' -C "$FOLDER" app.py challenges.py templates static > "$OUT"
+    # a staging folder: the author's four things by name, plus our two files; then tar from there (through a redirect, not a file name: GNU tar on Windows reads
+    # `C:/...` as a remote host)
+    stage="$(mktemp -d)"
+    trap 'rm -rf "$stage"' EXIT
+    # (tar, not cp: on Windows cp treats `strings_attached` and `strings_attached.exe` as one file and fails)
+    tar -cf - --exclude='__pycache__' --exclude='*.pyc' -C "$FOLDER" app.py challenges.py templates static | tar -xf - -C "$stage"
+    cp "$HERE/deploy/beginner/serve.py" "$HERE/deploy/beginner/guard.py" "$stage/"
+    tar -czf - --exclude='__pycache__' --exclude='*.pyc' -C "$stage" app.py challenges.py serve.py guard.py templates static > "$OUT"
     # belt and braces: whatever happened above, none of these may be in the archive
     if tar -tzf - < "$OUT" | grep -E '(^|/)(flags|tests|build|__pycache__|\.git|\.env)(/|$)|\.pyc$|beginner_flags|requirements\.txt|build_files|export_flags'; then
       rm -f "$OUT"
