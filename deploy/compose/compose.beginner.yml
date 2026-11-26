@@ -1,0 +1,63 @@
+# The beginner site: beginner.<domain> (the Beginners Section of 26 Nov 2026; docs/runbooks/21-beginner-section.md).
+#
+#   L3MON_ENV=production L3MON_OVERLAYS=identity,ops,instancer-central,beginner \
+#   BEGINNER_TAG=<tag of the image built from the beginner source> BEGINNER_SECRET_KEY=<a long random string> \
+#   tools/compose.sh up -d --wait
+#
+# What it adds, and where it goes:
+#   beginner    the small Flask site with the lessons, practice files and live labs. It publishes NO port and sits on a private network that has no way out (`internal`): only nginx
+#               talks to it. It runs as an unprivileged user on a read-only file system with no capabilities, a memory, process and CPU limit. The image is built by hand from
+#               the source, which is NOT in this repository (deploy/beginner/Dockerfile says how), and is chosen by BEGINNER_TAG.
+#   nginx       joins that private network and gets the server block for `beginner.<domain>` (deploy/nginx/beginner/beginner.conf, included by the production template). The block looks
+#               the upstream up when a request arrives, so a missing or stopped beginner container never stops nginx or the platform: only that host answers 502.
+#
+# Not combined with anything else it needs: it works with any other set of overlays. Nothing here touches the database, the flag secret or CTFd. The flags of the lessons are
+# the platform's static flags (plugins/l3mon_release/beginner.py loads them); the site only teaches and lets a learner try a flag.
+
+name: l3mon
+
+services:
+  beginner:
+    image: "l3mon/beginner:${BEGINNER_TAG:?BEGINNER_TAG must be the tag of the image built from the beginner source (docs/runbooks/21-beginner-section.md)}"
+    restart: unless-stopped
+    init: true
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    user: "10003:10003"
+    mem_limit: 256m
+    cpus: 1.0
+    pids_limit: 128
+    tmpfs:
+      - /tmp
+    environment:
+      # signs the candy shop's session cookie; the same value for every worker and across restarts
+      BEGINNER_SECRET_KEY: "${BEGINNER_SECRET_KEY:?BEGINNER_SECRET_KEY must be a long random string (the candy shop's session cookie is signed with it)}"
+      MAIN_SITE: "${BEGINNER_MAIN_SITE:-https://l3m0nctf.xyz}"
+      PLAY_SITE: "${BEGINNER_PLAY_SITE:-https://play.l3m0nctf.xyz}"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import sys, urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/robots.txt', timeout=3).status == 200 else 1)"]
+      interval: 15s
+      timeout: 4s
+      retries: 5
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+    networks:
+      - beginner
+
+  nginx:
+    volumes:
+      - ../nginx/beginner/beginner.conf:/etc/nginx/instances.d/beginner.conf:ro
+    networks:
+      - edge
+      - beginner
+
+networks:
+  beginner:
+    name: l3mon_beginner
+    driver: bridge
+    internal: true
