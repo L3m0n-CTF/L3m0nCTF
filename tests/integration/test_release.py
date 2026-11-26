@@ -84,7 +84,7 @@ CLEANUP = "\n".join([
     "app = create_app()",
     "with app.app_context():",
     "    Channel.query.delete()",
-    "    Notifications.query.filter(Notifications.title.like('%New on air')).delete()",
+    "    Notifications.query.filter(Notifications.title.like('%New on air')).delete(synchronize_session=False)",
     "    Audit.query.delete()",
     "    Configs.query.filter_by(key='l3mon_channel_bonus_trp').delete()",
     "    db.session.commit()",
