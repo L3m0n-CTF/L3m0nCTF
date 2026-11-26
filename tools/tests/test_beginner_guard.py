@@ -73,6 +73,29 @@ def test_a_query_that_asks_for_a_gigabyte_is_refused(guard):
 
 
 @needs_setlimit
+def test_a_query_that_builds_a_lot_of_memory_inside_its_budget_is_stopped_by_the_heap_cap(guard):
+    """A hundred megabytes of rows to sort, built well inside the half second: the cap of 64 MB for all of SQLite answers `out of memory`, the container's 256 MB is never reached."""
+    db = lab_db()
+    heavy = "SELECT count(*) FROM (SELECT x, randomblob(50000) AS b FROM (WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM c WHERE x < 4000) SELECT x FROM c) ORDER BY b)"
+    with pytest.raises((sqlite3.OperationalError, sqlite3.DataError, MemoryError)):
+        db.execute(heavy).fetchall()
+    db.close()
+
+
+@needs_setlimit
+@pytest.mark.parametrize("sql", [
+    "SELECT 1 WHERE 'a' LIKE '" + "%a" * 60 + "'",  # a LIKE pattern of 120 characters
+    "SELECT 1 UNION ALL " + " UNION ALL ".join(["SELECT 1"] * 12),  # 13 compound terms
+    "ATTACH DATABASE ':memory:' AS other",  # a second database
+])
+def test_one_statement_may_not_be_a_pathological_one(guard, sql):
+    db = lab_db()
+    with pytest.raises(sqlite3.Error):
+        db.execute(sql).fetchall()
+    db.close()
+
+
+@needs_setlimit
 def test_a_statement_that_is_too_long_is_refused(guard):
     db = lab_db()
     with pytest.raises(sqlite3.DataError):
