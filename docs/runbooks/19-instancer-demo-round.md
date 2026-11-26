@@ -97,6 +97,8 @@ Resolve-DnsName h1.inst.l3m0nctf.xyz -Server 1.1.1.1 -Type A
 
 (Your computer may keep the old answer for up to 5 minutes: `ipconfig /flushdns`.)
 
+**Which name?** The page shows the name in the platform's `/etc/l3mon/hosts.json` (`public_tcp_host`), read once when the platform app starts: today `h1.inst.l3m0nctf.xyz`. Any DNS-only record that points at the host's address reaches the host: the host does not look at the name. On 26 Nov 2026 the owner created **`chall.instance.l3m0nctf.xyz` -> `34.180.12.8` (DNS only)** instead of `h1.inst`; it resolves correctly (checked against 1.1.1.1, 8.8.8.8 and his own resolver). While `hosts.json` still says `h1.inst`, the page shows `h1.inst.l3m0nctf.xyz` (which still points at Cloudflare and will not connect): **connect to `chall.instance.l3m0nctf.xyz` and the PORT the page shows**. Before the event pick one, so that players can copy the address from the page: add a second DNS-only record `h1.inst` -> `34.180.12.8` (no change to the platform), or change `public_tcp_host` to `chall.instance.l3m0nctf.xyz` in `/etc/l3mon/hosts.json` on the platform VM and restart the platform app (a production change: the owner's yes, a quiet moment).
+
 **2. The Google firewall rule `l3mon-chal-allow-tcp-relays` must be ON for the connecting address.** It rests OFF, with source `0.0.0.0/0`. For a test, switch it on for your own public address only, and switch it off afterwards (`status` shows its state; neither command touches a machine):
 
 ```bash
@@ -109,9 +111,11 @@ Your public address is the `ip=` line of `https://1.1.1.1/cdn-cgi/trace` (open i
 **Connect.** Windows has no `nc`; use `ncat` (it comes with Nmap, already installed on the owner's computer) with the host and port the page shows:
 
 ```powershell
-ncat h1.inst.l3m0nctf.xyz <port>
-Test-NetConnection h1.inst.l3m0nctf.xyz -Port <port>
+ncat chall.instance.l3m0nctf.xyz <port>
+Test-NetConnection chall.instance.l3m0nctf.xyz -Port <port>
 ```
+
+(`chall.instance...` is the record the owner made; use `h1.inst...` once that record exists too and the page shows it.)
 
 `Test-NetConnection` only says whether the port answers (`TcpTestSucceeded : True`). The sample `demo-tcp` answers one line of greeting and, after you send `flag` and a newline, one flag line. On the host the same name is **not** needed: from the challenge VM itself the check uses the private address, which is why that check passed on 22 Nov without any of the above.
 
