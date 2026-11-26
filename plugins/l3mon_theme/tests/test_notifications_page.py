@@ -22,9 +22,14 @@ from tests.helpers import login_as_user
 NOON = datetime.datetime(2026, 11, 28, 6, 0, 0)
 
 
+def plain(title):
+    """The display tag a notification title may start with ([ANNOUNCEMENT], [BACKGROUND], [TOAST]) is a hint to the page; the line's own words are what follows it."""
+    return re.sub(r"^\[[\w-]+\]\s*", "", title or "")
+
+
 def lines_of(html):
-    """[(title, text)] in the order the page lists them."""
-    return [(htmllib.unescape(t), htmllib.unescape(c)) for t, c in re.findall(r'<li class="nt-item"><b class="nt-t">(.*?)</b> <span class="nt-c">(.*?)</span></li>', html, re.S)]
+    """[(title, text)] in the order the page lists them (the tag in front of a title is the page script's hint, not part of the words)."""
+    return [(plain(htmllib.unescape(t)), htmllib.unescape(c)) for t, c in re.findall(r'<li class="nt-item"><b class="nt-t">(.*?)</b> <span class="nt-c">(.*?)</span></li>', html, re.S)]
 
 
 def team_id(name):
@@ -139,7 +144,7 @@ def test_nothing_else_the_board_plugin_closes_is_opened(play):
             assert who.get("/api/v1/notifications/1").status_code in (404, 401, 403)
         assert play.alice.post("/notifications", data={}).status_code in (404, 405, 400, 403)
         api = play.alice.get("/api/v1/notifications?since_id=0")
-        assert api.status_code == 200 and [n["title"] for n in api.get_json()["data"]] == ["One"], "the bell's feed is as it was"
+        assert api.status_code == 200 and [plain(n["title"]) for n in api.get_json()["data"]] == ["One"], "the bell's feed is as it was"
         assert set(api.get_json()["data"][0]) == {"id", "title", "content"}
         assert play.alice.head("/notifications").status_code == 200
         assert play.alice.get("/notifications?since_id=3&x=<script>").status_code == 200

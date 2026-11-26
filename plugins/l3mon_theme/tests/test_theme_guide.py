@@ -153,7 +153,8 @@ def test_the_guide_shows_the_newest_public_notifications_in_the_news_crawl_and_n
 
     with app.app_context():
         studio = Teams.query.filter_by(name="Citrus Crew").first()
-        db.session.add(Notifications(title="Doors open", content="The first programme is on air"))
+        db.session.add(Notifications(title="[BACKGROUND] Doors open", content="The first programme is on air"))
+        db.session.add(Notifications(title="[ANNOUNCEMENT] Modal only", content="not for the crawl"))
         db.session.add(Notifications(title="Only for Citrus Crew", content="a private line", team_id=studio.id))
         db.session.commit()
 
@@ -163,4 +164,6 @@ def test_the_guide_shows_the_newest_public_notifications_in_the_news_crawl_and_n
     body = r.get_data(as_text=True)
     assert '<section class="crawl"' in body
     assert "Doors open: The first programme is on air" in body
+    crawl = body.split('<section class="crawl"', 1)[1].split("</section>", 1)[0]
+    assert "Modal only" not in crawl, "an announcement is a modal for the player, never a line of the crawl (the crawl draws [BACKGROUND] lines only, 25 Nov 2026)"
     assert "Only for Citrus Crew" not in body and "a private line" not in body

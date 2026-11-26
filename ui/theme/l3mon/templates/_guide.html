@@ -119,6 +119,7 @@
 <span class="gd-ms" data-k="msolves">{{ item.text }}</span>
 <span class="gd-mt"><b data-k="mtrp">{{ item.trp }}</b> TRP</span>
 <span class="gd-mbar pv-{{ item.pct }}" aria-hidden="true"><i data-bar></i></span>
+{% if item.solve_items %}<div class="gd-solves-list">{% for s in item.solve_items %}<div class="gd-solve-item"><span class="gd-solve-name">{{ s.name }}</span><span class="gd-solve-meta"><span class="gd-solve-trp">{{ s.trp }} TRP</span><span class="gd-solve-time">{{ s.time }}</span></span></div>{% endfor %}</div>{% endif %}
 </li>{% endfor %}</ul>
 <p class="gd-foot">Each line is the TRP earned by solving programmes. Bonuses and hints belong to the whole studio.</p>
 </section>{% endif %}

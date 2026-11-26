@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import concurrent.futures
 import json
+import re
 import secrets as pysecrets
 import subprocess
 import time
@@ -83,7 +84,7 @@ CLEANUP = "\n".join([
     "app = create_app()",
     "with app.app_context():",
     "    Channel.query.delete()",
-    "    Notifications.query.filter(Notifications.title == 'New on air').delete()",
+    "    Notifications.query.filter(Notifications.title.like('%New on air')).delete()",
     "    Audit.query.delete()",
     "    Configs.query.filter_by(key='l3mon_channel_bonus_trp').delete()",
     "    db.session.commit()",
@@ -195,7 +196,7 @@ def visible_names(session) -> set:
 def new_on_air(session) -> list:
     status, out = get_json(session, "/api/v1/notifications")
     assert status == 200, out
-    return [n["content"] for n in out["data"] if n["title"] == "New on air"]
+    return [n["content"] for n in out["data"] if re.sub(r"^\[[\w-]+\]\s*", "", n["title"]) == "New on air"]
 
 
 def test_01_a_loaded_plan_puts_nothing_on_air(world):

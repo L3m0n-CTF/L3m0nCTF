@@ -19,6 +19,7 @@ from CTFd.models import Awards, Challenges, Solves, Teams, Users, db
 from CTFd.plugins.l3mon_board import board
 from CTFd.plugins.l3mon_core import activity, studio_rules
 from CTFd.plugins.l3mon_core.clock import current_phase
+from CTFd.plugins.l3mon_core.visibility import visible_challenge_ids
 from CTFd.plugins.l3mon_core.player_locks import lock_studio
 from CTFd.plugins.l3mon_core.signup_rules import enforced
 from CTFd.plugins.l3mon_guard.policies.disposable import is_disposable_domain
@@ -127,7 +128,10 @@ def studio_context() -> dict:
         .filter(Solves.account_id == team.id)
         .order_by(Solves.date.desc())
     )
+    # a programme the crew pulled back leaves every list, this one too (the same rule as the board and /api/v1/teams/me/solves)
     solves_rows = solves_query.all()
+    shown = visible_challenge_ids(admin=False, solved_ids=frozenset(row[0] for row in solves_rows))
+    solves_rows = [row for row in solves_rows if row[0] in shown]
 
     solves_data = []
     member_scores = {}
