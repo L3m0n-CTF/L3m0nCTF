@@ -109,7 +109,8 @@ def _check_logo(path: Path, data: bytes) -> None:
 SVG_NS = "http://www.w3.org/2000/svg"
 SVG_ELEMENTS = {"svg", "g", "defs", "title", "desc", "path", "rect", "circle", "ellipse", "line", "polyline", "polygon", "text", "tspan",
                 "linearGradient", "radialGradient", "stop", "clipPath", "mask", "pattern", "symbol", "use", "style", "metadata"}
-_OUTSIDE = re.compile(r"url\(\s*(?![\"']?#)|@import|expression\s*\(|javascript:", re.I)
+# a CSS escape (a backslash) is refused outright: it could spell @import or url( in a way a simple search cannot see
+_OUTSIDE = re.compile(r"url\(\s*(?![\"']?#)|@import|@font-face|image-set|\bsrc\s*\(|expression\s*\(|javascript:|\\", re.I)
 
 
 def _check_svg(name: str, data: bytes) -> None:
@@ -118,7 +119,7 @@ def _check_svg(name: str, data: bytes) -> None:
         text = data.decode("utf-8")
     except UnicodeDecodeError:
         raise SiteError(f"{name}: an SVG must be UTF-8 text") from None
-    if re.search(r"<!DOCTYPE|<!ENTITY", text, re.I):
+    if re.search(r"<!DOCTYPE|<!ENTITY", text, re.I) or re.search(r"<\?(?!xml\s)", text):
         raise SiteError(bad)
     try:
         root = ET.fromstring(data)
@@ -249,7 +250,7 @@ def cert_screen(c: store.Credential, base_url: str) -> str:
         txt = codes.ordinal(c.studio_rank)
         num, sfx = str(c.studio_rank), txt[len(str(c.studio_rank)):]
         digits = "".join(f"<span>{d}</span>" for d in num)
-        rank = (f'<div class="rank"><small>Studio rank</small><span class="sr">{e(txt)}</span>'
+        rank = (f'<div class="rank"><small>Studio Rank</small><span class="sr">{e(txt)}</span>'
                 f'<div class="flip" aria-hidden="true">{digits}<span class="sfx">{e(sfx)}</span></div></div>')
     url = f"{base_url}/{c.verify_code}"
     return (
@@ -338,6 +339,11 @@ def build(db_path: Path, out: Path, *, sponsors_dir: Path | None = None, base_ur
                                                       "<code>L3M0N26-PAR-BKXQT</code>, a category and five letters.",
                                               stamp=("Not verified", "Not<br>verified"), lookup=True),
                          lcd="NO SIGNAL", print_button=False, assets=assets, index=False, crawl_html=crawl_html))
+    put("429.html", page(title="Please wait · L3m0n CTF 2026", description="Too many checks from this address in a short time.", body_class="st-missing",
+                         screen=notice_screen(kicker="Please stand by", title="Too many checks",
+                                              message="This address checked a lot of certificates in a short time. Wait a minute, then try again.",
+                                              stamp=None),
+                         lcd="STAND BY", print_button=False, assets=assets, index=False, crawl_html=crawl_html))
     counts = {"valid": {c: 0 for c in codes.CATEGORIES}, "withdrawn": 0, "replaced": 0}
     for c in creds:
         if not codes.CODE_RE.match(c.verify_code):

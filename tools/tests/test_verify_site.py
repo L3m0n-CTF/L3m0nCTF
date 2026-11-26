@@ -123,7 +123,7 @@ def test_one_page_per_code_and_nothing_unexpected(built):
     pages = sorted(p.name[:-5] for p in (out / "c").glob("*.html"))
     assert pages == sorted(rows)
     top = sorted(p.name for p in out.iterdir())
-    assert top == ["404.html", "assets", "build.json", "c", "index.html", "robots.txt"]
+    assert top == ["404.html", "429.html", "assets", "build.json", "c", "index.html", "robots.txt"]
     assert summary["counts"]["valid"] == {"ORG": 1, "PAR": 2, "ACH": 1, "APP": 1} and summary["counts"]["withdrawn"] == 1 and summary["counts"]["replaced"] == 2
 
 
@@ -144,7 +144,7 @@ def test_each_certificate_shows_exactly_the_agreed_fields_once(built, category):
     assert visible.count(who) == 1, "shown once on the page"
     if category in ("ACH", "APP"):
         # the rank card: "Studio rank" and the ordinal are real text for screen readers; the big flip digits are decoration
-        assert re.search(rf'<div class="rank"><small>Studio rank</small><span class="sr">{codes.ordinal(c.studio_rank)}</span><div class="flip" aria-hidden="true">', text)
+        assert re.search(rf'<div class="rank"><small>Studio Rank</small><span class="sr">{codes.ordinal(c.studio_rank)}</span><div class="flip" aria-hidden="true">', text)
         assert text.count('class="rank"') == 1
     else:
         assert 'class="rank"' not in text
@@ -337,7 +337,12 @@ def test_the_pages_script_reads_codes_exactly_like_the_tool():
     '<svg xmlns="http://www.w3.org/2000/svg"><rect ONLOAD="x()"/></svg>',
     '<html xmlns="http://www.w3.org/1999/xhtml"></html>',
     '<svg xmlns="http://www.w3.org/2000/svg"><rect',
-], ids=["prefixed-script", "prefixed-a-set", "style-import", "style-outside-url", "xlink-outside", "animate", "foreignobject", "upper-handler", "not-svg", "broken"])
+    r'<svg xmlns="http://www.w3.org/2000/svg"><style>@im\port "https://e/x.css";</style></svg>',
+    r'<svg xmlns="http://www.w3.org/2000/svg"><style>rect{fill:u\rl(https://e/x)}</style><rect/></svg>',
+    '<svg xmlns="http://www.w3.org/2000/svg"><style>rect{fill:image-set("https://e/x" 1x)}</style><rect/></svg>',
+    '<?xml-stylesheet href="https://e/x.css"?><svg xmlns="http://www.w3.org/2000/svg"><rect/></svg>',
+    '<svg xmlns="http://www.w3.org/2000/svg"><style>@font-face{font-family:x}</style></svg>',
+], ids=["prefixed-script", "prefixed-a-set", "style-import", "style-outside-url", "xlink-outside", "animate", "foreignobject", "upper-handler", "not-svg", "broken", "escaped-import", "escaped-url", "image-set", "xml-stylesheet-pi", "font-face"])
 def test_svg_logos_pass_only_an_allow_list(tmp_path, db, svg):
     d = tmp_path / "sp"
     d.mkdir()

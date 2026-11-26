@@ -117,17 +117,24 @@ def connect(path: Path, create: bool = False) -> sqlite3.Connection:
     path = Path(path)
     if not create and not path.is_file():
         raise StoreError(f"no credentials database at {path} (make one with: python -m l3mon verify init {path})")
-    conn = sqlite3.connect(str(path))
-    conn.isolation_level = None  # autocommit; a multi-record change opens its own BEGIN ... COMMIT (issue.issue)
-    conn.execute("PRAGMA foreign_keys = ON")
     if create:
-        conn.executescript(SCHEMA)
-        conn.execute("INSERT OR IGNORE INTO meta (key, value) VALUES ('schema', ?)", (SCHEMA_VERSION,))
-        conn.commit()
-    version = conn.execute("SELECT value FROM meta WHERE key = 'schema'").fetchone()
+        path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        conn = sqlite3.connect(str(path))
+    except sqlite3.Error as exc:
+        raise StoreError(f"cannot open {path}: {exc}") from None
+    try:
+        conn.isolation_level = None  # autocommit; a multi-record change opens its own BEGIN ... COMMIT (issue.issue)
+        conn.execute("PRAGMA foreign_keys = ON")
+        if create:
+            conn.executescript(SCHEMA)
+            conn.execute("INSERT OR IGNORE INTO meta (key, value) VALUES ('schema', ?)", (SCHEMA_VERSION,))
+        version = conn.execute("SELECT value FROM meta WHERE key = 'schema'").fetchone()
+    except sqlite3.Error:
+        version = None
     if not version or version[0] != SCHEMA_VERSION:
         conn.close()
-        raise StoreError(f"{path} is not a credentials database of schema {SCHEMA_VERSION}")
+        raise StoreError(f"{path} is not a credentials database of schema {SCHEMA_VERSION} (nothing in it was changed)")
     return conn
 
 

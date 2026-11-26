@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
 
 from . import codes, issue, site, store
@@ -38,7 +39,21 @@ def add_parser(sub) -> None:
     b.add_argument("--base-url", default=site.BASE_URL, help=f"the portal's address for the QR codes (default {site.BASE_URL})")
 
 
+def _safe_output() -> None:
+    """Names may hold any character. A Windows pipe or file defaults to cp1252, where printing 'Ŝ' or '名' would crash: write UTF-8 when the output
+    is not a console (a real console takes any character), and never crash on a character the output cannot hold."""
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            if stream.isatty():
+                stream.reconfigure(errors="backslashreplace")
+            else:
+                stream.reconfigure(encoding="utf-8", errors="backslashreplace")
+        except (AttributeError, ValueError, OSError):
+            pass
+
+
 def run(args: argparse.Namespace) -> int:
+    _safe_output()
     try:
         if args.verify_cmd == "init":
             if Path(args.db).exists():

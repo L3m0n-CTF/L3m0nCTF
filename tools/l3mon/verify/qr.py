@@ -2,7 +2,7 @@
 
 Written for the verification portal so a certificate page carries a scannable QR code with no JavaScript and no third-party package. It is the
 Python twin of the JavaScript encoder the design sample was proved with (an independently written decoder read every symbol back, Reed-Solomon
-syndromes zero); tools/tests/test_verify_qr.py decodes this one's output with an independent reader too.
+syndromes zero); tools/tests/test_verify_site.py decodes this one's output with an independent reader too (tools/tests/qr_reference_reader.py).
 Standard library only.
 """
 from __future__ import annotations

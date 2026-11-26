@@ -72,12 +72,19 @@ def _key(text: str) -> str:
     return _tidy(unicodedata.normalize("NFKC", text or "")).casefold()
 
 
+def _visible(text: str) -> bool:
+    """True when the text has at least one character a reader can see (not only spaces, zero-width or format characters)."""
+    return any(unicodedata.category(ch)[0] not in ("Z", "C") for ch in text or "")
+
+
 def read_org(path: Path) -> list[str]:
     names, seen = [], set()
     for line in Path(path).read_text(encoding="utf-8-sig").splitlines():
         name = _tidy(line)
         if not name or name.startswith("#"):
             continue
+        if not _visible(name):
+            raise IssueError(f"{path}: a line holds no visible character ({name!r}): remove it or type the name")
         if _key(name) in seen:
             raise IssueError(f"{path}: {name!r} is listed twice")
         seen.add(_key(name))
@@ -106,8 +113,8 @@ def _read_csv(path: Path, required: tuple[str, ...]) -> list[dict]:
         if not any(row.values()):
             continue
         for c in required:
-            if not row.get(c):
-                raise IssueError(f"{path} line {n}: empty {c}")
+            if not row.get(c) or not _visible(row[c]):
+                raise IssueError(f"{path} line {n}: empty {c} (no visible character)")
         row["_line"] = n
         rows.append(row)
     return rows
@@ -186,10 +193,19 @@ class _People:
     def add(self, c: store.Credential) -> None:
         self.rows.append(c)
 
+    def keys(self, c: store.Credential) -> set[tuple[str, str]]:
+        """Every key of the holder: their own, plus those of any qualifier code a finals code replaced (it knows the platform user id)."""
+        keys = _keys_of(c)
+        if c.category in ("ACH", "APP"):
+            for old in self.rows:
+                if old.status == "replaced" and old.replaced_by == c.verify_code:
+                    keys |= _keys_of(old)
+        return keys
+
     def find(self, keys: set, categories: tuple[str, ...], status: str) -> list[store.Credential]:
         seen, out = set(), []
         for c in self.rows:
-            if c.category in categories and c.status == status and c.verify_code not in seen and _keys_of(c) & keys:
+            if c.category in categories and c.status == status and c.verify_code not in seen and self.keys(c) & keys:
                 seen.add(c.verify_code)
                 out.append(c)
         return out
@@ -267,8 +283,13 @@ def issue(conn: sqlite3.Connection, *, issue_date: str, org: list[str] | None = 
                         report.warnings.append(f"{who} already holds {held.verify_code} (rank {held.studio_rank}); the finals list now says rank {r['rank']}: "
                                                "not changed (withdraw it, then run again with --reissue to correct it)")
                     continue
+                rival = next((c for c in people.rows if c.category in ("ACH", "APP") and c.status == "valid" and c.studio_rank == r["rank"]
+                              and _key(c.studio_name) != _key(r["studio"])), None)
+                if rival:
+                    raise IssueError(f"{who}: rank {r['rank']} is already held by studio {rival.studio_name!r} ({rival.verify_code}); two studios cannot "
+                                     "share a rank. Fix the finals list (or withdraw that code first); nothing was written.")
                 par = people.one(keys, ("PAR",), "valid", who)
-                if blocked_by_withdrawal(keys, ("ACH", "APP")):
+                if blocked_by_withdrawal(keys, ("PAR", "ACH", "APP")):
                     continue
                 ref = f"finals:user:{r['user_id']}" if r.get("user_id") else f"finals:name:{_key(r['username'])}"
                 cred = put(store.Credential(verify_code=new_code(category), category=category, issue_date=issue_date, source_ref=ref,
@@ -277,7 +298,7 @@ def issue(conn: sqlite3.Connection, *, issue_date: str, org: list[str] | None = 
                     store.replace(conn, par.verify_code, cred.verify_code)
                     par.status, par.replaced_by = "replaced", cred.verify_code
                     report.replaced += 1
-            gone = [c for c in people.rows if c.category in ("ACH", "APP") and c.status == "valid" and not (_keys_of(c) & listed)]
+            gone = [c for c in people.rows if c.category in ("ACH", "APP") and c.status == "valid" and not (people.keys(c) & listed)]
             if gone:
                 report.warnings.append(f"{len(gone)} finalist(s) have a code but are not in this finals list (not removed)")
 

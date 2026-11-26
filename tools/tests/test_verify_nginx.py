@@ -320,3 +320,18 @@ def test_without_cloudflares_client_certificate_there_is_no_page(served):
 def test_another_host_name_gets_nothing(served):
     with pytest.raises((ssl.SSLError, ConnectionError, OSError)):
         request(served["port"], "/", host="evil.example.test", cert=served["cert"])
+
+
+def test_a_flood_gets_the_wait_page_never_a_cached_error(served):
+    css = re.search(rb'href="(/assets/site\.[0-9a-f]+\.css)"', request(served["port"], "/", cert=served["cert"])[2]).group(1).decode()
+    statuses = []
+    for _ in range(45):
+        status, h, body = request(served["port"], css, cert=served["cert"])
+        statuses.append(status)
+        if status == 429:
+            assert h["cache-control"] == "no-store", "a 429 must never carry the stylesheet's one-year cache"
+            assert "default-src 'none'" in h["content-security-policy"] and h.get("retry-after") == "60"
+            assert b"Too many checks" in body
+            break
+    assert 429 in statuses, statuses
+    time.sleep(2)

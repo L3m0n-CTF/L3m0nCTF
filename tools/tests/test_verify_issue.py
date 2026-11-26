@@ -278,3 +278,80 @@ def test_the_command_line_reissue_option(tmp_path, capsys):
     cli.main(["verify", "withdraw", str(db), code, "--reason", "typo in the name"])
     assert cli.main(["verify", "issue", str(db), "--date", "2026-12-01", "--org", str(org), "--reissue", code.lower()]) == 0
     assert len([c for c in store.all_rows(store.connect(db)) if c.status == "valid"]) == 1
+
+
+# ------------------------------------------------------------------ second review of 26 Nov 2026
+
+def test_a_qualifier_code_withdrawn_for_cheating_blocks_a_finals_code_too(conn, tmp_path):
+    issue.issue(conn, issue_date="2026-11-30", prelims=issue.read_prelims(write(tmp_path, "p.csv", "user_id,username,studio\n7,wobble,S\n")))
+    par = store.all_rows(conn)[0]
+    store.withdraw(conn, par.verify_code, "flag sharing")
+    f = issue.read_finals(write(tmp_path, "f.csv", "username,studio,rank,user_id\nwobble,S,1,7\n"))
+    r = issue.issue(conn, issue_date="2026-12-12", finals=f)
+    assert r.held_withdrawn == 1 and sum(r.issued.values()) == 0
+    r = issue.issue(conn, issue_date="2026-12-12", finals=f, reissue={par.verify_code})
+    assert r.issued["ACH"] == 1, "with --reissue the organisers can still decide otherwise"
+
+
+def test_a_finals_code_keeps_the_id_of_the_qualifier_code_it_replaced(conn, tmp_path):
+    issue.issue(conn, issue_date="2026-11-30", prelims=issue.read_prelims(write(tmp_path, "p.csv", "user_id,username,studio\n42,snorkel,S\n")))
+    issue.issue(conn, issue_date="2026-12-12", finals=issue.read_finals(write(tmp_path, "f.csv", "username,studio,rank\nsnorkel,S,1\n")))
+    r = issue.issue(conn, issue_date="2026-12-13", finals=issue.read_finals(write(tmp_path, "f2.csv", "username,studio,rank,user_id\nsnorkel_v2,S,1,42\n")))
+    assert sum(r.issued.values()) == 0
+    assert len([c for c in store.all_rows(conn) if c.status == "valid"]) == 1
+
+
+def test_a_rank_already_held_by_another_studio_is_refused_across_runs(conn, tmp_path):
+    issue.issue(conn, issue_date="2026-12-12", finals=issue.read_finals(write(tmp_path, "f.csv", "username,studio,rank\na1,Alpha,1\n")))
+    with pytest.raises(issue.IssueError, match="already"):
+        issue.issue(conn, issue_date="2026-12-12", finals=issue.read_finals(write(tmp_path, "f2.csv", "username,studio,rank\nb1,Beta,1\n")))
+
+
+@pytest.mark.parametrize("blank", ["​", " ", "　", "​‌", "﻿"])
+def test_a_name_with_no_visible_character_is_refused(tmp_path, blank):
+    if blank.strip():
+        # an invisible character that is not a space (zero-width, byte-order mark): a typo the reader cannot see, refused
+        with pytest.raises(issue.IssueError):
+            issue.read_org(write(tmp_path, "org.txt", f"Real Person\n{blank}\n"))
+    else:
+        # a line of only (non-breaking or ideographic) spaces is a blank line, skipped like any other
+        assert issue.read_org(write(tmp_path, "org.txt", f"Real Person\n{blank}\n")) == ["Real Person"]
+    with pytest.raises(issue.IssueError):
+        issue.read_prelims(write(tmp_path, "p.csv", f"user_id,username,studio\n1,{blank},S\n"))
+    with pytest.raises(issue.IssueError):
+        issue.read_finals(write(tmp_path, "f.csv", f"username,studio,rank\nx,{blank},4\n"))
+
+
+def test_init_makes_the_private_folder_and_a_wrong_file_gets_a_clear_message(tmp_path, capsys):
+    from l3mon import cli
+    db = tmp_path / "not-yet-made" / "deeper" / "c.sqlite"
+    assert cli.main(["verify", "init", str(db)]) == 0 and db.is_file()
+    text_file = tmp_path / "org.txt"
+    text_file.write_text("Jane Doe\n", encoding="utf-8")
+    empty = tmp_path / "empty.sqlite"
+    empty.write_bytes(b"")
+    for wrong in (text_file, empty):
+        before = wrong.read_bytes()
+        assert cli.main(["verify", "list", str(wrong)]) == 1
+        assert "is not a credentials database" in capsys.readouterr().out
+        assert wrong.read_bytes() == before, "a wrong file is never changed"
+
+
+def test_list_prints_any_name_through_a_pipe_on_any_platform(tmp_path):
+    import os
+    import subprocess
+    import sys as _sys
+    from pathlib import Path as _P
+    db = tmp_path / "c.sqlite"
+    org = tmp_path / "org.txt"
+    org.write_text("Ŝtelo Ĉirkaŭ\n名無し 太郎\n", encoding="utf-8")
+    tools = _P(__file__).resolve().parents[1]
+    env = {k: v for k, v in os.environ.items() if k not in ("PYTHONIOENCODING", "PYTHONUTF8")}
+    env["PYTHONIOENCODING"] = "cp1252"  # what a Windows pipe gives by default
+    run = lambda *a: subprocess.run([_sys.executable, "-m", "l3mon", "verify", *a], cwd=tools, env=env, capture_output=True, timeout=60)  # noqa: E731
+    assert run("init", str(db)).returncode == 0
+    assert run("issue", str(db), "--date", "2026-11-30", "--org", str(org)).returncode == 0
+    res = run("list", str(db))
+    assert res.returncode == 0, res.stderr.decode("utf-8", "replace")
+    out = res.stdout.decode("utf-8")
+    assert "Ŝtelo Ĉirkaŭ" in out and "名無し 太郎" in out

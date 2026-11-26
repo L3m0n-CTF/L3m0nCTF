@@ -37,8 +37,10 @@ Suggested place on the laptop: a folder outside every repository, e.g. `D:\l3m0n
 
 ```bash
 cd tools
-python -m l3mon verify init D:/l3m0nCTF/private-verify/credentials.sqlite
+python -m l3mon verify init D:/l3m0nCTF/private-verify/credentials.sqlite     # makes the folder too if it is not there
 ```
+
+Names may hold any character; the tool writes UTF-8 when its output goes to a file or a pipe, so `verify list > list.txt` is safe.
 
 ## 2. Organisers
 
@@ -105,22 +107,25 @@ Once only, first: **deploy a release that contains the portal** (the usual relea
 the nginx block, the `verify` rate-limit zone, the include in the production template and `tools/ops/verify-publish.sh` all arrive with it; on an
 older checkout `tools/compose.sh` stops with "there is no overlay 'verify'".
 
-Then make the folder and switch the overlay on (`/etc/l3mon/production.env`):
+**The first time, in this order** (publishing BEFORE nginx gets the block means nginx never serves an empty folder):
 
-```bash
-sudo mkdir -p /etc/l3mon/verify/site && sudo chown "$USER" /etc/l3mon/verify/site
-# in /etc/l3mon/production.env: add ,verify to L3MON_OVERLAYS and a line L3MON_VERIFY_SITE_DIR=/etc/l3mon/verify/site
-```
+1. From the laptop, copy the archive up (same gcloud configuration as in step 3):
+   `gcloud compute scp D:\l3m0nCTF\private-verify\verify-site.tgz <platform VM>:/tmp/verify-site.tgz --zone=<zone> --tunnel-through-iap --quiet`
+2. On the VM, make the folder and publish into it:
+   ```bash
+   sudo mkdir -p /etc/l3mon/verify/site && sudo chown "$USER" /etc/l3mon/verify/site
+   cd ~/L3m0nCTF && bash tools/ops/verify-publish.sh /tmp/verify-site.tgz /etc/l3mon/verify/site && rm /tmp/verify-site.tgz
+   ```
+3. In `/etc/l3mon/production.env` (with `sudo`): add `,verify` to the `L3MON_OVERLAYS` line, and add the line `L3MON_VERIFY_SITE_DIR=/etc/l3mon/verify/site`.
+4. Check, then give nginx the block (nginx is recreated; a few seconds):
+   ```bash
+   set -a; . /etc/l3mon/production.env; set +a
+   (cd tools && python3 -m l3mon deploy check)          # the line "verification portal" must be OK, with the number of certificates built
+   tools/compose.sh up -d --wait nginx
+   ```
 
-Every publish (copy the archive up with `gcloud compute scp`, then on the VM):
-
-```bash
-cd ~/L3m0nCTF && bash tools/ops/verify-publish.sh /tmp/verify-site.tgz && rm /tmp/verify-site.tgz
-```
-
-The first time only, after the overlay line: `set -a; . /etc/l3mon/production.env; set +a; (cd tools && python3 -m l3mon deploy check)` (the line
-"verification portal" must be OK) and `tools/compose.sh up -d --wait nginx` (nginx is recreated with the block; a few seconds). Later publishes need
-no restart: the script copies the files into the served folder.
+**Every later publish:** step 1, then on the VM `cd ~/L3m0nCTF && bash tools/ops/verify-publish.sh /tmp/verify-site.tgz && rm /tmp/verify-site.tgz`
+(the folder comes from `L3MON_VERIFY_SITE_DIR`). No restart: the script copies the files into the served folder.
 
 **Cloudflare (the owner):** a DNS record `verify` -> the platform VM's address (the same address as `play`), **proxied** (orange cloud). An explicit
 record wins over the instancer's wildcard `*`. The origin certificate already covers `*.l3m0nctf.xyz`, and Authenticated Origin Pulls applies to the
@@ -148,7 +153,27 @@ Then build and publish again. The page then says the certificate was withdrawn, 
 code. To correct a certificate (a wrong rank, a misspelt name), withdraw the old code and run `issue` with the corrected list and
 `--reissue <old code>`: only then is a new code issued to that person.
 
+## Keeping it alive for years
+
+A certificate is only worth something while its code can be checked. These are the things that can end that, and who looks after each. The
+dates are the ones known in November 2026: check them again when this runbook is next used.
+
+| What | Ends when | What to do, and who |
+|---|---|---|
+| The domain `l3m0nctf.xyz` | at its registrar's expiry date (the owner's notes; November 2027 when this was written) | renew every year, or set it to renew by itself, **well before** the date (owner, with the club mailbox that holds the registrar account). If the domain lapses, every printed QR code dies with it. |
+| The platform VM (where the portal runs today) | when the VM is stopped after the events, or the cloud credit ends | **move the portal first** (next section), then stop the VM. Decide the permanent host before the finals. |
+| Cloudflare's origin certificate on the VM | valid to 2041 | nothing until then; a new host gets its own. |
+| The credentials database | if the only copy is lost (codes are random: it cannot be made again) | keep it in at least **two** places: the owner's laptop and an encrypted copy somewhere else the owner controls. Copy it again after every `issue` or `withdraw`. |
+| The built site | (it can always be rebuilt from the database and the sponsor folder) | keep the last `verify-site.tgz` next to the database backup anyway: it is the fastest way back. |
+| The people who know how | when the crew changes | this runbook; hand it on with the database. |
+
 ## Moving the portal off this VM (before the VM is ever stopped)
 
-The published folder is the whole website. Any static host that can map `/<CODE>` to `c/<CODE>.html`, answer unknown addresses with `404.html` and
-send the headers of `deploy/nginx/snippets/verify-headers.conf` will do; the simplest is a small VM with nginx and `verify.conf` as it is.
+The published folder is the whole website. Any static host that can map `/<CODE>` to `c/<CODE>.html`, answer unknown addresses with `404.html`
+(status 404) and send the headers of `deploy/nginx/snippets/verify-headers.conf` will do:
+
+- **a small VM with nginx** and `deploy/nginx/verify/verify.conf` as it is (the least work, but a machine to keep paying for and patching);
+- **Cloudflare (Pages, or a Worker like the landing page)**: free and with no server to look after, which suits "forever". It needs a small rule
+  file for the `/<CODE>` mapping and the headers; to be prepared when the permanent host is decided.
+
+Point the `verify` DNS record at the new host, check it with "Check that it works" above, and only then stop the old one.
