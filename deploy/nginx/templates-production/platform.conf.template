@@ -36,6 +36,10 @@ server {
 # file in the folder this line includes nothing (deploy/nginx/instances/instances.conf).
 include /etc/nginx/instances.d/*.conf;
 
+# The participant verification portal (verify.<domain>). Present only when the `verify` overlay mounts its block here; with no file in the folder
+# this line includes nothing (deploy/nginx/verify/verify.conf).
+include /etc/nginx/verify.d/*.conf;
+
 # The container's own health check, from inside the container only (nothing publishes this port).
 server {
   listen 127.0.0.1:8080;

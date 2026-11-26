@@ -10,6 +10,7 @@ The exit code is 1 when anything is BLOCKED. The check reads files only: it does
 from __future__ import annotations
 
 import ipaddress
+import json
 import os
 import re
 import stat
@@ -263,6 +264,33 @@ def check_instance_gate(env: dict, items: list[Item]) -> None:
         items.append(Item(OK, name, f"crew only: a request needs a valid Cloudflare Access token of team {team} for one of {len(tags)} application tag(s)"))
 
 
+def check_verify_site(env: dict, items: list[Item]) -> None:
+    """The verification portal's website (overlay `verify`; docs/runbooks/21-verify-portal.md). Only when the overlay is on: the folder nginx serves
+    must hold a finished build of `python -m l3mon verify build` (its build.json and pages), or nginx would answer every code with "No signal"."""
+    if "verify" not in {name.strip() for name in env.get("L3MON_OVERLAYS", "").split(",")}:
+        return
+    name = "verification portal"
+    folder = (env.get("L3MON_VERIFY_SITE_DIR") or "").strip()
+    if not folder:
+        items.append(Item(BLOCKED, name, "the `verify` overlay is on but L3MON_VERIFY_SITE_DIR is not set (the folder of the built website)"))
+        return
+    path = Path(folder)
+    missing = [f for f in ("build.json", "index.html", "404.html") if not (path / f).is_file()]
+    if missing:
+        items.append(Item(BLOCKED, name, f"{path} is not a finished build (missing {', '.join(missing)}): run python -m l3mon verify build and copy its output there"))
+        return
+    try:
+        summary = json.loads((path / "build.json").read_text(encoding="utf-8"))
+        valid = sum(summary["counts"]["valid"].values())
+    except (ValueError, KeyError, TypeError, AttributeError):
+        items.append(Item(BLOCKED, name, f"{path}/build.json cannot be read: build the site again"))
+        return
+    if valid == 0:
+        items.append(Item(TODO, name, f"{path} holds a build with no valid certificate yet: every code would answer \"No signal\""))
+    else:
+        items.append(Item(OK, name, f"{valid} valid certificate(s) built for {summary.get('base_url', '?')}"))
+
+
 def check_environment(env: dict, items: list[Item]) -> None:
     if env.get("L3MON_ENV", "dev") != "production":
         items.append(Item(TODO, "environment", "L3MON_ENV is not `production`: start with `L3MON_ENV=production tools/compose.sh up -d --wait`"))
@@ -290,5 +318,6 @@ def run_checks(root: Path, event_file: Path | None = None, secrets_dir: Path | N
     check_cloudflare_list(root / "deploy" / "nginx" / "snippets" / "cloudflare-realip.conf", today or date.today(), items)
     check_crew_only(env.get("CREW_ONLY_FILE"), items)
     check_instance_gate(env, items)
+    check_verify_site(env, items)
     check_environment(env, items)
     return items
