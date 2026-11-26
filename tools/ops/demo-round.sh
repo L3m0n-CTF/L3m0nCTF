@@ -6,6 +6,10 @@
 #   bash tools/ops/demo-round.sh vm-stop         stop the challenge VM (every instance on it ends)
 #   bash tools/ops/demo-round.sh tcp-open <your-public-IPv4>   switch the public raw-TCP rule ON for YOUR address only (a /32; ports 30000-30199 of the challenge VM).
 #                                                Needed to reach a raw-TCP instance (Zero Cool, Jarvis) from your own computer: the rule rests OFF.
+#   bash tools/ops/demo-round.sh tcp-tunnel <port>   reach a raw-TCP instance from a network that blocks high ports (the Amrita Wi-Fi allows 443 and 8080 only): opens
+#                                                the rule for the PLATFORM VM's address only, then holds an SSH forward open: localhost:<port> on your computer
+#                                                reaches the instance's port through the platform VM (a port from 30000 to 30199 only). Leave it running, use
+#                                                `ncat localhost <port>` in another window. The tool prints the one-line command that closes it (Ctrl+C does not).
 #   bash tools/ops/demo-round.sh tcp-close       put the rule back to its resting state (OFF, source 0.0.0.0/0). Run it when the TCP test is over.
 #   bash tools/ops/demo-round.sh run <command> [slug ...]   ship platform_demo_round.py to the platform VM and run one command of it there (see the list below)
 #   bash tools/ops/demo-round.sh add-challenge <folder> <slug> <http|tcp> <port> [mem_mb]
@@ -111,6 +115,31 @@ case "$ACTION" in
     g compute firewall-rules update l3mon-chal-allow-tcp-relays --source-ranges="$IP/32" --no-disabled
     g compute firewall-rules describe l3mon-chal-allow-tcp-relays --format="table(name,disabled,sourceRanges.list():label=FROM,allowed[].map().firewall_rule().list():label=PORTS)"
     echo "THE PUBLIC TCP RULE IS ON for $IP only. Put it back with:  bash tools/ops/demo-round.sh tcp-close"
+    ;;
+
+  tcp-tunnel)
+    # Why: on 26 Nov 2026 the owner's laptop on the Amrita Wi-Fi could not reach ANY raw-TCP instance (the network lets only 443 and 8080 out; a control server on
+    # port 30000 failed too), while the same instance answered from the platform VM. SSH through the IAP tunnel uses 443, so it gets out. Only the relay range
+    # is allowed, so this can never forward to another service of the challenge VM (its agent listens on 8300).
+    PORT="${2:-}"
+    if ! [[ "$PORT" =~ ^3[0-9]{4}$ ]] || (( PORT < 30000 || PORT > 30199 )); then
+      echo "give the PORT the page shows for your instance (30000 to 30199), e.g.  tcp-tunnel 30000" >&2
+      exit 2
+    fi
+    ip_of() { g compute instances describe "$1" --zone="$ZONE" --format="value(networkInterfaces[0].accessConfigs[0].natIP)"; }
+    APP_IP="$(ip_of "$APP")"
+    CHAL_IP="$(ip_of "$CHAL")"
+    OCT='(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])'
+    for addr in "$APP_IP" "$CHAL_IP"; do
+      [[ "$addr" =~ ^$OCT\.$OCT\.$OCT\.$OCT$ ]] || { echo "could not read a public address of $APP / $CHAL (is the challenge VM running? try: vm-start): '$addr'" >&2; exit 1; }
+    done
+    g compute firewall-rules update l3mon-chal-allow-tcp-relays --source-ranges="$APP_IP/32" --no-disabled
+    echo "THE PUBLIC TCP RULE IS ON for the platform VM ($APP_IP) only."
+    echo "TUNNEL: localhost:$PORT -> $CHAL_IP:$PORT through $APP (it opens in about 20 seconds). Keep this window open; in ANOTHER window run:  ncat localhost $PORT"
+    echo "TO CLOSE IT (Ctrl+C was tried on 26 Nov and did NOT stop it), run this in another PowerShell window; this window then ends by itself:"
+    echo "  Get-CimInstance Win32_Process | Where-Object { \$_.Name -eq 'putty.exe' -and \$_.CommandLine -match '-L $PORT:' } | ForEach-Object { Stop-Process -Id \$_.ProcessId -Force }"
+    g compute ssh "$APP" --zone="$ZONE" --tunnel-through-iap --quiet -- -N -L "$PORT:$CHAL_IP:$PORT"
+    echo "tunnel closed. Put the rule back with:  bash tools/ops/demo-round.sh tcp-close"
     ;;
 
   tcp-close)

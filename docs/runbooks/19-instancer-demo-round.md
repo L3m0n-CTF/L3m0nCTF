@@ -119,7 +119,20 @@ Test-NetConnection chall.instance.l3m0nctf.xyz -Port <port>
 
 `Test-NetConnection` only says whether the port answers (`TcpTestSucceeded : True`). The sample `demo-tcp` answers one line of greeting and, after you send `flag` and a newline, one flag line. On the host the same name is **not** needed: from the challenge VM itself the check uses the private address, which is why that check passed on 22 Nov without any of the above.
 
-If both are true and it still fails: try a phone hotspot (a campus or home network can block outbound connections to high ports; unverified), start a fresh instance (the relay port is chosen at Start), and read the agent's log on the challenge VM (`sudo docker logs --tail 40 l3mon-challenge-host-agent-1`) and the router's (`l3mon-challenge-host-router-1`).
+**Your own network may block the port (the Amrita Wi-Fi does).** On 26 Nov 2026 the name, the rule and the instance were all right, the instance answered from the platform VM with its challenge text, and the owner's laptop still got "actively refused" (`ncat`) and `TcpTestSucceeded : False`. The proof it was the network and not the platform: the control server `portquiz.net`, which answers on every port, failed the same way. Test it yourself, it takes ten seconds (`open` for 443 and 8080, `BLOCKED` for 9004, 20000, 30000 and 31337 on the Amrita Wi-Fi):
+
+```powershell
+foreach ($p in 443, 8080, 30000) { $c = Test-NetConnection portquiz.net -Port $p -WarningAction SilentlyContinue; "{0,6}  {1}" -f $p, $(if ($c.TcpTestSucceeded) { 'open' } else { 'BLOCKED' }) }
+```
+
+If 30000 is `BLOCKED`, no setting of ours can help from that network. Two ways round it for a test:
+
+1. **The tunnel (works from any network that allows the `gcloud` commands, proved from the owner's laptop on the Amrita Wi-Fi):** start the instance on the page, note its port, then in ONE PowerShell window `bash tools/ops/demo-round.sh tcp-tunnel <port>` (it opens the rule for the platform VM's address only and holds an SSH forward open; the port must be 30000 to 30199), and in ANOTHER window connect to **`localhost`** and the same port: `ncat localhost <port>`, or `remote('localhost', <port>)` in a script. The first window prints the line that closes it; run that in a third PowerShell window (Ctrl+C was tried on 26 Nov and did **not** stop the forward): `Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'putty.exe' -and $_.CommandLine -match '-L <port>:' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }`, after which the first window ends by itself (tried: nothing was left behind); then `tcp-close`. The forward opens about 20 seconds after you start the tool. The route is laptop, IAP (port 443), platform VM, the host's public address, the relay: the same public path a player takes, apart from the first leg.
+2. **A phone hotspot:** switch the laptop to it, read the address again (it changes with the network and, on a mobile or campus network, even within the hour: `157.51.60.219`, `202.88.252.190` and `103.5.112.80` were all this one laptop on 26 Nov), run `tcp-open <that address>` and connect to the name and port as above.
+
+**For players** this is the same wall: a team on a network that lets only web ports out cannot reach a raw-TCP challenge, whatever we do. The rules and the FAQ should say that the raw-TCP challenges use ports 30000 to 30199 and that a phone hotspot or a VPN is the way round. (The on-campus finals network is a decision for the Amrita IT team: ask them to allow outbound TCP 30000 to 30199 to the host, or to allow the finalists' addresses.)
+
+If both are true and it still fails: run the `portquiz.net` check above first, start a fresh instance (the relay port is chosen at Start), and read the agent's log on the challenge VM (`sudo docker logs --tail 40 l3mon-challenge-host-agent-1`) and the router's (`l3mon-challenge-host-router-1`).
 
 ## E. End (about 3 minutes)
 

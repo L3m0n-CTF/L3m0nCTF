@@ -300,3 +300,63 @@ def test_the_runbook_tells_the_dns_record_and_the_open_and_close_of_the_tcp_rule
     assert "tcp-open" in runbook and "tcp-close" in runbook
     assert "DNS only" in runbook and "h1.inst" in runbook and "34.180.12.8" in runbook, "the DNS-only record is what makes the name reach the host"
     assert runbook.index("tcp-open") < runbook.index("tcp-close"), "open before close"
+
+
+# ---- tcp-tunnel: reaching a raw-TCP instance from a network that blocks high ports ------------------------------------------------------------------------
+# 26 Nov 2026: the owner's laptop on the Amrita Wi-Fi (only 443 and 8080 get out; a control server on port 30000 failed too) could not reach the instance, while the
+# platform VM could. An SSH forward through the IAP tunnel (443) and the platform VM gets out, and only the relay range may be forwarded.
+
+FAKE_GCLOUD_IPS = """#!/usr/bin/env bash
+echo "gcloud $*" >> "$FAKE_LOG"
+case "$*" in
+  *"instances describe l3mon-app"*) echo "203.0.113.10" ;;
+  *"instances describe l3mon-chal"*) echo "${FAKE_CHAL_IP-198.51.100.20}" ;;
+esac
+exit 0
+"""
+
+
+@pytest.fixture
+def fake_ips(fake):
+    env, log = fake
+    gcloud = Path(env["PATH"].split(os.pathsep)[0]) / "gcloud"
+    gcloud.write_text(FAKE_GCLOUD_IPS, encoding="utf-8", newline="\n")
+    return env, log
+
+
+def test_tcp_tunnel_opens_the_rule_for_the_platform_vm_only_and_forwards_the_one_port(fake_ips):
+    env, log = fake_ips
+    done = run_wrapper(env, "tcp-tunnel", "30007")
+    assert done.returncode == 0, done.stderr
+    calls = log.read_text(encoding="utf-8").splitlines()
+    update = [c for c in calls if "firewall-rules update" in c]
+    assert len(update) == 1 and "--source-ranges=203.0.113.10/32" in update[0] and "--no-disabled" in update[0] and "0.0.0.0/0" not in update[0]
+    ssh = [c for c in calls if "compute ssh" in c]
+    assert len(ssh) == 1 and "l3mon-app" in ssh[0] and "--tunnel-through-iap" in ssh[0]
+    assert ssh[0].rstrip().endswith("-- -N -L 30007:198.51.100.20:30007"), ssh[0]
+    assert "l3mon-chal" not in ssh[0], "the tunnel runs through the platform VM, never into the challenge VM"
+    assert all("instances start" not in c and "instances stop" not in c for c in calls)
+    assert calls.index(update[0]) < calls.index(ssh[0]), "the rule is opened before the tunnel is used"
+    assert "Stop-Process" in done.stdout and "-L 30007:" in done.stdout, "the tool prints the line that closes the forward (Ctrl+C does not)"
+
+
+@pytest.mark.parametrize("bad", ["", "29999", "30200", "22", "8300", "443", "030000", "3000a", "30000;id", "$(id)", "30000 30001", "99999", "-1"])
+def test_tcp_tunnel_forwards_only_the_relay_range_and_sends_nothing_otherwise(fake_ips, bad):
+    env, log = fake_ips
+    done = run_wrapper(env, "tcp-tunnel", bad)
+    assert done.returncode == 2, (bad, done.stderr)
+    assert log.read_text(encoding="utf-8") == ""
+
+
+def test_tcp_tunnel_refuses_when_the_challenge_vm_has_no_address_and_opens_nothing(fake_ips):
+    env, log = fake_ips
+    env["FAKE_CHAL_IP"] = ""
+    done = run_wrapper(env, "tcp-tunnel", "30000")
+    assert done.returncode == 1 and "vm-start" in done.stderr
+    calls = log.read_text(encoding="utf-8")
+    assert "firewall-rules update" not in calls and "compute ssh" not in calls
+
+
+def test_the_runbook_explains_the_blocked_network_and_the_tunnel():
+    runbook = RUNBOOK.read_text(encoding="utf-8")
+    assert "tcp-tunnel" in runbook and "Amrita" in runbook and "portquiz" in runbook
