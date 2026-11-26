@@ -265,7 +265,7 @@ def check_instance_gate(env: dict, items: list[Item]) -> None:
 
 
 def check_verify_site(env: dict, items: list[Item]) -> None:
-    """The verification portal's website (overlay `verify`; docs/runbooks/21-verify-portal.md). Only when the overlay is on: the folder nginx serves
+    """The verification portal's website (overlay `verify`; docs/runbooks/22-verify-portal.md). Only when the overlay is on: the folder nginx serves
     must hold a finished build of `python -m l3mon verify build` (its build.json and pages), or nginx would answer every code with "No signal"."""
     if "verify" not in {name.strip() for name in env.get("L3MON_OVERLAYS", "").split(",")}:
         return

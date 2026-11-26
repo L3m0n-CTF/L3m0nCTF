@@ -1,4 +1,4 @@
-# The participant verification portal: https://verify.<domain>/<CODE> (docs/runbooks/21-verify-portal.md).
+# The participant verification portal: https://verify.<domain>/<CODE> (docs/runbooks/22-verify-portal.md).
 #
 #   L3MON_ENV=production L3MON_OVERLAYS=identity,ops,instancer-central,verify \
 #   L3MON_VERIFY_SITE_DIR=/etc/l3mon/verify/site \

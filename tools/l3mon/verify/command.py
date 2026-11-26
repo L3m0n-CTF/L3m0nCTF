@@ -9,7 +9,7 @@ from . import codes, issue, site, store
 
 
 def add_parser(sub) -> None:
-    v = sub.add_parser("verify", help="the participant verification portal: issue codes and build the static website (docs/runbooks/21-verify-portal.md)")
+    v = sub.add_parser("verify", help="the participant verification portal: issue codes and build the static website (docs/runbooks/22-verify-portal.md)")
     vs = v.add_subparsers(dest="verify_cmd", required=True)
 
     i = vs.add_parser("init", help="make an empty credentials database (refuses an existing file)")

@@ -106,7 +106,7 @@ def test_only_the_production_template_has_the_optional_include():
 
 def test_the_block_answers_only_verify_hosts_and_never_proxies():
     conf = text(VERIFY_CONF)
-    assert re.findall(r"server_name\s+([^;]+);", conf) == ['"~^verify\\."']
+    assert re.findall(r"server_name\s+([^;]+);", conf) == ['"~^verify\\.l3m0nctf\\.xyz$"']
     for word in ("proxy_pass", "fastcgi_pass", "uwsgi_pass", "autoindex on", "alias "):
         assert word not in conf, f"{word} has no place in a static, read-only block"
     assert "root /srv/verify;" in conf
@@ -177,7 +177,7 @@ def nginx_image() -> str:
     return re.search(r"image:\s*(nginxinc/nginx-unprivileged:\S+)", (COMPOSE_DIR / "compose.base.yml").read_text(encoding="utf-8")).group(1)
 
 
-def request(port: int, path: str, *, method: str = "GET", host: str = "verify.example.test", cert: tuple | None = None) -> tuple[int, dict, bytes]:
+def request(port: int, path: str, *, method: str = "GET", host: str = "verify.l3m0nctf.xyz", cert: tuple | None = None) -> tuple[int, dict, bytes]:
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
     ctx.check_hostname = False
     ctx.verify_mode = ssl.CERT_NONE
@@ -317,9 +317,11 @@ def test_without_cloudflares_client_certificate_there_is_no_page(served):
     assert status == 400 and served["valid"].encode() not in body
 
 
-def test_another_host_name_gets_nothing(served):
+@pytest.mark.parametrize("host", ["evil.example.test", "verify.example.test", "verify.l3m0nctf.xyz.evil.example.test"])
+def test_another_host_name_gets_nothing(served, host):
+    # Cloudflare's origin-pull certificate is shared by all its customers: only our exact name may reach the portal
     with pytest.raises((ssl.SSLError, ConnectionError, OSError)):
-        request(served["port"], "/", host="evil.example.test", cert=served["cert"])
+        request(served["port"], "/", host=host, cert=served["cert"])
 
 
 def test_a_flood_gets_the_wait_page_never_a_cached_error(served):

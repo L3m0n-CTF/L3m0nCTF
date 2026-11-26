@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Publish a built verification website into the folder nginx serves (docs/runbooks/21-verify-portal.md). Run ON the server, after the owner's yes.
+# Publish a built verification website into the folder nginx serves (docs/runbooks/22-verify-portal.md). Run ON the server, after the owner's yes.
 #
 #   bash tools/ops/verify-publish.sh /tmp/verify-site.tgz            # the folder is $L3MON_VERIFY_SITE_DIR (from /etc/l3mon/production.env)
 #   bash tools/ops/verify-publish.sh /tmp/verify-site.tgz /some/dir  # or name it

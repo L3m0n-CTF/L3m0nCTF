@@ -1,4 +1,4 @@
-# 21. The participant verification portal (verify.l3m0nctf.xyz)
+# 22. The participant verification portal (verify.l3m0nctf.xyz)
 
 Every person who took part in L3m0n CTF 2026 gets one code, printed on their certificate with a QR code. Anyone (an employer, a college) can type
 the code at **https://verify.l3m0nctf.xyz** or scan the QR code and see who the certificate was issued to.
@@ -128,7 +128,9 @@ older checkout `tools/compose.sh` stops with "there is no overlay 'verify'".
 (the folder comes from `L3MON_VERIFY_SITE_DIR`). No restart: the script copies the files into the served folder.
 
 **Cloudflare (the owner):** a DNS record `verify` -> the platform VM's address (the same address as `play`), **proxied** (orange cloud). An explicit
-record wins over the instancer's wildcard `*`. The origin certificate already covers `*.l3m0nctf.xyz`, and Authenticated Origin Pulls applies to the
+record wins over the instancer's wildcard `*`. The nginx block answers only the exact name `verify.l3m0nctf.xyz` (Cloudflare's
+origin-pull certificate is shared by all its customers, so a looser name would serve the portal under anybody's zone); another domain means
+editing its one `server_name` line. The origin certificate already covers `*.l3m0nctf.xyz`, and Authenticated Origin Pulls applies to the
 whole zone. **Access:** the portal must stay public. If the crew Access application ever carries the wildcard `*.l3m0nctf.xyz` (the strict instancer
 set-up, docs/deploy/instancer.md), add a **Bypass** application for `verify.l3m0nctf.xyz`, exactly as for `play`: the most specific hostname wins.
 Optional: a Cloudflare rate-limit rule for `verify.l3m0nctf.xyz` (nginx already allows 60 requests a minute per address).
