@@ -17,6 +17,7 @@ Safely rotate system secrets, credentials, and API keys before, during, or after
 | `DB_EXPORTER_PASSWORD` | MariaDB exporter | MariaDB metrics scrape fails until updated. | **Yes** |
 | `INSTANCER_TOKEN` | Instancer auth token | Instance launches fail until both CTFd and instancer agree. | **Yes, brief pause** |
 | `DISCORD_WEBHOOK_URL` | Alertmanager routing | Alerts fail to post to Discord (held in Alertmanager). | **Yes** |
+| `DISCORD_BLOOD_WEBHOOK` | the first/second/third blood posts (plugins/l3mon_board/blood.py) | Blood posts stop until the new address is in the file (no post is retried). | **Yes** |
 | `CTFTIME_CLIENT_SECRET`| CTFtime OAuth | CTFtime sign-in fails until CTFtime dashboard and secret match. | **Yes** |
 
 ## Numbered Procedures
@@ -68,6 +69,17 @@ Safely rotate system secrets, credentials, and API keys before, during, or after
    ```bash
    tools/compose.sh logs --tail 50 mail-relay
    ```
+
+### Procedure 4: Change `DISCORD_BLOOD_WEBHOOK` (the blood channel's address)
+The address lets anyone post as the blood bot, so it lives only in `.secrets/DISCORD_BLOOD_WEBHOOK` (never in the repository, never in
+`production.env`). An empty file means no posts.
+1. In Discord (channel settings, Integrations, Webhooks): **delete** the old webhook if it was ever exposed, and make a new one.
+2. On the VM, write the new address into the SAME file, so the container sees it at once (the file is mounted, and `blood.py` reads it for
+   every post; an editor that saves a new file would need `tools/compose.sh up -d --force-recreate ctfd`):
+   ```bash
+   cat > .secrets/DISCORD_BLOOD_WEBHOOK      # paste the address, press Enter, then Ctrl-D (it is not kept in the shell history)
+   ```
+3. `(cd tools && python3 -m l3mon deploy check)` shows "blood posts to Discord: on". The next first blood is the test; nothing else posts.
 
 ## How to know it worked
 - `/readyz` reports HTTP 200.

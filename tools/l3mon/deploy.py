@@ -96,6 +96,14 @@ def check_secrets(directory: Path, data: dict | None, items: list[Item], env: di
     else:
         items.append(Item(TODO, "Login with CTFtime", "off until CTFtime approves the event: then put the event number in event.toml and the secret in .secrets/CTFTIME_CLIENT_SECRET (docs/ctftime-endpoints.md, section 6)"))
 
+    blood = directory / "DISCORD_BLOOD_WEBHOOK"
+    if not blood.is_file():
+        items.append(Item(BLOCKED, "blood posts to Discord", f"{blood} does not exist: compose needs the file, and an empty one is fine (`: > {blood}`; then paste the webhook address into it to switch the posts on)"))
+    elif _read(blood):
+        items.append(Item(OK, "blood posts to Discord", "on: .secrets/DISCORD_BLOOD_WEBHOOK holds the address"))
+    else:
+        items.append(Item(TODO, "blood posts to Discord", "off: .secrets/DISCORD_BLOOD_WEBHOOK is empty (paste the blood channel's webhook address into it, then recreate ctfd)"))
+
     mail = (data or {}).get("mail")
     mail_password = _read(directory / "MAIL_PASSWORD") if (directory / "MAIL_PASSWORD").is_file() else None
     if mail_password is None:

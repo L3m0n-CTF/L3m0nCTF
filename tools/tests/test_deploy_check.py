@@ -134,11 +134,21 @@ def test_a_secrets_folder_other_users_can_open_is_blocked(tmp_path):
     assert "secrets folder" in blocked(run(world))
 
 
-@pytest.mark.parametrize("name", ["CTFTIME_CLIENT_SECRET", "MAIL_PASSWORD"])
+@pytest.mark.parametrize("name", ["CTFTIME_CLIENT_SECRET", "MAIL_PASSWORD", "DISCORD_BLOOD_WEBHOOK"])
 def test_a_missing_placeholder_file_is_blocked_because_compose_needs_it(tmp_path, name):
     world = make_deployment(tmp_path, ctftime=True)
     (world["secrets_dir"] / name).unlink()
     assert blocked(run(world)), name
+
+
+def test_the_blood_posts_are_off_with_an_empty_file_and_on_with_an_address(tmp_path):
+    world = make_deployment(tmp_path)
+    items = run(world)
+    assert statuses(items)["blood posts to Discord"] == deploy.TODO
+    (world["secrets_dir"] / "DISCORD_BLOOD_WEBHOOK").write_text("https://discord.com/api/webhooks/1/abc\n", encoding="utf-8")
+    items = run(world)
+    assert statuses(items)["blood posts to Discord"] == deploy.OK
+    assert "abc" not in next(i.detail for i in items if i.name == "blood posts to Discord"), "the check never prints the address"
 
 
 def test_a_mail_login_without_its_password_is_blocked_and_no_mail_section_is_a_todo_that_says_why(tmp_path):

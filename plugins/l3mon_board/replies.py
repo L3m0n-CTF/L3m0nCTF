@@ -25,6 +25,7 @@ A flag from a crew account that has no studio gets a plain `403 forbidden` that 
 (`?preview=true`) and a crew account that has a studio are CTFd's, as they always were.
 """
 import json
+import logging
 import math
 import re
 
@@ -39,6 +40,8 @@ from CTFd.utils.dates import unix_time_to_utc
 from CTFd.utils.challenges import get_solve_counts_for_challenges
 from CTFd.utils.config import is_teams_mode
 from CTFd.utils.user import get_current_user, is_admin
+
+log = logging.getLogger("l3mon.board")
 
 ON = {"extras": True, "ended": True, "hints": True}
 ATTEMPT = "api.challenges_challenge_attempt"
@@ -100,16 +103,17 @@ def _correct(challenge_id, team):
     if freeze:
         earlier_query = earlier_query.filter(Solves.date < unix_time_to_utc(freeze))  # while frozen a studio may not learn that another solved it after the freeze
     earlier = earlier_query.first()
-    earlier_count = earlier_query.count()
     counted = int((get_solve_counts_for_challenges(admin=False) or {}).get(challenge_id, 0))
     if freeze and own.date >= unix_time_to_utc(freeze) and not team.hidden and not team.banned:
         counted += 1  # the freeze leaves the studio's own later solve out of the public count; the studio is told its own (a studio that never counts is told none)
 
     try:
+        # the Discord post counts every earlier solve and stays silent for a solve the freeze hides (blood.py); the reply above keeps the
+        # freeze-filtered view a studio may know
         from CTFd.plugins.l3mon_board import blood
-        blood.notify(challenge, team, own, earlier_count=earlier_count)
+        blood.notify(challenge, team, own)
     except Exception:
-        pass
+        log.warning("The blood notifier failed", exc_info=True)
     return {
         "value": int(db.session.query(Challenges.value).filter_by(id=challenge_id).scalar() or 0),
         "reel": reel, "reels_needed": math.ceil(total_cells / 3),

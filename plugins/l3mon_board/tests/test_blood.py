@@ -1,125 +1,195 @@
-"""Tests for Discord first, second, and third blood notifications (Embed format)."""
-from unittest.mock import MagicMock, patch
+"""The Discord blood posts (plugins/l3mon_board/blood.py): first, second and third blood, posted in the background.
+
+The address comes only from the secret file; a test app never posts; a solve the freeze hides is never posted; the count is the real one
+(not the freeze-filtered count a studio's reply uses), hidden studios neither post nor take a blood, the place and TRP are the public
+scoreboard's, and names cannot carry Discord markdown or mentions.
+
+Run through tools/run-ctfd-tests.sh:
+    L3MON_MOUNT_PLUGINS=1 tools/run-ctfd-tests.sh l3mon/ctfd:dev -- -q -p no:randomly -p no:cacheprovider /l3mon_tests/l3mon_board/test_blood.py
+"""
+import calendar
+import logging
 from types import SimpleNamespace
+from unittest.mock import patch
 
-try:
-    from CTFd.plugins.l3mon_board import blood
-except ModuleNotFoundError:
-    import sys
-    from pathlib import Path
-    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-    import blood
+import pytest
 
+from CTFd.models import Teams, db
+from CTFd.plugins.l3mon_board import blood
+from CTFd.utils import set_config
+from board_world import T_LIVE, clock, join_client, make_app, on_air, started, team_client, world
+from tests.helpers import destroy_ctfd, login_as_user
+
+ATTEMPT = "/api/v1/challenges/attempt"
+HOOK = "https://discord.com/api/webhooks/123456789/the-token_part"
+
+
+def send(client, challenge_id, flag):
+    return client.post(ATTEMPT, json={"challenge_id": challenge_id, "submission": flag})
+
+
+class _Now:
+    """Runs the background post at once, so a test can read what was sent."""
+
+    def __init__(self, target, args=(), daemon=None):
+        self.target, self.args = target, args
+
+    def start(self):
+        self.target(*self.args)
+
+
+@pytest.fixture()
+def hook_file(tmp_path, monkeypatch):
+    path = tmp_path / "DISCORD_BLOOD_WEBHOOK"
+    path.write_text(HOOK + "\n", encoding="utf-8")
+    monkeypatch.setenv("L3MON_DISCORD_BLOOD_WEBHOOK_FILE", str(path))
+    return path
+
+
+@pytest.fixture()
+def posts():
+    """What would have gone to Discord, as (url, payload). The test app's own silence is lifted here, and only here."""
+    sent = []
+    blood._NOTIFIED_SOLVES.clear()
+    with patch.object(blood, "_send_webhook", side_effect=lambda url, payload: sent.append((url, payload))), \
+         patch.object(blood.threading, "Thread", _Now), patch.object(blood, "_in_test_app", return_value=False):
+        yield sent
+    blood._NOTIFIED_SOLVES.clear()
+
+
+@pytest.fixture()
+def play():
+    app = make_app()
+    with app.app_context():
+        started()
+        with clock(T_LIVE):
+            admin = login_as_user(app, "admin")
+            ids = world(app, admin)
+            on_air(admin, "lantern_walk", "moth_cipher", "noodle_ledger", "dumpling_gate", "coffee_break")
+            alice = team_client(app, "alice", "studio-a")
+            abe = join_client(app, "abe", "studio-a")
+            bob = team_client(app, "bob", "studio-b")
+            carol = team_client(app, "carol", "studio-c")
+            dave = team_client(app, "dave", "studio-d")
+            yield SimpleNamespace(app=app, admin=admin, ids=ids, alice=alice, abe=abe, bob=bob, carol=carol, dave=dave)
+    destroy_ctfd(app)
+
+
+def descriptions(sent):
+    return [payload["embeds"][0]["description"] for _, payload in sent]
+
+
+# ---- the address --------------------------------------------------------------------------------------------------------------
+
+def test_there_is_no_address_in_the_code(monkeypatch, tmp_path):
+    monkeypatch.setenv("L3MON_DISCORD_BLOOD_WEBHOOK_FILE", str(tmp_path / "absent"))
+    assert blood.get_webhook_url() == ""
+    assert not hasattr(blood, "DEFAULT_WEBHOOK")
+
+
+@pytest.mark.parametrize("content", ["", "   \n", "http://discord.com/api/webhooks/1/x", "https://evil.example/api/webhooks/1/x",
+                                     "https://discord.com.evil.example/api/webhooks/1/x", "https://discord.com/api/webhooks/1/x?wait=1"])
+def test_an_empty_or_foreign_address_means_no_posts(monkeypatch, tmp_path, content):
+    path = tmp_path / "hook"
+    path.write_text(content, encoding="utf-8")
+    monkeypatch.setenv("L3MON_DISCORD_BLOOD_WEBHOOK_FILE", str(path))
+    assert blood.get_webhook_url() == ""
+
+
+def test_the_address_is_read_from_the_file(hook_file):
+    assert blood.get_webhook_url() == HOOK
+
+
+def test_a_failed_post_never_writes_the_address_to_the_log(caplog):
+    with caplog.at_level(logging.WARNING, logger="l3mon.blood"):
+        blood._send_webhook("https://127.0.0.1:9/api/webhooks/1/the-secret-token", {"embeds": []})
+    assert caplog.records and "the-secret-token" not in caplog.text
+
+
+# ---- the words ----------------------------------------------------------------------------------------------------------------
 
 def test_ordinal():
-    assert blood.ordinal(1) == "1st"
-    assert blood.ordinal(2) == "2nd"
-    assert blood.ordinal(3) == "3rd"
-    assert blood.ordinal(4) == "4th"
-    assert blood.ordinal(11) == "11th"
-    assert blood.ordinal(12) == "12th"
-    assert blood.ordinal(13) == "13th"
-    assert blood.ordinal(21) == "21st"
-    assert blood.ordinal(22) == "22nd"
-    assert blood.ordinal(23) == "23rd"
-    assert blood.ordinal(34) == "34th"
-    assert blood.ordinal(45) == "45th"
-    assert blood.ordinal(101) == "101st"
-
-    # Crucial regression test for 1stth bug:
-    assert blood.ordinal("1st") == "1st"
-    assert blood.ordinal("2nd") == "2nd"
-    assert blood.ordinal("3rd") == "3rd"
-    assert blood.ordinal("4th") == "4th"
-    assert blood.ordinal("35th") == "35th"
-    assert blood.ordinal("1stth") == "1st"
+    for n, word in [(1, "1st"), (2, "2nd"), (3, "3rd"), (4, "4th"), (11, "11th"), (12, "12th"), (13, "13th"), (21, "21st"), (22, "22nd"),
+                    (23, "23rd"), (101, "101st"), ("1st", "1st"), ("35th", "35th"), ("1stth", "1st"), (None, "1st")]:
+        assert blood.ordinal(n) == word
 
 
-def test_create_blood_embed():
-    # First Blood - exactly matching screenshot
-    fb = blood.create_blood_embed(
-        blood_index=0,
-        team_name="Hydra",
-        challenge_name="Physics Trauma",
-        rank="2nd",
-        score=19215,
-    )
-    assert fb["title"] == "First Blood!"
-    assert "🩸" not in fb["title"]
-    assert "🩸" not in fb["description"]
-    assert fb["description"] == "Hydra got first blood on Physics Trauma and is now in 2nd place with 19215 points!"
-    assert fb["color"] == 16765503
-
-    # Second Blood - exactly matching screenshot
-    sb = blood.create_blood_embed(
-        blood_index=1,
-        team_name="Null Hunters",
-        challenge_name="The Cicada Archives",
-        rank=35,
-        score=5985,
-    )
-    assert sb["title"] == "Second Blood!"
-    assert "🩸" not in sb["title"]
-    assert "🩸" not in sb["description"]
-    assert sb["description"] == "Null Hunters got second blood on The Cicada Archives and is now in 35th place with 5985 points!"
-    assert sb["color"] == 14866672
-
-    # Third Blood
-    tb = blood.create_blood_embed(
-        blood_index=2,
-        team_name="AutoBots",
-        challenge_name="Echoes of the Abyss",
-        rank="1st",
-        score=2900,
-    )
-    assert tb["title"] == "Third Blood!"
-    assert "🩸" not in tb["title"]
-    assert "🩸" not in tb["description"]
-    assert tb["description"] == "AutoBots got third blood on Echoes of the Abyss and is now in 1st place with 2900 points!"
-    assert "1stth" not in tb["description"]
-    assert tb["color"] == 13467442
-
-    # 4th solve produces empty dict
+def test_the_embeds_say_trp_and_carry_no_emoji():
+    fb = blood.create_blood_embed(0, "Hydra", "Physics Trauma", 2, 19215)
+    assert fb == {"title": "First Blood!", "description": "Hydra got first blood on Physics Trauma and is now in 2nd place with 19215 TRP!", "color": 16765503}
+    assert blood.create_blood_embed(1, "Null Hunters", "Cicada", 35, 5985)["description"].endswith("in 35th place with 5985 TRP!")
+    assert blood.create_blood_embed(2, "AutoBots", "Echoes", "1st", 2900)["title"] == "Third Blood!"
     assert blood.create_blood_embed(3, "T", "C", 5, 100) == {}
+    for embed in (fb,):
+        assert "points" not in embed["description"] and "\U0001fa78" not in embed["title"] + embed["description"]
 
 
-def test_notify_sends_webhook_embed():
-    chal = SimpleNamespace(id=1, name="Physics Trauma", value=500)
-    team = SimpleNamespace(id=10, name="Hydra", hidden=False, banned=False, get_score=lambda **_: 19215, get_place=lambda **_: 2)
-    solve = SimpleNamespace(id=999)
-
-    sent = []
-
-    def mock_send(url, payload):
-        sent.append((url, payload))
-
-    with patch.object(blood, "_send_webhook", side_effect=mock_send):
-        # 1st blood (earlier_count = 0)
-        blood.notify(chal, team, solve, earlier_count=0)
-        assert len(sent) == 1
-        payload = sent[0][1]
-        assert "embeds" in payload
-        assert payload["embeds"][0]["title"] == "First Blood!"
-        assert "Hydra got first blood on Physics Trauma and is now in 2nd place with 19215 points!" in payload["embeds"][0]["description"]
-
-        # Duplicate solve ID should not send again
-        blood.notify(chal, team, solve, earlier_count=0)
-        assert len(sent) == 1
-
-        # 4th solve (earlier_count = 3) should not send
-        solve4 = SimpleNamespace(id=1000)
-        blood.notify(chal, team, solve4, earlier_count=3)
-        assert len(sent) == 1
-
-        # Hidden team should not send
-        hidden_team = SimpleNamespace(id=11, name="Admin", hidden=True, banned=False, get_score=lambda **_: 0, get_place=lambda **_: 1)
-        solve_hidden = SimpleNamespace(id=1001)
-        blood.notify(chal, hidden_team, solve_hidden, earlier_count=0)
-        assert len(sent) == 1
+def test_a_name_cannot_carry_markdown_a_link_or_a_second_line():
+    text = blood.escape("[click](https://evil.example) **bold** @everyone\n# big")
+    assert "\n" not in text
+    assert "](" not in text.replace("\\]\\(", "")
+    for raw in ("[", "]", "(", ")", "*", "#", "@", ":"):
+        assert all(text[i - 1] == "\\" for i, ch in enumerate(text) if ch == raw), raw
 
 
-if __name__ == "__main__":
-    test_ordinal()
-    test_create_blood_embed()
-    test_notify_sends_webhook_embed()
-    print("ALL BLOOD TESTS PASSED!")
+# ---- through a real flag ------------------------------------------------------------------------------------------------------
+
+def test_the_first_three_solves_post_first_second_and_third_blood_and_the_fourth_nothing(play, hook_file, posts):
+    for client in (play.alice, play.bob, play.carol, play.dave):
+        assert send(client, play.ids.lantern, "lantern-answer").get_json()["data"]["status"] == "correct"
+    assert [p["embeds"][0]["title"] for _, p in posts] == ["First Blood!", "Second Blood!", "Third Blood!"]
+    assert all(url == HOOK for url, _ in posts)
+    assert descriptions(posts)[0].startswith("studio\\-a got first blood on Lantern Walk and is now in 1st place with ")
+    assert all(p["allowed_mentions"] == {"parse": []} for _, p in posts), "no name may ping anybody"
+
+
+def test_a_second_member_of_the_same_studio_does_not_post_again(play, hook_file, posts):
+    send(play.alice, play.ids.lantern, "lantern-answer")
+    send(play.abe, play.ids.lantern, "lantern-answer")  # already solved by the studio: CTFd records nothing
+    assert len(posts) == 1
+
+
+def test_a_test_app_never_posts_even_with_the_file(play, hook_file):
+    blood._NOTIFIED_SOLVES.clear()
+    with patch.object(blood, "_send_webhook") as sender, patch.object(blood.threading, "Thread", _Now):
+        send(play.alice, play.ids.lantern, "lantern-answer")
+    assert not sender.called
+
+
+def test_without_the_file_nothing_is_posted(play, posts, monkeypatch, tmp_path):
+    monkeypatch.setenv("L3MON_DISCORD_BLOOD_WEBHOOK_FILE", str(tmp_path / "absent"))
+    send(play.alice, play.ids.lantern, "lantern-answer")
+    assert posts == []
+
+
+def test_a_hidden_studio_neither_posts_nor_takes_the_blood(play, hook_file, posts):
+    ghost = team_client(play.app, "ghost", "studio-ghost")
+    Teams.query.filter_by(name="studio-ghost").first().hidden = True
+    db.session.commit()
+    send(ghost, play.ids.coffee, "coffee-answer")
+    assert posts == []
+    send(play.alice, play.ids.coffee, "coffee-answer")
+    assert [p["embeds"][0]["title"] for _, p in posts] == ["First Blood!"]
+
+
+def test_nothing_is_posted_for_a_solve_after_the_freeze(play, hook_file, posts):
+    """CTFd dates a solve with the real clock, so the freeze is set just before the real now: every solve here is after it. Before the
+    fix every studio after the freeze was posted as "First Blood" with its live place (the review of 26 Nov)."""
+    from freezegun.api import real_datetime
+
+    set_config("freeze", calendar.timegm(real_datetime.utcnow().timetuple()) - 100)
+    send(play.alice, play.ids.lantern, "lantern-answer")
+    send(play.bob, play.ids.lantern, "lantern-answer")
+    assert posts == []
+
+
+def test_a_solve_before_a_freeze_still_counts_for_the_next_blood(play, hook_file, posts):
+    send(play.alice, play.ids.lantern, "lantern-answer")
+    send(play.bob, play.ids.lantern, "lantern-answer")
+    assert [p["embeds"][0]["title"] for _, p in posts] == ["First Blood!", "Second Blood!"], "the post counts every earlier solve"
+
+
+def test_a_studio_name_is_posted_as_plain_text(play, hook_file, posts):
+    shady = team_client(play.app, "shady", "[win](https://evil.example)")
+    send(shady, play.ids.moth, "moth-answer")
+    assert descriptions(posts)[0].startswith("\\[win\\]\\(https\\:")
