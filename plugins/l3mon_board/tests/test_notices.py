@@ -8,6 +8,7 @@ Run through tools/run-ctfd-tests.sh:
     L3MON_MOUNT_PLUGINS=1 tools/run-ctfd-tests.sh l3mon/ctfd:dev -- -q -p no:randomly -p no:cacheprovider /l3mon_tests/l3mon_board
 """
 import datetime
+import re
 from types import SimpleNamespace
 
 import pytest
@@ -54,10 +55,15 @@ def play():
     destroy_ctfd(app)
 
 
+def plain(title):
+    """The display tag a notification title may start with ([ANNOUNCEMENT], [BACKGROUND], [TOAST]) is a hint to the page; the line's own words are what follows it."""
+    return re.sub(r"^\[[\w-]+\]\s*", "", title or "")
+
+
 def items(client, path=LIST):
     r = client.get(path)
     assert r.status_code == 200, r.get_data(as_text=True)
-    return r.get_json()["data"]
+    return [dict(i, title=plain(i["title"])) for i in r.get_json()["data"]]
 
 
 def titles(client, path=LIST):
@@ -231,7 +237,7 @@ def test_the_crew_keeps_ctfds_own_list_with_every_row_its_dates_and_its_addresse
     news("for b", "x", at(1), team="studio-b")
     r = play.admin.get(LIST)
     got = r.get_json()["data"]
-    assert r.status_code == 200 and {n["title"] for n in got} == {"public", "for b"} and all("date" in n and "team_id" in n for n in got)
+    assert r.status_code == 200 and {plain(n["title"]) for n in got} == {"public", "for b"} and all("date" in n and "team_id" in n for n in got)
 
 
 def test_the_detail_of_one_notification_answers_a_player_as_a_missing_id_does_and_the_crew_as_ctfd_does(play):
@@ -349,7 +355,7 @@ def test_the_crews_bell_numbers_are_ctfds_own_so_that_its_since_id_works(play):
     second = news("two", "2", at(1), team="studio-b")
     board_after = play.admin.get(BOARD).get_json()["data"]
     assert board_after["notif_id"] == second.id and board_after["notif_ver"] != board["notif_ver"]
-    assert [n["title"] for n in play.admin.get(f"{LIST}?since_id={first.id}").get_json()["data"]] == ["two"]
+    assert [plain(n["title"]) for n in play.admin.get(f"{LIST}?since_id={first.id}").get_json()["data"]] == ["two"]
 
 
 @pytest.mark.parametrize("path", ["/login", "/api/v1/challenges", "/api/v1/teams/me", "/themes/core/static/css/nothing.css", "/notificationsX", "/api/v1/notificationsX", "/events/x"])
@@ -373,3 +379,31 @@ def test_the_guarded_paths_still_ask(play, path):
     with mock.patch.object(notices, "is_admin", wraps=notices.is_admin) as asked:
         play.alice.get(path)
     assert asked.call_count >= 1, path
+
+
+def test_notification_type_tagging_via_api(play):
+    r = play.admin.post(LIST, json={"title": "Emergency Reboot", "content": "Save your work", "type": "announcement"})
+    assert r.status_code == 200
+    alert_row = Notifications.query.filter_by(content="Save your work").one()
+    assert alert_row.title == "[ANNOUNCEMENT] Emergency Reboot"
+
+    r2 = play.admin.post(LIST, json={"title": "Score Sync", "content": "Recalculated", "type": "background"})
+    assert r2.status_code == 200
+    bg_row = Notifications.query.filter_by(content="Recalculated").one()
+    assert bg_row.title == "[BACKGROUND] Score Sync"
+
+    r3 = play.admin.post(LIST, json={"title": "[TOAST] Hint Released", "content": "Check chal 1", "type": "alert"})
+    assert r3.status_code == 200
+    toast_row = Notifications.query.filter_by(content="Check chal 1").one()
+    assert toast_row.title == "[TOAST] Hint Released"
+
+    got = items(play.alice)
+    assert all(sorted(i) == ["content", "id", "title"] for i in got)
+
+
+def test_a_notification_written_without_a_type_is_stored_as_an_announcement_and_read_without_its_tag(play):
+    """The owner's rule of 24 Nov 2026: a line nobody typed (the platform's own lines, the stock admin form) is an announcement. The tag is stored in the title for the page
+    (it hides it) and the readers of this feed see the words only."""
+    row = news("Plain line", "text", at(1))
+    assert Notifications.query.get(row.id).title == "[ANNOUNCEMENT] Plain line"
+    assert "Plain line" in titles(play.alice) and "[ANNOUNCEMENT] Plain line" not in titles(play.alice)

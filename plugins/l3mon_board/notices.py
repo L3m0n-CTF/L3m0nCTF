@@ -14,7 +14,10 @@ own view runs, for everyone but the crew:
 
 The crew keeps CTFd's own answers (they need the raw rows, and the admin pages use the event stream), and only the crew can write.
 """
-from flask import abort, request
+import re
+from flask import abort, request, has_request_context
+from sqlalchemy import event
+from CTFd.models import Notifications
 
 from CTFd.plugins.l3mon_board import envelope, news, viewer
 from CTFd.utils.user import is_admin
@@ -65,8 +68,55 @@ def after(response):
     return response
 
 
+@event.listens_for(Notifications, "before_insert")
+def _tag_notification(mapper, connection, target):
+    if not target.title:
+        target.title = "Announcement"
+    if re.match(r"^\[[\w-]+\]", target.title):
+        return
+    req_type = None
+    if has_request_context():
+        try:
+            data = request.get_json(silent=True) or request.form or {}
+            req_type = data.get("type") or data.get("kind")
+        except Exception:
+            pass
+    p = str(req_type or "").strip().upper()
+    if p in ("BACKGROUND", "SILENT", "UPDATE"):
+        target.title = f"[BACKGROUND] {target.title}"
+    elif p in ("TOAST", "RELEASE"):
+        target.title = f"[TOAST] {target.title}"
+    else:
+        target.title = f"[ANNOUNCEMENT] {target.title}"
+
+
 def install(app):
     if "l3mon_board_notices" not in app.extensions:
         app.extensions["l3mon_board_notices"] = True
         app.before_request(guard)
         app.after_request(after)
+
+        try:
+            from CTFd.forms.notifications import NotificationForm
+            NotificationForm.type.kwargs["default"] = "alert"
+        except Exception:
+            pass
+
+        if hasattr(app, "events_manager") and hasattr(app.events_manager, "publish"):
+            orig_publish = app.events_manager.publish
+
+            def publish_wrapper(*args, **kwargs):
+                data = kwargs.get("data")
+                if data is None and args:
+                    data = args[0]
+                if isinstance(data, dict):
+                    title = str(data.get("title") or "")
+                    if title.startswith("[TOAST]"):
+                        data["type"] = "toast"
+                    elif title.startswith("[BACKGROUND]"):
+                        data["type"] = "background"
+                    else:
+                        data["type"] = "alert"
+                return orig_publish(*args, **kwargs)
+
+            app.events_manager.publish = publish_wrapper

@@ -5,6 +5,7 @@ Run through tools/run-ctfd-tests.sh:
     L3MON_MOUNT_PLUGINS=1 tools/run-ctfd-tests.sh l3mon/ctfd:dev -- -q -p no:randomly -p no:cacheprovider /l3mon_tests/l3mon_board
 """
 import datetime
+import re
 from types import SimpleNamespace
 
 import pytest
@@ -163,6 +164,11 @@ def test_ctfd_alone_lets_a_studio_spend_TRP_on_a_hint_while_paused_or_after_the_
     assert r.status_code == 200, (state, r.status_code, r.get_data(as_text=True))
 
 
+def plain(title):
+    """The display tag a notification title may start with ([ANNOUNCEMENT], [BACKGROUND], [TOAST]) is a hint to the page; the line's own words are what follows it."""
+    return re.sub(r"^\[[\w-]+\]\s*", "", title or "")
+
+
 # ---- part 3.5: the bell, the standings, a hint's rows (measured 2026-10-10)
 
 def test_the_stock_notifications_routes_are_open_to_a_visitor_and_hand_out_team_addressed_lines_with_dates(play):
@@ -173,12 +179,12 @@ def test_the_stock_notifications_routes_are_open_to_a_visitor_and_hand_out_team_
     visitor = play.app.test_client()
     listing = visitor.get("/api/v1/notifications")
     assert listing.status_code == 200, "no sign-in is asked for"
-    rows = {row["title"]: row for row in listing.get_json()["data"]}
+    rows = {plain(row["title"]): row for row in listing.get_json()["data"]}
     assert set(rows) == {"for everyone", "for studio b"} and rows["for studio b"]["team_id"] == team_b and rows["for studio b"]["date"]
     assert sorted(rows["for everyone"]) == ["content", "date", "html", "id", "team", "team_id", "title", "user", "user_id"]
     assert visitor.get(f"/api/v1/notifications/{rows['for studio b']['id']}").get_json()["data"]["content"] == "addressed", "the detail route too"
     assert visitor.head("/api/v1/notifications").headers["Result-Count"] == "2"
-    assert [r["title"] for r in visitor.get(f"/api/v1/notifications?team_id={team_b}").get_json()["data"]] == ["for studio b"], "and anybody may ask for one studio's lines"
+    assert [plain(r["title"]) for r in visitor.get(f"/api/v1/notifications?team_id={team_b}").get_json()["data"]] == ["for studio b"], "and anybody may ask for one studio's lines"
     page = play.alice.get("/notifications")
     assert page.status_code == 200 and "for studio b" in page.get_data(as_text=True), "the stock page lists them for any signed-in player"
 

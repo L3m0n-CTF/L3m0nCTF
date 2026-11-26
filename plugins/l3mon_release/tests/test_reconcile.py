@@ -220,14 +220,14 @@ def test_a_drop_is_announced_once_with_one_line_per_channel_in_channel_order_and
         app.events_manager.publish = events
         reconcile(T_LATER)
         note = Notifications.query.one()
-        assert note.title == "New on air"
+        assert note.title == "[ANNOUNCEMENT] New on air"
         assert note.content == "CH 3 · Gadget Galaxy has 1 new programme. CH 5 · Chase Club has 2 new programmes."
         for secret in ("Wrestler", "Mango", "Secret Sauce", "wrestler padding"):
             assert secret not in note.content and secret not in note.title
         assert note.team_id is None and note.user_id is None, "it is public"
         assert events.call_count == 1 and events.call_args.kwargs["type"] == "notification"
         pushed = events.call_args.kwargs["data"]
-        assert pushed["title"] == "New on air" and pushed["sound"] is True and "Gadget Galaxy" in pushed["content"]
+        assert pushed["title"] == "[ANNOUNCEMENT] New on air" and pushed["sound"] is True and "Gadget Galaxy" in pushed["content"]
         reconcile(T_LATER + 30)
         assert Notifications.query.count() == 1, "once"
     destroy_ctfd(app)

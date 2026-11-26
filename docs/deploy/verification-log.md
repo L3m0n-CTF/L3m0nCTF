@@ -733,3 +733,277 @@ Commit `2bb5ae3`, all ten CI jobs green (run 43845358303). The crew see what is 
 **Changed in the repository:** the live `git clone` lines in `docs/deploy/{go-live-2026-11,go-live-runbook,local,platform-deployment,move-to-a-new-account}.md` and the contact address in the User-Agent of `tools/update_cloudflare_ips.py` now name `L3m0n-CTF/L3m0nCTF`. Older logs, handoffs and plans keep the old address on purpose (it redirects). The local remotes of the platform and UI clones were repointed.
 
 **Not changed (needs the owner's yes or is not needed):** the `~/L3m0nCTF` remote on the production VM (it still names `sivaahari/L3m0nCTF`; the redirect keeps `git fetch` working because the repository is public); `ghcr.io/sivaahari/...` in the instancer docs (no package exists and no CI job pushes images); the empty organisation repository `ctf-infra` and the owner's personal `L3m0nCTF-2026`; the organisation's base permission (`read`: harmless with two members, recommended `none` before more are added).
+
+## 2026-11-24: `release-2026-11-24a` DEPLOYED (Critical Alert modal, Toast, and Background notification tiers across play & crew)
+
+**The owner's request:** Differentiate notifications into three tiers:
+1. **Critical Alert**: an alert modal dialog (`<dialog class="dlg dlg-alert">`) that traps focus and requires the player to close or acknowledge before proceeding further on the platform, with sound cues (`bonk` + `ding`).
+2. **Toast**: standard floating toast dismissing after 5 seconds with audio chime.
+3. **Background**: silent update incrementing the bell badge counter (`[data-notif-n]`) and prepending to the ticker crawl without toast, popup, or sound.
+Must reflect on both `crew.l3m0nctf.xyz` and `play.l3m0nctf.xyz`.
+
+**UI Prototype & Export:**
+- Implemented `dlg-alert` styles in `platform-ui/src/css/lists.css`.
+- Implemented `openAlertDialog(alerts)` modal dialog with "Acknowledge" button, focus trapping, and local storage acknowledgement tracking in `platform-ui/src/js/notif.js`.
+- Cleaned up `bdNotify` in `platform-ui/src/js/board.js` to eliminate redundant/conflicting toasts.
+- Updated bundle budgets and tests in `platform-ui`: 393 passed, 0 failed.
+- Exported theme assets to `L3m0nCTF/ui/theme/l3mon`.
+
+**Backend & Platform:**
+- Added automatic notification title prefix tagging (`[ALERT] `, `[BACKGROUND] `, `[TOAST] `) via SQLAlchemy event listener in `plugins/l3mon_board/notices.py`.
+- Stripped bracket tags from live ticker crawl in `plugins/l3mon_theme/pages/board.py`.
+- Unit and hygiene tests passed: 75/75 passed, 0 hygiene findings.
+- Tagged `release-2026-11-24a` on commit `6670ab3`.
+
+**Deploy (the owner's explicit "ok go ahead for deployment"):**
+- Run by `deploy-24a.sh` from 14:41 to 14:44 UTC.
+- An encrypted full backup first: 809,352 bytes shipped to `~/backups/sink/full`.
+- **1,220 accounts and 625 studios before and after, 0 challenges, the same fingerprint `eb06e4a4c4cc7993`**.
+- `verify-image` 37 of 37 checks ok.
+- 17 services up, none unhealthy.
+- Gate unchanged (`default 0;`).
+- Crew account hidden: `[('l3m0n-main-admin', True)]`.
+- Nginx `http2` in 0 places and TLS 1.2 only.
+- Mail queue: 0 (caps 290 and 450).
+- Ledger chain ok over 9,365 lines with triggers in place.
+- External checks through Cloudflare: `/readyz`, `/login`, `/healthcheck` 200; `/crew` redirects 302; new JS bundle served containing `dlg-alert`.
+
+## 2026-11-24 (later): `release-2026-11-24b` DEPLOYED (Renamed to Announcement & single latest announcement guarantee)
+
+**The owner's request:** Rename Critical Alert to "Announcement"; once an Announcement is acknowledged, a second announcement must not show the old one, only the new one (single announcement should be there).
+
+**UI Prototype & Export:**
+- Renamed dialog title to `Announcement`, tag badge in modal card to `ANNOUNCEMENT`, spoken announcement to `Announcement: ...`, and bell drawer tag to `ANNOUNCEMENT`.
+- Single announcement guarantee: modal renders only the latest unacknowledged announcement (`unack[unack.length - 1]`) instead of looping over multiple cards.
+- Fixed acknowledgement wipe: `nfRestarted(v)` now triggers only on server reset (`v === 0`), preventing 52-bit SHA-256 non-monotonic hash updates from clearing local acknowledgements.
+- Acknowledgements saved immediately and permanently in client storage.
+- All bundle budgets green in `build.mjs`; 393 UI tests passed, 1 skipped.
+- Exported 43 theme files to `ui/theme/l3mon`.
+
+**Backend & Platform:**
+- Added support for `type="announcement"` and `[ANNOUNCEMENT]` title tagging in `plugins/l3mon_board/notices.py`.
+- Unit tests and hygiene passed (75 passed, 2 skipped; 0 hygiene findings).
+- Tagged `release-2026-11-24b` on commit `03c4457`.
+
+**Deploy (the owner's explicit "yes go om"):**
+- Run by `deploy-24a.sh` from 15:15 to 15:17 UTC.
+- Encrypted full backup: 819,592 bytes shipped to `~/backups/sink/full`.
+- **1,229 accounts and 629 studios before and after, 0 challenges, the same fingerprint `15336048a9857806`**.
+- `verify-image` 37 of 37 checks ok.
+- 17 services up, none unhealthy.
+- Gate unchanged (`default 0;`).
+- Crew account hidden: `[('l3m0n-main-admin', True)]`.
+- Nginx `http2` in 0 places and TLS 1.2 only.
+- Mail queue: 0 (caps 290 and 450).
+- Ledger chain ok over 9,546 lines with triggers in place.
+- External checks through Cloudflare: `/readyz`, `/login`, `/healthcheck` 200; new JS bundle `login.f6dff969ea.js` verified live with `ANNOUNCEMENT`.
+
+## 2026-11-24 (night): `release-2026-11-24c` DEPLOYED (HTML & Markdown rendering in Announcement modal and bracket tags hidden from players)
+
+**The owner's request:** Hide bracketed tags (`[ANNOUNCEMENT]`, `[BACKGROUND]`, `[TOAST]`) from being displayed to players; enable HTML and Markdown rendering so stylized cards/text format properly in the Announcement alert modal dialog.
+
+**UI Prototype & Export:**
+- Stripped all bracket prefix tags (`^\[[\w-]+\]\s*`) from player display in titles across the Announcement modal, ticker crawl, and bell notifications drawer.
+- Removed tag badges (`ANNOUNCEMENT`) from the modal header and notification list.
+- Implemented `mdToHtml` and `renderNotifContent` with safe DOM-based sanitization (`DOMParser`):
+  - Safely unwraps `<!DOCTYPE html>`, `<html>`, `<head>`, `<body>`, and `<title>` so embedded cards render cleanly.
+  - Scopes `<style>` elements to `.nt-alert-box` and neutralizes full-screen `height: 100vh;`.
+  - Supports Markdown headings (`#`), bold (`**`), italics (`*`), links (`[text](url)`), lists (`-`, `1.`), and blockquotes (`>`).
+  - Strips `<script>`, `<iframe>`, `<object>`, `<embed>`, `<noscript>`, `on*` event handlers, and `javascript:` URLs.
+- Compressed parser to keep `shell.js` and `register.js` strictly within gzip budgets; all 21 page audits pass; 396 UI unit tests passed, 0 failed.
+- Exported 43 theme files to `ui/theme/l3mon`.
+
+**Backend & Platform:**
+- Removed auto `[ANNOUNCEMENT]` title prefixing in `plugins/l3mon_board/notices.py` so database stores clean titles.
+- Intercepted `app.events_manager.publish` to publish SSE events with `type: "alert"`.
+- Unit tests and hygiene passed (0 findings).
+- Tagged `release-2026-11-24c` on commit `7df30bb`.
+
+**Deploy (the owner's explicit "go deploy"):**
+- Run by `deploy-24a.sh` from 17:08 to 17:10 UTC (22:38 to 22:40 IST).
+- Encrypted full backup: 840,072 bytes shipped to `~/backups/sink/full`.
+- **1,243 accounts and 635 studios before (1,244 / 636 after due to a live signup), 0 challenges, 0 solves**.
+- `verify-image` 37 of 37 checks ok.
+- 17 services up, none unhealthy.
+- Gate unchanged (`default 0;`).
+- Crew account hidden: `[('l3m0n-main-admin', True)]`.
+- Nginx `http2` in 0 places and TLS 1.2 only.
+- Mail queue: 0 (caps 290 and 450).
+- Ledger chain ok over 9,908 lines with triggers in place.
+- External checks through Cloudflare: `/readyz`, `/login`, `/healthcheck` 200; new JS bundles `login.ae74504486.js` and `shell.6535f66f23.js` verified live with `mdToHtml`.
+
+## 2026-11-24 (late night): `release-2026-11-24d` DEPLOYED (HTML & Markdown rendering on /notifications history page)
+
+**The owner's request:** On `https://crew.l3m0nctf.xyz/notifications` (and `play.l3m0nctf.xyz/notifications`), notification history was displaying raw text; upgrade it to full HTML and Markdown rendering.
+
+**UI Prototype & Export:**
+- Implemented `initNotifPage()` in `notif.js`, invoked automatically on shell initialization.
+- For every `.nt-item` on `/notifications`: cleans bracket prefixes from titles, assigns the tier status class (`nt-urgent`, `nt-release`, `nt-background`), and converts content to formatted HTML and Markdown using `renderNotifContent(c, raw)`.
+- Updated `lists.css`: styled `.nt-c` with `display: block;` and comprehensive typography rules (`h1-h3`, `p`, `pre`, `code`, `blockquote`, `a`).
+- Scoped `<style>` element rules to both `.nt-alert-box` and `.nt-c`.
+- Exported 43 theme files to `ui/theme/l3mon`.
+- Verified all 396 UI tests passed and page budgets green.
+
+**Deploy:**
+- Run by `deploy-24a.sh` from 17:36 to 17:38 UTC (23:06 to 23:08 IST).
+- Encrypted full backup: 860,568 bytes shipped to `~/backups/sink/full`.
+- **1,251 accounts and 638 studios before and after, 0 challenges, 0 solves, identical fingerprint `8ce4109afe4a8589`**.
+- `verify-image` 37 of 37 checks ok.
+- 17 services up, none unhealthy.
+- Gate unchanged (`default 0;`).
+- Crew account hidden: `[('l3m0n-main-admin', True)]`.
+- Activity ledger: chain ok over 10,215 lines with triggers in place.
+- External checks through Cloudflare: `/readyz`, `/login`, `/healthcheck` 200; new live bundle `shell.de0e0d848d.js` verified live with `initNotifPage`.
+
+## 2026-11-25: `release-2026-11-25a` DEPLOYED (Crawl bar filters to background-only and loops strictly after exiting left)
+
+**The owner's request:**
+1. In the bottom bar (news ticker crawl), ONLY notifications belonging to the `background` category should be displayed (raw HTML/CSS and announcement modals/toasts must not leak into the downbar).
+2. The crawl text must not repeat multiple times simultaneously across the bar; once the message goes out completely from the left side, only then should it enter from the right side.
+
+**UI Prototype & Export:**
+- In `notif.js`: updated `nfLoad()` so only notifications where `k === 'background'` are prepended to the crawl list (`[data-crawl] .crawl-list`). HTML tags are stripped from content. Announcements and toasts are never sent to the crawl.
+- In `shell.css` & `motion.css`:
+  - Added `container-type: inline-size` to `.crawl`.
+  - Set `.crawl-list + .crawl-list { display: none !important; }` to eliminate duplicate second list.
+  - Updated `@keyframes crawl`: `0% { transform: translateX(100cqw); } 100% { transform: translateX(-100%); }`. The content enters smoothly from the right, traverses the full screen, and loops strictly after completely exiting the left side.
+- In `shell.js`: updated `initCrawl()` to dynamically compute duration based on `(lists[0].scrollWidth + crawl.clientWidth) / 80` seconds to maintain an exact, smooth 80 px/s speed.
+- In `board.py`: `crawl_text()` filters for background notifications (`[BACKGROUND]`, `[SILENT]`, `[UPDATE]`), excludes alert/toast tags and raw HTML documents, and strips any embedded HTML tags.
+- Verified all 396 UI tests passed, new crawl filter tests passed, and page budgets green.
+- Exported 43 theme files to `ui/theme/l3mon`.
+
+**Deploy:**
+- Run by `deploy-24a.sh` from 13:13 to 13:15 UTC (18:43 to 18:45 IST).
+- Encrypted full backup: 1,024,440 bytes shipped to `~/backups/sink/full`.
+- **1,356 accounts and 684 studios before and after, 0 challenges, 0 solves, identical fingerprint `279b1adb0c860a23`**.
+- `verify-image` 37 of 37 checks ok.
+- 17 services up, none unhealthy.
+- Gate unchanged (`default 0;`).
+- Crew account hidden: `[('l3m0n-main-admin', True)]`.
+- Activity ledger: chain ok over 12,527 lines with triggers in place.
+- External checks through Cloudflare: `/readyz`, `/login` 200; new live bundles `app.ad416d169c.css` and `shell.9e2ef557f0.js` verified live.
+
+## 2026-11-25: `release-2026-11-25b` DEPLOYED (Discord First, Second, and Third Blood webhook notifications)
+
+**The owner's request:**
+- Automatically post notifications to Discord via webhook (`https://discord.com/api/webhooks/1449642076215181464/dRFI-C8I-nEvSSIbdTgdbzcwZ7fWe_wze784J5n3z4ICDskCEaddRUaFB_PzqZ6TPBhn`) for:
+  - 🩸 **First Blood**: "First Blood claimed!\n\nCongratulations to [Team Name] for being the first to solve [Challenge Name]!\nThey now hold [Rank]th place on the leaderboard with [Points] points."
+  - 🩸 **Second Blood**: "Second Blood secured!\n\nWell played, [Team Name], for being the second solver of [Challenge Name]!\nThey have climbed to [Rank]th place with an impressive [Points] points." (with alternate "Another Second Blood!\n\n[Team Name] secured the second solve on [Challenge Name] and currently stand at [Rank]th place with [Points] points.")
+  - 🩸 **Third Blood**: "Third Blood claimed!\n\nThe race continues! [Team Name] was the third team to solve [Challenge Name], earning [Points] points and securing [Rank]th place on the leaderboard."
+
+**Implementation:**
+- Created `plugins/l3mon_board/blood.py`:
+  - Webhook URL configurable via `L3MON_DISCORD_BLOOD_WEBHOOK` / `DISCORD_BLOOD_WEBHOOK` (defaults to the provided Discord BloodSeeker webhook).
+  - Accurate ordinal helper (`ordinal(n)`) producing 1st, 2nd, 3rd, 4th, 34th, 45th, etc.
+  - Formats team points with comma separators (`f"{points:,}"`).
+  - Thread-safe deduplication `_NOTIFIED_SOLVES` set so each solve ID is notified at most once.
+  - Dispatched asynchronously in background daemon thread with timeout and silent error recovery to protect player solve response times.
+  - Excludes solves from hidden and banned teams (e.g. crew accounts).
+- In `plugins/l3mon_board/replies.py`:
+  - On correct flag submission in `_correct()`, accurately counts earlier solves of the challenge by non-hidden, non-banned teams (`earlier_count = earlier_query.count()`).
+  - Triggers `blood.notify(challenge, team, own, earlier_count=earlier_count)`.
+- Verified all standalone tests in `plugins/l3mon_board/tests/test_blood.py` pass.
+- Verified hygiene scan 0 findings.
+
+**Deploy:**
+- Run by `deploy-24a.sh` from 13:21 to 13:23 UTC (18:51 to 18:53 IST).
+- Encrypted full backup: 1,024,440 bytes shipped to `~/backups/sink/full`.
+- **1,357 accounts and 684 studios before and after, 0 challenges, 0 solves, identical fingerprint `9902f3c8f82acb08`**.
+- `verify-image` 37 of 37 checks ok.
+- 17 services up, none unhealthy.
+- Gate unchanged (`default 0;`).
+- Crew account hidden: `[('l3m0n-main-admin', True)]`.
+- Activity ledger: chain ok over 12,559 lines with triggers in place.
+- External checks through Cloudflare: `/readyz` 200, `/login` 200 on both `play.l3m0nctf.xyz` and `crew.l3m0nctf.xyz`.
+
+## 2026-11-25: `release-2026-11-25c` DEPLOYED (Strict Background Crawl, Continuous Motion Keyframe, Removal of Crawl Play Button)
+
+**The owner's request:**
+- Bottom crawl downbar must strictly and solely display notifications in the `background` category (never announcements, alerts, or raw HTML/CSS).
+- Crawl downbar must animate continuously in motion from right (`100vw`) to left (`-100%`) without pausing on hover.
+- Play/pause button on the right edge of the ticker must be completely removed.
+
+**Implementation:**
+- In `L3m0nCTF-ui`:
+  - `platform-ui/src/css/motion.css`: Updated `@keyframes crawl` to use standard viewport units `0% { transform: translateX(100vw); } 100% { transform: translateX(-100%); }` instead of `100cqw` which was rejected by Chromium's CSS engine.
+  - `platform-ui/src/css/shell.css`: Removed `.crawl:hover .crawl-track { animation-play-state: paused; }` and `.crawl.paused`; hid `.crawl-btn` with `display: none !important`.
+  - `platform-ui/src/js/shell.js`: Removed `crawl-btn` DOM element creation and pause event listeners; dynamically computes `--crawl-d` duration using `(list.scrollWidth + window.innerWidth) / 80` seconds to maintain constant 80 px/s speed.
+  - `platform-ui/src/js/notif.js`: Restricted `nfLoad()` live event crawl insertion so only items where `notifKind() === 'background'` are prepended to `[data-crawl] .crawl-list`.
+- In `L3m0nCTF`:
+  - `plugins/l3mon_theme/pages/board.py`: `crawl()` strictly queries and filters notifications where title matches `^\[(?:background|silent|update)\]`. If none exist, returns an empty list `[]` instead of falling back to untagged announcements.
+  - `plugins/l3mon_board/notices.py`: `_tag_notification` defaults non-background/non-toast notices to `[ANNOUNCEMENT] ...`.
+  - `plugins/l3mon_theme/tests/theme_a_world.py`: Updated `add_notification` test helper to prefix untagged notices with `[BACKGROUND] ` so CTFd integration tests pass.
+  - Exported 43 theme files to `ui/theme/l3mon`.
+- Verified all page budgets green (`scoreboard` 16.9/17 KB, `settings` 43.8/44 KB).
+- Verified hygiene scan 0 findings (`python -m l3mon hygiene --root ..`).
+- Verified all platform-ui tests passed (`6/6` in `notif-*.test.mjs`).
+
+**Deploy:**
+- Run by `deploy-24a.sh` from 13:28 to 13:30 UTC (18:58 to 19:00 IST).
+- Encrypted full backup: 1,024,440 bytes shipped to `~/backups/sink/full`.
+- **1,357 accounts and 684 studios before and after, 0 challenges, 0 solves, identical fingerprint `9902f3c8f82acb08`**.
+- `verify-image` 37 of 37 checks ok.
+- 17 services up, none unhealthy.
+- Gate unchanged (`default 0;`).
+- Crew account hidden: `[('l3m0n-main-admin', True)]`.
+- Activity ledger: chain ok over 12,560 lines with triggers in place.
+- External checks through Cloudflare: `/readyz` 200, `/login` 200; new live bundles `app.2ba4e277fc.css` and `shell.11ef2fea08.js` verified live.
+
+## 2026-11-25: `release-2026-11-25d` DEPLOYED (Discord Embeds for First, Second, and Third Blood, Emoji Removal, Ordinal 1stth Fix)
+
+**The owner's request:**
+- Fix `1stth` ordinal bug in Discord notifications so it renders correctly as `1st`.
+- Remove `🩸` emoji.
+- Send messages as Discord Embeds with colored vertical accent borders matching BloodSeeker style:
+  - First Blood: Title `First Blood!`, Description `{team} got first blood on {challenge} and is now in {rank} place with {points} points!`, Color Gold/Yellow (`#ffd23f` / `16765503`).
+  - Second Blood: Title `Second Blood!`, Description `{team} got second blood on {challenge} and is now in {rank} place with {points} points!`, Color Silver/Light Grey (`#e2e8f0` / `14866672`).
+  - Third Blood: Title `Third Blood!`, Description `{team} got third blood on {challenge} and is now in {rank} place with {points} points!`, Color Bronze/Amber (`#cd7f32` / `13467442`).
+
+**Implementation:**
+- In `plugins/l3mon_board/blood.py`:
+  - `ordinal(n)`: Handles existing ordinal strings (`1st`, `2nd`, `3rd`, `35th`) and extracts numeric values safely; avoids any redundant `th` appending.
+  - `get_team_rank_and_score()`: Requests `numeric=True` from `team.get_place()` to ensure raw numeric integer values are obtained.
+  - `create_blood_embed()`: Builds Discord embed dictionary with `title`, `description`, and left border accent `color` matching BloodSeeker theme without emojis.
+  - Sends payload via `{"embeds": [embed]}` over Discord webhook.
+- Updated unit tests in `plugins/l3mon_board/tests/test_blood.py` covering ordinal conversions, regression test against `1stth`, and embed dictionary generation. All tests pass.
+- Hygiene scan: 0 findings.
+
+**Deploy:**
+- Run by `deploy-24a.sh` from 13:42 to 13:44 UTC (19:12 to 19:14 IST).
+- Encrypted full backup: 1,034,680 bytes shipped to `~/backups/sink/full`.
+- **1,362 accounts, 686 studios, 2 challenges, 1 solve, 2 submissions before and after, identical fingerprint `49d049d5e2115b15`**.
+- `verify-image` 37 of 37 checks ok.
+- 17 services up, none unhealthy.
+- Gate unchanged (`default 1;`).
+- Crew account hidden: `[('l3m0n-main-admin', True)]`.
+- Activity ledger: chain ok over 12,715 lines with triggers in place.
+- Live verification: Tested Discord webhook embed generation; live site responsive at 200.
+
+## 2026-11-25: `release-2026-11-25e` DEPLOYED (Crawl Message Deduplication and Title Strip)
+
+**The owner's request:**
+- Fix background notification showing two times in the bottom crawl downbar for a single message (e.g. `HELLO GUYS: BACKGROUND MSG` alongside `HELLO GUYS : BACKGROUND MSG`).
+
+**Implementation:**
+- In `L3m0nCTF-ui`:
+  - `platform-ui/src/js/notif.js`: Restricted `nfLoad()` crawl prepending with `if (!initial)` so that background notifications already rendered into the HTML by server-side Jinja templates are not prepended a second time on initial page load. Added `![...list.children].some(...)` check to guarantee live event deduplication.
+  - Exported 43 updated theme files to `ui/theme/l3mon` with new bundle `shell.27e063fb30.js`.
+  - All 397 platform-ui tests passed, 0 failures.
+  - Page budgets green (`scoreboard` 17.0/17 KB, `settings` 43.9/44 KB).
+- In `L3m0nCTF`:
+  - `plugins/l3mon_theme/pages/board.py`: Added `.strip()` to `clean_title` to remove any trailing whitespace before the colon, and added `if line and line not in out:` deduplication.
+  - Hygiene scan: 0 findings (`python -m l3mon hygiene --root ..`).
+  - Unit tests: 12 passed in `test_hygiene.py`.
+
+**Deploy:**
+- Run by `deploy-24a.sh` from 13:59 to 14:02 UTC (19:29 to 19:32 IST).
+- Encrypted full backup: 1,044,920 bytes shipped to `~/backups/sink/full`.
+- **1,370 accounts, 688 studios, 3 challenges, 2 solves, 5 submissions before and after, identical fingerprint `c838bb40b75b393e`**.
+- `verify-image` 37 of 37 checks ok.
+- 17 services up, none unhealthy.
+- Gate unchanged (`default 1;`).
+- Crew account hidden: `[('l3m0n-main-admin', True)]`.
+- Activity ledger: chain ok over 12,856 lines with triggers in place.
+- External checks through Cloudflare: `/login` 200, new bundle `/themes/l3mon/static/shell.27e063fb30.js` verified live with HTTP 200.
+
+

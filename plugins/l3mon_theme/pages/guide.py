@@ -201,6 +201,10 @@ def guide_page():
             .order_by(Solves.date.desc())
             .all()
         )
+        # a programme the crew pulled back leaves every list, this one too (the same rule as the board and /api/v1/teams/me/solves)
+        from CTFd.plugins.l3mon_core.visibility import visible_challenge_ids
+        shown = visible_challenge_ids(admin=False, solved_ids=frozenset(row[1] for row in solves_rows))
+        solves_rows = [row for row in solves_rows if row[1] in shown]
         solves_by_user = {}
         for uid, cid, sdate, cname, cval in solves_rows:
             ist_time = sdate + datetime.timedelta(hours=5, minutes=30) if sdate else None

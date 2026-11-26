@@ -211,7 +211,9 @@ function initDialog(){
 const dlg=$('[data-dlg]');
 if(!dlg)return;
 $('[data-dlg-close]',dlg).addEventListener('click',()=>dlg.close());
-dlg.addEventListener('click',(e)=>{if(e.target===dlg)dlg.close();});
+dlg.addEventListener('click',(e)=>{
+if(e.target===dlg&&!dlg.classList.contains('dlg-alert'))dlg.close();
+});
 dlg.addEventListener('close',()=>{
 const o=dlg.opener;
 if(o&&o.focus&&document.contains(o))o.focus({preventScroll:true});
@@ -824,46 +826,149 @@ const devState=()=>apiCall('GET',ROUTES.devState,{retries:1});
 const devSet=(patch)=>apiCall('POST',ROUTES.devState,{body:patch});
 const SHOWN=20;
 const nf={all:[],ver:null,loading:false,again:false,prev:null};
+let initial=true;
 const nfSeen=()=>{
-const[a,b]=String(store.get('seen','0')).split(':');
-const id=Number(a);
-return{id:id>0?id:0,ver:b!==undefined?Number(b):null};
+const[a,b,c='']=String(store.get('seen','0')).split(':');
+return{
+id:Math.max(0,Number(a)||0),
+ver:b!==undefined?Number(b):null,
+acks:new Set(c?c.split(',').map(Number).filter(Boolean):[])
+};
 };
 const nfMax=()=>nf.all.reduce((m,n)=>Math.max(m,n.id),0);
-const nfUnread=()=>{const s=nfSeen().id;return nf.all.filter((n)=>n.id>s).length;};
+const nfUnread=()=>nf.all.filter((n)=>n.id>nfSeen().id).length;
+function saveAckAlerts(ids){
+const s=nfSeen();
+for(const id of ids)if(id>0)s.acks.add(id);
+store.set('seen',`${s.id}:${s.ver??0}:${[...s.acks]}`);
+}
 function nfBadge(){
 const n=nfUnread();
 const text=n>9?'9+':String(n);
 for(const b of $$('[data-notif-n]')){
-const changed=b.textContent!==text;
+const ch=b.textContent!==text;
 b.hidden=!n;
 b.textContent=n?text:'';
-if(n&&changed){b.classList.remove('pop');void b.offsetWidth;b.classList.add('pop');}
+if(n&&ch){b.classList.remove('pop');void b.offsetWidth;b.classList.add('pop');}
 }
 for(const bell of $$('[data-notif]'))bell.setAttribute('aria-label',n?`Notifications, ${n} new`:'Notifications');
 if(nf.prev!==null&&n>nf.prev&&!$('[data-board]'))announce(`${n} unread notification${n===1?'':'s'}.`);
 nf.prev=n;
 }
+const notifKind=(t='')=>
+/^\[(?:back|sil|upd)/i.test(t)?'background':/^\[(?:toast|rel)/i.test(t)?'release':'urgent';
+const cleanTitle=(t='')=>
+String(t||'News').replace(/^\[[\w-]+\]\s*/i,'').trim()||'News';
+function mdToHtml(m){
+let s=String(m||'').replace(/<title[^>]*>[\s\S]*?<\/title>|<!DOCTYPE[^>]*>|<\/?(?:html|head|body|meta)[^>]*>/gi,'');
+if(!s.trim())return'';
+s=s.replace(/<style[^>]*>([\s\S]*?)<\/style>/gi,(_,c)=>`<style>${c.replace(/\bbody\b/g,'.nt-alert-box, .nt-c').replace(/height\s*:\s*100vh;?/gi,'')}</style>`)
+.replace(/^(#{1,6})\s+(.+)$/gm,(_,h,t)=>`<h${h.length}>${t.trim()}</h${h.length}>`)
+.replace(/^>\s+(.+)$/gm,'<blockquote>$1</blockquote>')
+.replace(/\*\*([^*\n]+)\*\*/g,'<strong>$1</strong>')
+.replace(/\*([^*\n]+)\*/g,'<em>$1</em>')
+.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g,'<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>')
+.replace(/^[-*]\s+(.+)$/gm,'<li>$1</li>')
+.replace(/(?:^|\n)(<li>.*?<\/li>(?:\n<li>.*?<\/li>)*)/g,(_,m)=>`\n<ul>${m}</ul>`);
+return(/<\/?(?:div|p|h[1-6]|ul|ol|li|pre|blockquote|style|table)\b/i.test(s)?s:s.split(/\n{2,}/).map((p)=>`<p>${p.replace(/\n/g,'<br>')}</p>`).join('')).trim();
+}
+function renderNotifContent(c,raw){
+if(!raw)return;
+const h=mdToHtml(raw);
+if(!h)return;
+try{
+const doc=new DOMParser().parseFromString(h,'text/html');
+for(const b of doc.querySelectorAll('script,iframe,object,embed,noscript'))b.remove();
+for(const n of doc.querySelectorAll('*')){
+for(const a of[...n.attributes])if(/^on/i.test(a.name)||/javascript:/i.test(a.value))n.removeAttribute(a.name);
+if(n.tagName==='A'){n.target='_blank';n.rel='noopener noreferrer';}
+}
+c.append(...doc.body.childNodes);
+}catch{
+c.textContent=raw;
+}
+}
+function openAlertDialog(alert,allUnackIds=[]){
+if(!alert)return;
+const dlg=$('[data-dlg]');
+if(!dlg?.showModal)return;
+const ids=allUnackIds.length?allUnackIds:[alert.id];
+const btn=$('[data-dlg-close]',dlg);
+const prev=btn?.textContent||'Close';
+dlg.classList.add('dlg-alert');
+if(btn)btn.textContent='Acknowledge';
+const finish=()=>{
+saveAckAlerts(ids);
+dlg.classList.remove('dlg-alert');
+if(btn)btn.textContent=prev;
+};
+dlg.addEventListener('close',finish,{once:true});
+btn?.addEventListener('click',finish,{once:true});
+const title=cleanTitle(alert.title);
+openDialog('Announcement',(body)=>{
+const b=mk('div','nt-alert-box');
+const h=mk('div','nt-alert-hdr');
+h.append(mk('b','nt-alert-title',title));
+const c=mk('div','nt-alert-content');
+renderNotifContent(c,alert.content);
+b.append(h,c);
+body.append(b);
+});
+sfx('bonk');
+setTimeout(()=>sfx('ding'),120);
+announce(`Announcement: ${title}`);
+}
 async function nfLoad(){
 if(nf.loading){nf.again=true;return;}
 nf.loading=true;
 try{
-const since=nfMax();
-const r=await notifications(since);
+const r=await notifications(nfMax());
 if(r.ok&&Array.isArray(r.data)){
 const have=new Set(nf.all.map((n)=>n.id));
-for(const n of r.data)if(Number.isInteger(n.id)&&!have.has(n.id))nf.all.push({id:n.id,title:String(n.title||'News'),content:String(n.content||'')});
+const fresh=[];
+for(const n of r.data){
+if(Number.isInteger(n.id)&&!have.has(n.id)){
+const it={id:n.id,title:String(n.title||'News'),content:String(n.content||'')};
+nf.all.push(it);
+fresh.push(it);
+}
+}
 nf.all.sort((a,b)=>a.id-b.id);
 nfBadge();
+const acks=nfSeen().acks;
+const unack=nf.all.filter((n)=>notifKind(n.title)==='urgent'&&!acks.has(n.id));
+if(unack.length){
+const latest=unack[unack.length-1];
+openAlertDialog(latest,unack.map((a)=>a.id));
+}
+if(fresh.length){
+for(const it of fresh){
+const k=notifKind(it.title),t=cleanTitle(it.title).toUpperCase(),c=it.content||'';
+if(k==='background'){
+if(!initial){
+const txt=c.replace(/<[^>]+>/g,' ').trim(),line=txt?`${t}: ${txt}`:t;
+for(const list of $$('[data-crawl] .crawl-list')){
+if(![...list.children].some((li)=>li.textContent.trim().toUpperCase()===line.toUpperCase()))list.prepend(mk('li',null,line));
+}
+}
+}else if(!initial&&k!=='urgent'){
+const el=$('[data-toast]');
+if(el)el.className=`toast toast-fixed show toast-${k}`;
+toast(`${t}. ${c}`.trim(),5000);
+sfx(k==='release'?'tada':'ding');
+}
+}
+}
+initial=false;
 }
 }finally{
 nf.loading=false;
 if(nf.again){nf.again=false;nfLoad();}
 }
 }
-const notifKind=(t='')=>/warn|alert|urg|crit/i.test(t)?'urgent':/air|prog|rel/i.test(t)?'release':'general';
 function nfOpen(bell){
-store.set('seen',`${nfMax()}:${nf.ver??0}`);
+const s=nfSeen();
+store.set('seen',`${nfMax()}:${nf.ver??0}:${[...s.acks]}`);
 nfBadge();
 openDialog('Notifications',(body)=>{
 const items=[...nf.all].reverse().slice(0,SHOWN);
@@ -872,8 +977,12 @@ const list=mk('ul','nt-dlg');
 for(const n of items){
 const k=notifKind(n.title);
 const li=mk('li','nt-'+k);
-li.append(mk('span','nt-tag nt-tag-'+k,k==='urgent'?'ALERT':k==='release'?'RELEASE':'NEWS'),' ',mk('b','nt-t',n.title));
-if(n.content)li.append(' ',mk('span','nt-c',n.content));
+li.append(mk('b','nt-t',cleanTitle(n.title)));
+if(n.content){
+const c=mk('div','nt-c');
+renderNotifContent(c,n.content);
+li.append(c);
+}
 list.append(li);
 }
 const more=mk('a','nt-all','Open the full list');
@@ -884,13 +993,26 @@ body.append(list,p);
 },bell);
 }
 function nfRestarted(v){
-const s=nfSeen();
-return(nf.ver!==null&&v<nf.ver)||(s.ver!==null&&v<s.ver);
+return v===0&&(nf.ver>0||nfSeen().ver>0);
+}
+function initNotifPage(){
+for(const item of $$('.nt-item')){
+const t=$('.nt-t',item);
+const c=$('.nt-c',item);
+if(t){
+item.className=`nt-item nt-${notifKind(t.textContent)}`;
+t.textContent=cleanTitle(t.textContent);
+}
+if(c){
+const raw=c.textContent;
+c.textContent='';
+renderNotifContent(c,raw);
+}
+}
 }
 function initNotif(){
-const bells=$$('[data-notif]');
-if(!bells.length)return;
-for(const bell of bells){
+initNotifPage();
+for(const bell of $$('[data-notif]')){
 bell.addEventListener('click',(e)=>{
 if(e.defaultPrevented||e.button!==0||e.metaKey||e.ctrlKey||e.shiftKey||e.altKey)return;
 e.preventDefault();
@@ -898,11 +1020,15 @@ nfOpen(bell);
 });
 }
 on('net',(r)=>{
-const v=r&&r.ok&&r.data&&!Array.isArray(r.data)?r.data.notif_ver:undefined;
+const v=r?.ok&&r.data&&!Array.isArray(r.data)?r.data.notif_ver:undefined;
 if(!Number.isFinite(v))return;
-const first=nf.ver===null;
-if(nfRestarted(v)){nf.all=[];nf.prev=null;store.set('seen',`0:${v}`);}
-if(first||v!==nf.ver){nf.ver=v;nfLoad();}
+if(nfRestarted(v)){
+const s=nfSeen();
+nf.all=[];
+nf.prev=null;
+store.set('seen',`0:${v}:${[...s.acks]}`);
+}
+if(nf.ver===null||v!==nf.ver){nf.ver=v;nfLoad();}
 });
 nfLoad();
 }
@@ -981,17 +1107,14 @@ else if(['busy','restarting','maintenance','waiting_room'].includes(code))pillSh
 function initCrawl(){
 const crawl=$('[data-crawl]');
 if(!crawl)return;
-const lists=$$('.crawl-list',crawl);
-if(lists.length!==2)return;
-const btn=mk('button','crawl-btn');
-btn.type='button';
-btn.setAttribute('aria-label','Pause news crawl');
-btn.setAttribute('aria-pressed','false');
-btn.addEventListener('click',()=>btn.setAttribute('aria-pressed',String(crawl.classList.toggle('paused'))));
-crawl.append(btn);
-const fit=()=>crawl.style.setProperty('--crawl-d',`${Math.max(12,lists[0].scrollWidth/80).toFixed(1)}s`);
+const list=$('.crawl-list',crawl);
+if(!list)return;
+const fit=()=>{
+const totalDist=list.scrollWidth+window.innerWidth;
+crawl.style.setProperty('--crawl-d',`${Math.max(12,totalDist/80).toFixed(1)}s`);
+};
 fit();
-if('ResizeObserver'in window)new ResizeObserver(fit).observe(lists[0]);
+window.ResizeObserver?new ResizeObserver(fit).observe(list):window.addEventListener('resize',fit);
 }
 function initBurst(){
 if(typeof matchMedia!=='function'||!matchMedia('(hover: hover) and (pointer: fine)').matches)return;
@@ -1055,15 +1178,67 @@ let ended=false;
 on('net',(r)=>{if(!ended&&r.error&&r.error.code==='auth_required'){ended=true;sessionEnded();}});
 document.addEventListener('visibilitychange',()=>audioVisibility(document.hidden));
 }
-function initAccount(){
-const btn=$('[data-copy]');
-if(!btn)return;
-const code=$('[data-invite]');
-const out=$('[data-copy-msg]');
-btn.addEventListener('click',async()=>{
-const how=await copyText(code.textContent.trim(),code);
-out.textContent=how==='copied'?'Copied. Paste it to your teammate.':'Selected. Press Ctrl+C (or Cmd+C) to copy it.';
-sfx('tada');
+function initShow(form){
+const btn=$('[data-show]',form);
+const input=$('#f-password',form);
+if(!btn||!input)return;
+btn.addEventListener('click',()=>{
+const show=input.type==='password';
+input.type=show?'text':'password';
+btn.setAttribute('aria-pressed',String(show));
+});
+form.addEventListener('submit',()=>{input.type='password';btn.setAttribute('aria-pressed','false');});
+}
+function initRetry(form){
+const s=Number(form.dataset.retryAfter);
+if(!(s>0))return;
+const btn=$('[data-submit]',form);
+const wait=$('[data-wait]',form);
+btn.disabled=true;
+wait.hidden=false;
+countdown(s,(left)=>{
+const m=Math.ceil(left/60);
+wait.textContent=left>90?`You can try again in about ${m} minutes.`:`You can try again in ${left} s.`;
+},()=>{
+btn.disabled=false;
+wait.textContent='You can try again now.';
+});
+}
+function initLogin(){
+const form=$('[data-login]');
+if(!form)return;
+const name=$('#f-name',form);
+const pass=$('#f-password',form);
+const btn=$('[data-submit]',form);
+const host=form.parentElement;
+initShow(form);
+initRetry(form);
+for(const input of[name,pass])input.addEventListener('input',()=>{if(input.value)clearFieldError(input);});
+let sent=false;
+form.addEventListener('submit',(e)=>{
+if(sent||btn.getAttribute('aria-disabled')==='true'||btn.disabled){e.preventDefault();return;}
+const problems=[];
+for(const[input,msg]of[[name,'Enter your username or email.'],[pass,'Enter your password.']]){
+if(!input.value.trim()){fieldError(input,msg);problems.push({id:input.id,text:msg});}else clearFieldError(input);
+}
+if(problems.length){
+e.preventDefault();
+showSummary(host,problems);
+sfx('bonk');
+return;
+}
+sent=true;
+setPending(btn,'Tuning in…');
+sfx('click');
+const card=$('[data-card]');
+if(card&&!reduced())card.classList.add('flick');
+});
+addEventListener('pageshow',(e)=>{
+if(!e.persisted)return;
+sent=false;
+clearPending(btn);
+const card=$('[data-card]');
+if(card)card.classList.remove('flick');
 });
 }
 function run(name,fn){
@@ -1073,5 +1248,5 @@ run('dialog',initDialog);
 run('prefs',initPrefs);
 run('shell',initShell);
 run('keys',initKeys);
-run('account',initAccount);
+run('login',initLogin);
 })();

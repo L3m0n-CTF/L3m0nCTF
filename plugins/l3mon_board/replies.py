@@ -94,15 +94,22 @@ def _correct(challenge_id, team):
     # first blood: no studio that counts solved it before this one (the solve ids are in the order CTFd recorded them), so two studios
     # racing for it cannot both be first; a hidden studio's own solve is "first" when no counted studio was ahead of it, as in the demo
     freeze = window().freeze
-    earlier = Solves.query.join(Teams, Solves.account_id == Teams.id).filter(
+    earlier_query = Solves.query.join(Teams, Solves.account_id == Teams.id).filter(
         Solves.challenge_id == challenge_id, Solves.id < own.id, Teams.hidden == False, Teams.banned == False  # noqa: E712 (SQL, not Python)
     )
     if freeze:
-        earlier = earlier.filter(Solves.date < unix_time_to_utc(freeze))  # while frozen a studio may not learn that another solved it after the freeze
-    earlier = earlier.first()
+        earlier_query = earlier_query.filter(Solves.date < unix_time_to_utc(freeze))  # while frozen a studio may not learn that another solved it after the freeze
+    earlier = earlier_query.first()
+    earlier_count = earlier_query.count()
     counted = int((get_solve_counts_for_challenges(admin=False) or {}).get(challenge_id, 0))
     if freeze and own.date >= unix_time_to_utc(freeze) and not team.hidden and not team.banned:
         counted += 1  # the freeze leaves the studio's own later solve out of the public count; the studio is told its own (a studio that never counts is told none)
+
+    try:
+        from CTFd.plugins.l3mon_board import blood
+        blood.notify(challenge, team, own, earlier_count=earlier_count)
+    except Exception:
+        pass
     return {
         "value": int(db.session.query(Challenges.value).filter_by(id=challenge_id).scalar() or 0),
         "reel": reel, "reels_needed": math.ceil(total_cells / 3),

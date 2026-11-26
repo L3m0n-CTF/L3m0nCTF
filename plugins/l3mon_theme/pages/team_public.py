@@ -8,7 +8,7 @@ import datetime
 import logging
 from flask import abort, redirect, render_template, request, url_for
 
-from CTFd.models import Challenges, Solves, Teams, Users, db
+from CTFd.models import Awards, Challenges, Solves, Teams, Users, db
 from CTFd.plugins.l3mon_board import board, viewer
 from CTFd.plugins.l3mon_core.clock import current_phase, window
 from CTFd.plugins.l3mon_core.visibility import visible_challenge_ids
@@ -60,24 +60,6 @@ def public_team_profile(team_id: int):
     meta_parts = [p for p in (country_display, target_team.affiliation) if p]
     meta_text = " · ".join(meta_parts)
 
-    user_rows = (
-        db.session.query(Users.id, Users.name)
-        .filter(Users.team_id == target_team.id, Users.banned.is_(False))
-        .all()
-    )
-    members_data = []
-    for uid, uname in user_rows:
-        is_cap = (uid == target_team.captain_id)
-        tag = "captain" if is_cap else ""
-        members_data.append({
-            "id": str(uid),
-            "name": uname,
-            "ini": uname[:1].upper() if uname else "P",
-            "tag": tag,
-            "is_captain": is_cap,
-        })
-    members_data.sort(key=lambda m: (not m["is_captain"], m["name"].casefold()))
-
     view_asker = viewer.current()
     shown = visible_challenge_ids(solved_ids=view_asker.solved) if not is_crew else None
 
@@ -93,6 +75,7 @@ def public_team_profile(team_id: int):
             Challenges.category,
             Challenges.value,
             Users.name,
+            Solves.user_id,
         )
         .join(Challenges, Solves.challenge_id == Challenges.id)
         .join(Users, Solves.user_id == Users.id)
@@ -102,7 +85,8 @@ def public_team_profile(team_id: int):
     solves_rows = solves_query.all()
 
     solves_data = []
-    for cid, sdate, cname, ccat, cval, solver_name in solves_rows:
+    member_scores = {}
+    for cid, sdate, cname, ccat, cval, solver_name, solver_uid in solves_rows:
         if shown is not None and cid not in shown:
             continue
         if hide_late and sdate and sdate >= freeze_time:
@@ -111,13 +95,46 @@ def public_team_profile(team_id: int):
         ist_time = sdate + datetime.timedelta(hours=5, minutes=30) if sdate else None
         time_str = ist_time.strftime("%d %b, %H:%M IST") if ist_time else ""
 
+        val = int(cval or 0)
         solves_data.append({
             "name": cname or "Programme",
             "category": ccat or "",
-            "trp": int(cval or 0),
+            "trp": val,
             "solver": solver_name or "Teammate",
             "time": time_str,
         })
+        member_scores[solver_uid] = member_scores.get(solver_uid, 0) + val
+
+    awards_rows = (
+        db.session.query(Awards.user_id, Awards.value, Awards.date)
+        .filter(Awards.team_id == target_team.id, Awards.user_id.isnot(None))
+        .all()
+    )
+    for auid, aval, adate in awards_rows:
+        if hide_late and adate and adate >= freeze_time:
+            continue
+        member_scores[auid] = member_scores.get(auid, 0) + int(aval or 0)
+
+    user_rows = (
+        db.session.query(Users.id, Users.name)
+        .filter(Users.team_id == target_team.id, Users.banned.is_(False))
+        .all()
+    )
+    members_data = []
+    for uid, uname in user_rows:
+        is_cap = (uid == target_team.captain_id)
+        tag = "captain" if is_cap else ""
+        m_score = member_scores.get(uid, 0)
+        members_data.append({
+            "id": str(uid),
+            "name": uname,
+            "ini": uname[:1].upper() if uname else "P",
+            "tag": tag,
+            "is_captain": is_cap,
+            "score": m_score,
+            "trp": m_score,
+        })
+    members_data.sort(key=lambda m: (not m["is_captain"], m["name"].casefold()))
 
     current_user = get_current_user()
     is_own_team = bool(current_user and current_user.team_id == target_team.id)

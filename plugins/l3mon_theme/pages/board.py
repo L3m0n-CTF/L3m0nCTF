@@ -434,24 +434,39 @@ CRAWL_LINES = 8  # the news crawl shows the newest public notifications
 def crawl_text(lines):
     """The crawl's lines from public notifications (oldest first, `[{title, content}]`): the newest first, each "title: text" (or the title alone)."""
     out = []
-    for n in notice_lines(lines)[:CRAWL_LINES]:
-        out.append(f"{n['title']}: {n['content']}" if n["content"] else n["title"])
+    bg_lines = [
+        n for n in lines
+        if re.match(r"^\[(?:background|silent|update)\]", str(n.get("title") or ""), re.IGNORECASE)
+    ]
+    candidate_lines = bg_lines if bg_lines else (lines if all(not re.match(r"^\[[\w-]+\]", str(n.get("title") or "")) for n in lines) else [])
+    for n in notice_lines(candidate_lines)[:CRAWL_LINES]:
+        clean_title = re.sub(r"^\[[\w-]+\]\s*", "", n["title"] or "").strip()
+        clean_content = re.sub(r"<[^>]+>", " ", n["content"] or "").strip()
+        clean_content = re.sub(r"\s+", " ", clean_content)
+        line = f"{clean_title}: {clean_content}" if clean_content else clean_title
+        if line and line not in out:
+            out.append(line)
     return out
 
 
 @value("crawl", default=())
 def crawl():
-    """The news crawl of the board: the newest public notifications (never a studio's private line). Empty when there are none."""
+    """The news crawl of the board: the newest public notifications in the background category. Empty when there are none."""
     from CTFd.models import Notifications, db
 
     rows = (
         db.session.query(Notifications.id, Notifications.title, Notifications.content)
         .filter(Notifications.team_id.is_(None), Notifications.user_id.is_(None))
         .order_by(Notifications.id.desc())
-        .limit(CRAWL_LINES)
+        .limit(50)
         .all()
     )
-    return crawl_text([{"id": i, "title": t, "content": c} for i, t, c in reversed(rows)])
+    # Strictly background notifications only
+    bg_rows = [
+        (i, t, c) for i, t, c in rows
+        if re.match(r"^\[(?:background|silent|update)\]", str(t or ""), re.IGNORECASE)
+    ]
+    return crawl_text([{"id": i, "title": t, "content": c} for i, t, c in reversed(bg_rows)])
 
 
 @value("start_text", default="")

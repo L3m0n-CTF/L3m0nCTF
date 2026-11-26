@@ -42,6 +42,11 @@ EPG = "/api/v1/l3mon/guide/epg"
 SCOREBOARD = "/api/v1/l3mon/scoreboard"
 SCOREBOARD_ROWS = "/api/v1/l3mon/scoreboard/rows"
 BELL = "/api/v1/notifications"
+def plain(title):
+    """The display tag a notification title may start with ([ANNOUNCEMENT], [BACKGROUND], [TOAST]) is a hint to the page; the line's own words are what follows it."""
+    return re.sub(r"^\[[\w-]+\]\s*", "", title or "")
+
+
 BY_DESIGN = ("Solve voided", "Solve restored")  # the real platform words these two lines itself (the crew's reason, or a fixed sentence): only the title is compared
 STORY_TARGET = 12  # the same target the demo's recorder sets for the story meter
 REAL_START = datetime.datetime.utcnow()  # CTFd dates a solve, an award and an unlock with the real clock; the scenario has its own clock (see settle)
@@ -305,12 +310,12 @@ class Round:
 
     @staticmethod
     def line(note):
-        return {"title": note["title"], "content": "" if note["title"] in BY_DESIGN else note["content"]}
+        return {"title": plain(note["title"]), "content": "" if plain(note["title"]) in BY_DESIGN else note["content"]}
 
     def bell(self, who):
         """The private lines only: the public "New on air" lines are the release control's (it makes one for each change the crew sends and
         numbers channels by position, the demo's recorder one for each batch and by id); the release plugin's tests cover them."""
-        return [self.line(n) for n in self.get(who, BELL).get_json()["data"] if n["title"] != "New on air"]
+        return [self.line(n) for n in self.get(who, BELL).get_json()["data"] if plain(n["title"]) != "New on air"]
 
     def panel(self, who, slug):
         with self.at():
