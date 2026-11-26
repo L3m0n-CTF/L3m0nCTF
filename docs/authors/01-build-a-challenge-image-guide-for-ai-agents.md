@@ -21,7 +21,7 @@ Written 27 Nov 2026 for the L3m0nCTF 2026 platform. **Give this whole file to th
 - Each studio (team) that presses **Start** on a live challenge gets **its own container** of the image, on a separate challenge machine. It lives **15 minutes**, cannot be renewed, and is then destroyed. The team may start a new one (a deliberate Stop causes a 60 second wait; an expiry does not). **One instance per team and challenge at a time.**
 - A **web** challenge is reached at `https://<32 random characters>.l3m0nctf.xyz`. Cloudflare and the platform's router take the HTTPS and pass plain HTTP to the container's port. The container never sees HTTPS.
 - A **raw TCP** challenge (pwn, a service you `nc` into) is reached at `h1.inst.l3m0nctf.xyz` and a port from 30000 to 30199 chosen at Start. The platform relays the raw bytes to the container's port.
-- The container gets the team's **flag in the environment variable `FLAG`**. The flag is derived from the team and the challenge (`L3m0n{` plus 32 lower-case hex characters plus `}`): **different for every team, the same flag again if the same team restarts**. The platform compares what the player pastes with that derived value. The author never sets a flag for a live challenge.
+- The container gets the team's **flag in the environment variable `FLAG`**. The flag is derived from the team and the challenge (the format is `L3m0n{...}`: the prefix, 32 lower-case hex characters inside the braces): **different for every team, the same flag again if the same team restarts**. The platform compares what the player pastes with that derived value. The author never sets a flag for a live challenge.
 - The container is **hardened on purpose**, so that a player who gets code execution inside it can do no harm outside it: it runs as a normal user, the root file system is read-only, there are no Linux capabilities, no way out to the internet and no way to the other instances.
 
 ---
@@ -228,13 +228,13 @@ Expected: `clean`. (Windows without `sh` in the image: use an image that has it,
 **Step 3. Make two random test flags** (never real ones). bash:
 
 ```bash
-FLAG1="L3m0n{$(openssl rand -hex 16)}"; FLAG2="L3m0n{$(openssl rand -hex 16)}"; echo "$FLAG1"; echo "$FLAG2"
+P="L3m0n"; FLAG1="${P}{$(openssl rand -hex 16)}"; FLAG2="${P}{$(openssl rand -hex 16)}"; echo "$FLAG1"; echo "$FLAG2"
 ```
 
 PowerShell:
 
 ```powershell
-$FLAG1 = "L3m0n{" + (-join (1..32 | ForEach-Object { '{0:x}' -f (Get-Random -Maximum 16) })) + "}"; $FLAG2 = "L3m0n{" + (-join (1..32 | ForEach-Object { '{0:x}' -f (Get-Random -Maximum 16) })) + "}"; $FLAG1; $FLAG2
+$p = "L3m0n"; $FLAG1 = $p + "{" + (-join (1..32 | ForEach-Object { '{0:x}' -f (Get-Random -Maximum 16) })) + "}"; $FLAG2 = $p + "{" + (-join (1..32 | ForEach-Object { '{0:x}' -f (Get-Random -Maximum 16) })) + "}"; $FLAG1; $FLAG2
 ```
 
 **Step 4. Run it the way the platform runs it** (this is the important part: read-only, no capabilities, uid 10001, limits). Web, port 8000 (change the two `8000`s to the author's port; for TCP the same command works and the author connects with `ncat`/`nc` to `localhost <port>`):
