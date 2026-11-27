@@ -156,6 +156,10 @@ def main(argv=None) -> int:
         except Refused as refused:
             print(f"refused: {refused}; nothing was changed", file=sys.stderr)
             return 1
+        except Exception as error:  # noqa: BLE001  (a database error's text carries the rows, codes and usernames: name only its kind)
+            db.session.rollback()
+            print(f"refused: an error while importing ({error.__class__.__name__}); nothing was changed", file=sys.stderr)
+            return 1
     _print(report)
     return 0
 

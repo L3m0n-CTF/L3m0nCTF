@@ -152,7 +152,7 @@ def test_release_now_shows_each_player_only_their_own_code_and_sends_one_toast(p
     assert r.status_code == 200 and r.get_json()["data"]["released"] is True
     a, b = page(play.alice), page(play.abe)
     assert CODE_A in a and CODE_B not in a and CODE_B in b and CODE_A not in b, "a player sees only their own code"
-    assert f'href="{BASE}/{CODE_A}"' in a and 'src="data:image/svg+xml;base64,' in a
+    assert f'href="{BASE}/{CODE_A}"' in a and f'src="{release.QR_PATH}"' in a and "data:image" not in a, "the picture is not inside the page"
     assert "Your certificate" not in page(play.bob), "no code, no card"
     assert [n.title for n in notes()] == ["[TOAST] Certificates are ready"]
     put(play.admin, None)
@@ -162,15 +162,37 @@ def test_release_now_shows_each_player_only_their_own_code_and_sends_one_toast(p
 
 
 def test_the_qr_code_is_of_the_certificates_address(play):
-    import base64
     import re
 
-    from CTFd.plugins.l3mon_certificates.qr import svg
+    from CTFd.plugins.l3mon_certificates.qr import matrix, svg
 
     load_ab(play)
     put(play.admin, "now")
-    uri = re.search(r'src="data:image/svg\+xml;base64,([^"]+)"', page(play.alice)).group(1)
-    assert base64.b64decode(uri).decode("utf-8") == svg(f"{BASE}/{CODE_A}", dark="#000000", light="#ffffff", label="QR code of your certificate's address")
+    r = play.alice.get(release.QR_PATH)
+    assert r.status_code == 200 and r.mimetype == "image/svg+xml"
+    assert r.headers["Cache-Control"] == "private, no-store" and r.headers["X-Content-Type-Options"] == "nosniff"
+    assert "default-src 'none'" in r.headers["Content-Security-Policy"]
+    picture = r.get_data(as_text=True)
+    assert picture == svg(f"{BASE}/{CODE_A}", dark="#000000", light="#ffffff", label="QR code of your certificate's address")
+    assert play.abe.get(release.QR_PATH).get_data(as_text=True) == svg(f"{BASE}/{CODE_B}", dark="#000000", light="#ffffff",
+                                                                          label="QR code of your certificate's address"), "each their own"
+    # the runs draw exactly the dark modules of the symbol, nothing more or less
+    m, q = matrix(f"{BASE}/{CODE_A}"), 4
+    drawn = set()
+    for x, y, w in re.findall(r"M(\d+),(\d+)h(\d+)v1h-\3z", re.search(r'<path d="([^"]+)"', picture).group(1)):
+        drawn |= {(int(x) - q + i, int(y) - q) for i in range(int(w))}
+    assert drawn == {(x, y) for y in range(len(m)) for x in range(len(m)) if m[y][x]}
+
+
+def test_the_qr_picture_is_only_ever_the_viewers_own_and_only_while_released(play):
+    load_ab(play)
+    assert play.alice.get(release.QR_PATH).status_code == 404, "nothing before the release"
+    put(play.admin, "now")
+    assert play.bob.get(release.QR_PATH).status_code == 404, "no code of one's own: nothing (never somebody else's)"
+    anonymous = play.app.test_client()
+    assert anonymous.get(release.QR_PATH).status_code in (302, 401, 403), "a visitor gets nothing"
+    put(play.admin, None)
+    assert play.alice.get(release.QR_PATH).status_code == 404, "hidden again: gone"
 
 
 def test_hiding_takes_the_card_away_and_is_audited(play):
@@ -220,3 +242,67 @@ def test_a_deleted_account_takes_its_code_with_it(play):
     load_ab(play)
     play.admin.delete(f"/api/v1/users/{play.ids['abe']}", json={})
     assert [r.user_id for r in Certificate.query.all()] == [play.ids["alice"]]
+
+
+# ---- the independent review of 27 Nov 2026 -----------------------------------------------------------------------------------------------
+
+@pytest.mark.parametrize("at", ["now", None])
+def test_a_release_or_hide_is_saved_only_together_with_its_audit_line(play, monkeypatch, at):
+    load_ab(play)
+    if at is None:
+        put(play.admin, "now")
+    before = release.release_at()
+    from CTFd.plugins.l3mon_certificates import api
+
+    def broken(*args, **kwargs):
+        raise RuntimeError("the audit line could not be written")
+
+    monkeypatch.setattr(api.audit, "record", broken)
+    with pytest.raises(RuntimeError):
+        play.app.config["PROPAGATE_EXCEPTIONS"] = True
+        put(play.admin, at)
+    db.session.rollback()
+    assert release.release_at() == before, "no change without its audit line"
+
+
+def test_an_unexpected_error_in_the_import_prints_no_code_or_username(play, monkeypatch, capsys):
+    def broken(payload, apply=False):
+        raise RuntimeError(f"(IntegrityError) [parameters: (7, 'alice', '{CODE_A}')]")
+
+    monkeypatch.setattr(loader, "load", broken)
+    monkeypatch.setattr(sys, "stdin", SimpleNamespace(buffer=io.BytesIO(json.dumps(the_list()).encode())))
+    assert loader.main(["--apply"]) == 1
+    err = capsys.readouterr().err
+    assert "RuntimeError" in err and "nothing was changed" in err and CODE_A not in err and "alice" not in err
+
+
+def test_a_set_time_with_no_codes_left_sends_nothing_until_codes_are_loaded(play):
+    load_ab(play)
+    put(play.admin, T_LIVE + 3600)
+    Certificate.query.delete()
+    db.session.commit()
+    with clock(T_LIVE + 3601):
+        play.bob.get("/team")
+        assert notes() == [] and release.announced_at() is None, "the one notification is not spent on zero cards"
+        load_ab(play)
+        play.bob.get("/team")
+        assert len(notes()) == 1
+
+
+def test_a_notification_that_keeps_failing_is_retried_at_most_every_30_seconds(play, monkeypatch):
+    calls = []
+
+    def broken(t=None):
+        calls.append(t)
+        raise RuntimeError("cannot send")
+
+    monkeypatch.setattr(release, "announce", broken)
+    release._failed_at = None
+    with clock(T_LIVE + 10):
+        play.bob.get("/team")
+        play.bob.get("/team")
+    assert len(calls) == 1
+    with clock(T_LIVE + 41):
+        play.bob.get("/team")
+    assert len(calls) == 2
+    release._failed_at = None

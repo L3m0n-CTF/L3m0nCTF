@@ -179,6 +179,20 @@ blocking announcement). Plugin: `plugins/l3mon_certificates`.
 After a later `issue`, `withdraw` or the finals run, repeat 1-3: a withdrawn code, or a qualifier code replaced by a finals code, leaves the
 platform at the next import (the finalist then has no card: their certificate is printed).
 
+**Things to know (the independent review of 27 Nov 2026):**
+- **A player who is in no studio sees no card.** The card is on the studio page, and `/team` sends a player without a studio to the join page.
+  A qualifier who left or was removed from their studio still gets the notification, but has nowhere to see the code: give it to them by
+  hand from `verify list`, or they can find it on the portal only through the code itself.
+- **Import only into the platform the qualifiers ran on.** The list is matched by player id. On a rebuilt or restored database a player id
+  could belong to a different person, who would then see somebody else's code. In the dry run, a large "renamed since the export" count is
+  the warning sign: stop and ask.
+- **A release set for later sends its notification only when codes are loaded.** If the table is empty at that moment, nothing is sent and
+  the one notification is kept for when codes are imported. A notification that keeps failing is retried by each worker at most every 30 s.
+- The import names no code or username in any error: a database error shows only its kind (for example `IntegrityError`).
+- **The card's QR code is a picture of its own** (`/api/v1/l3mon/certificate/qr.svg`): it answers only the signed-in player's own code, only
+  while released (404 otherwise, never somebody else's), and is never cached. Drawn inside the page it put the studio page over its size
+  budget. A future Content-Security-Policy on the platform needs `img-src 'self'` for it (no `data:` images are needed).
+
 ## Check that it works
 
 ```bash

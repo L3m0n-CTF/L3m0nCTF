@@ -13,17 +13,19 @@ Every call needs an administrator (CTFd's own `admins_only`); a signed-in sessio
 """
 import os
 
-from flask import Blueprint, jsonify, render_template, request, send_from_directory
+from flask import Blueprint, current_app, jsonify, render_template, request, send_from_directory
 
 from CTFd.models import db
 from CTFd.plugins.l3mon_certificates import release
 from CTFd.plugins.l3mon_core import audit
 from CTFd.plugins.l3mon_core.clock import ist_text, now
 from CTFd.utils import set_config
-from CTFd.utils.decorators import admins_only
+from CTFd.utils.decorators import admins_only, authed_only
+from CTFd.utils.user import get_current_user
 
 bp = Blueprint("l3mon_certificates_admin", __name__, url_prefix="/api/v1/l3mon/admin")
 page_bp = Blueprint("l3mon_certificates_page", __name__, template_folder="templates")
+player_bp = Blueprint("l3mon_certificates_player", __name__)
 ASSETS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets")
 MAX_AHEAD = 60 * 24 * 3600
 
@@ -67,8 +69,9 @@ def put_release():
     at, t = data["at"], int(now())  # whole seconds: CTFd reads a setting back as a number only when it is all digits
     was = release.release_at()
     if at is None:
-        set_config(release.KEY_AT, None)
+        # the audit line first: set_config commits the session, so the change and its line are saved together or not at all
         audit.record("certificates.release", "qualifier certificates", "hidden again" + (f" (they were set for {ist_text(was)})" if was else ""))
+        set_config(release.KEY_AT, None)
         db.session.commit()
         return _answer(_state())
     if at == "now":
@@ -80,13 +83,29 @@ def put_release():
     codes_loaded = release.count()
     if codes_loaded == 0:
         return _answer({"codes": ["no codes are loaded yet: run the import on the server first (runbook 22, step 7)"]}, 409)
-    set_config(release.KEY_AT, str(at))
     detail = f"{'released now' if at == t else 'set to show at ' + ist_text(at)} ({codes_loaded} codes)"
-    audit.record("certificates.release", "qualifier certificates", detail)
+    audit.record("certificates.release", "qualifier certificates", detail)  # before set_config, which commits both together
+    set_config(release.KEY_AT, str(at))
     db.session.commit()
     if at == t:
         release.announce(t)
     return _answer(_state())
+
+
+@player_bp.route("/api/v1/l3mon/certificate/qr.svg", methods=["GET"])  # = release.QR_PATH (a test keeps them equal)
+@authed_only
+def own_qr():
+    """The signed-in player's own QR code (the card's picture). Anyone else, and anyone before the release, gets 404: it never says whose."""
+    picture = release.qr_svg_for(get_current_user())
+    if picture is None:
+        response = jsonify({"success": False, "errors": {"certificate": ["not found"]}})
+        response.status_code = 404
+    else:
+        response = current_app.response_class(picture, mimetype="image/svg+xml")
+        response.headers["Content-Security-Policy"] = "default-src 'none'; style-src 'unsafe-inline'"
+        response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["Cache-Control"] = "private, no-store"
+    return response
 
 
 @page_bp.route("/admin/l3mon/certificates")

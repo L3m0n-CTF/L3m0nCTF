@@ -32,4 +32,5 @@ def load(app):
     release.install(app)  # the one notification, sent by the first request after the release moment
     app.register_blueprint(api.bp)
     app.register_blueprint(api.page_bp)
+    app.register_blueprint(api.player_bp)
     register_admin_plugin_menu_bar("Certificates", "/admin/l3mon/certificates")
