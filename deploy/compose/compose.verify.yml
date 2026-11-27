@@ -1,0 +1,18 @@
+# The participant verification portal: https://verify.<domain>/<CODE> (docs/runbooks/22-verify-portal.md).
+#
+#   L3MON_ENV=production L3MON_OVERLAYS=identity,ops,instancer-central,verify \
+#   L3MON_VERIFY_SITE_DIR=/etc/l3mon/verify/site \
+#   tools/compose.sh up -d --wait nginx
+#
+# It adds NO container. The portal is a static website (`python -m l3mon verify build` writes it from the credentials database, off the server),
+# and nginx serves its files read-only from L3MON_VERIFY_SITE_DIR with the server block deploy/nginx/verify/verify.conf. Nothing here can reach CTFd,
+# the database or a secret, and a new build is published by replacing the folder's contents (nginx needs no restart).
+# Production only: the block needs the production template (TLS with Cloudflare's client certificate), which includes /etc/nginx/verify.d/*.conf.
+
+name: l3mon
+
+services:
+  nginx:
+    volumes:
+      - ../nginx/verify/verify.conf:/etc/nginx/verify.d/verify.conf:ro
+      - ${L3MON_VERIFY_SITE_DIR:?L3MON_VERIFY_SITE_DIR must be the folder of the built verification website}:/srv/verify:ro

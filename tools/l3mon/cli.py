@@ -8,6 +8,7 @@ from pathlib import Path
 import os
 
 from . import api_rules, config, deploy, hygiene, rehearsal, secrets_gen, story
+from .verify import command as verify_command
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -62,6 +63,8 @@ def build_parser() -> argparse.ArgumentParser:
     sb.add_argument("src", help="the story folder (library/*.svg and channels/*.json)")
     sb.add_argument("out", nargs="?", help="where to write the bundles (omit with --check)")
     sb.add_argument("--check", action="store_true", help="only check; write nothing")
+
+    verify_command.add_parser(sub)
     return parser
 
 
@@ -124,6 +127,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.cmd == "story":
         return story.main(args.src, args.out, check=args.check)
+
+    if args.cmd == "verify":
+        return verify_command.run(args)
 
     if args.cmd == "api-rules":
         return api_rules.main([args.action, "--image", args.image])
