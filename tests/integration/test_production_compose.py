@@ -78,10 +78,11 @@ def test_ctfd_gets_the_secure_cookie_the_crews_host_name_and_the_mail_settings(p
 
 
 def test_the_ctftime_secret_and_the_mail_password_are_docker_secrets_of_ctfd_only(production):
-    assert {"CTFTIME_CLIENT_SECRET", "MAIL_PASSWORD", "SECRET_KEY", "DATABASE_PASSWORD"} <= secrets_of(production["services"]["ctfd"])
+    later = {"CTFTIME_CLIENT_SECRET", "MAIL_PASSWORD", "DISCORD_BLOOD_WEBHOOK"}  # blood.py reads /run/secrets/DISCORD_BLOOD_WEBHOOK
+    assert later | {"SECRET_KEY", "DATABASE_PASSWORD"} <= secrets_of(production["services"]["ctfd"])
     for name in ("nginx", "db", "cache"):
-        assert not ({"CTFTIME_CLIENT_SECRET", "MAIL_PASSWORD"} & secrets_of(production["services"][name])), name
-    for name in ("CTFTIME_CLIENT_SECRET", "MAIL_PASSWORD"):
+        assert not (later & secrets_of(production["services"][name])), name
+    for name in sorted(later):
         assert production["secrets"][name]["file"].replace("\\", "/").endswith(f".secrets/{name}")
 
 

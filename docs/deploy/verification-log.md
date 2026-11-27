@@ -886,7 +886,7 @@ Must reflect on both `crew.l3m0nctf.xyz` and `play.l3m0nctf.xyz`.
 ## 2026-11-25: `release-2026-11-25b` DEPLOYED (Discord First, Second, and Third Blood webhook notifications)
 
 **The owner's request:**
-- Automatically post notifications to Discord via webhook (`https://discord.com/api/webhooks/1449642076215181464/dRFI-C8I-nEvSSIbdTgdbzcwZ7fWe_wze784J5n3z4ICDskCEaddRUaFB_PzqZ6TPBhn`) for:
+- Automatically post notifications to Discord via webhook (the address is a secret: redacted on 27 Nov 2026; it lives in `.secrets/DISCORD_BLOOD_WEBHOOK` only) for:
   - 🩸 **First Blood**: "First Blood claimed!\n\nCongratulations to [Team Name] for being the first to solve [Challenge Name]!\nThey now hold [Rank]th place on the leaderboard with [Points] points."
   - 🩸 **Second Blood**: "Second Blood secured!\n\nWell played, [Team Name], for being the second solver of [Challenge Name]!\nThey have climbed to [Rank]th place with an impressive [Points] points." (with alternate "Another Second Blood!\n\n[Team Name] secured the second solve on [Challenge Name] and currently stand at [Rank]th place with [Points] points.")
   - 🩸 **Third Blood**: "Third Blood claimed!\n\nThe race continues! [Team Name] was the third team to solve [Challenge Name], earning [Points] points and securing [Rank]th place on the leaderboard."

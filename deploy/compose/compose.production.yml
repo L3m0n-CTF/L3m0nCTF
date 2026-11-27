@@ -26,7 +26,7 @@ services:
       MAIL_TLS: "${MAIL_TLS:-}"
       MAIL_SSL: "${MAIL_SSL:-}"
       MAILFROM_ADDR: "${MAILFROM_ADDR:-}"
-    secrets: [SECRET_KEY, DATABASE_PASSWORD, REDIS_PASSWORD, PRESET_ADMIN_PASSWORD, CTFTIME_CLIENT_SECRET, MAIL_PASSWORD]
+    secrets: [SECRET_KEY, DATABASE_PASSWORD, REDIS_PASSWORD, PRESET_ADMIN_PASSWORD, CTFTIME_CLIENT_SECRET, MAIL_PASSWORD, DISCORD_BLOOD_WEBHOOK]
 
   nginx:
     ports:
@@ -43,3 +43,5 @@ services:
 secrets:
   CTFTIME_CLIENT_SECRET: { file: ../../.secrets/CTFTIME_CLIENT_SECRET }
   MAIL_PASSWORD: { file: ../../.secrets/MAIL_PASSWORD }
+  # the Discord webhook of the first/second/third blood posts (plugins/l3mon_board/blood.py); empty means no posts
+  DISCORD_BLOOD_WEBHOOK: { file: ../../.secrets/DISCORD_BLOOD_WEBHOOK }
