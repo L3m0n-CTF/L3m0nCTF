@@ -4,15 +4,17 @@
    normalize() must agree with tools/l3mon/verify/codes.py normalize(): tools/tests/test_verify_site.py runs both on the same inputs. */
 (function () {
   "use strict";
-  var PREFIX = "L3M0N26", CATS = ["ORG", "PAR", "ACH", "APP"], ALPHABET = "BCDFGHJKLMNPQRSTVWXYZ";
-  var CANON = new RegExp("^" + PREFIX + "-(" + CATS.join("|") + ")-([" + ALPHABET + "]{5})$");
+  var PREFIX = "L3M0N26", CATS = ["ORG", "PAR", "ACH", "APP"];
+  // the same rule as codes.py ROUTE: an organiser's five may be any capitals or digits, the others are the tool's 21 consonants
+  var ROUTE = "L3M0N26-(?:ORG-[ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789]{5}|(?:PAR|ACH|APP)-[BCDFGHJKLMNPQRSTVWXYZ]{5})";
+  var CANON = new RegExp("^" + ROUTE + "$");
 
   function normalize(text) {
     if (typeof text !== "string" || text.length > 200) return null;
     var s = text.trim();
     if (s.indexOf("/") !== -1) { s = s.replace(/\/+$/, ""); s = s.slice(s.lastIndexOf("/") + 1); }
     s = s.toUpperCase().replace(/[\s\-_.]+/g, "");
-    var m = new RegExp("^L3M[0O]N26(" + CATS.join("|") + ")([A-Z]{5})$").exec(s);
+    var m = new RegExp("^L3M[0O]N26(" + CATS.join("|") + ")([A-Z0-9]{5})$").exec(s);
     if (!m) return null;
     var code = PREFIX + "-" + m[1] + "-" + m[2];
     return CANON.test(code) ? code : null;
@@ -42,7 +44,7 @@
         var code = normalize(input.value);
         if (code) { window.location.assign("/" + code); return; }
         err.textContent = input.value.trim()
-          ? "That does not look like a certificate code. It reads like L3M0N26-PAR-BKXQT: a category and five letters."
+          ? "That does not look like a certificate code. It reads like L3M0N26-PAR-BKXQT: a category and five letters or digits."
           : "Type the code printed on the certificate.";
         input.focus();
       });

@@ -77,19 +77,35 @@ def _visible(text: str) -> bool:
     return any(unicodedata.category(ch)[0] not in ("Z", "C") for ch in text or "")
 
 
-def read_org(path: Path) -> list[str]:
-    names, seen = [], set()
-    for line in Path(path).read_text(encoding="utf-8-sig").splitlines():
-        name = _tidy(line)
-        if not name or name.startswith("#"):
+def read_org(path: Path) -> list:
+    """The organiser list: one person per line, `Full Name` or `Full Name<TAB or spaces>L3M0N26-ORG-XXXXX`.
+
+    A line that ends in an organiser code keeps THAT code for good (the codes handed out before this tool existed); it comes back as
+    (name, code). A line with a name only comes back as the name, and gets a code drawn by the tool. Blank lines and `#` lines are skipped.
+    """
+    entries, seen, seen_codes = [], set(), {}
+    for n, line in enumerate(Path(path).read_text(encoding="utf-8-sig").splitlines(), start=1):
+        text = _tidy(line)
+        if not text or text.startswith("#"):
             continue
+        given = None
+        head, _, last = text.rpartition(" ")
+        if head and re.match(r"(?i)L3M[0O]N26", last):  # the line ends in a code: it must be a whole, correct organiser code
+            given = codes.normalize(last)
+            if given is None or not given.startswith(f"{codes.PREFIX}-ORG-"):
+                raise IssueError(f"{path} line {n}: {last!r} is not an organiser code (L3M0N26-ORG- and five capital letters or digits)")
+            if given in seen_codes:
+                raise IssueError(f"{path} line {n}: the code {given} is also on line {seen_codes[given]}")
+            seen_codes[given] = n
+            text = _tidy(head)
+        name = text
         if not _visible(name):
             raise IssueError(f"{path}: a line holds no visible character ({name!r}): remove it or type the name")
         if _key(name) in seen:
             raise IssueError(f"{path}: {name!r} is listed twice")
         seen.add(_key(name))
-        names.append(name)
-    return names
+        entries.append((name, given) if given else name)
+    return entries
 
 
 BEGIN, END = "-----BEGIN L3MON PRELIMS EXPORT-----", "-----END L3MON PRELIMS EXPORT-----"
@@ -258,13 +274,29 @@ def issue(conn: sqlite3.Connection, *, issue_date: str, org: list[str] | None = 
         conn.execute("BEGIN")
         if org is not None:
             listed = set()
-            for name in org:
+            fixed = [e for e in org if not isinstance(e, str)]
+            for name, code in fixed:  # a permanent code must be free before anyone draws a random one (its letters count for every category)
+                owner = next((c for c in people.rows if c.verify_code == code or c.suffix == code.rsplit("-", 1)[-1]), None)
+                if owner is not None and not (owner.verify_code == code and _key(owner.name or "") == _key(name)):
+                    raise IssueError(f"{name!r}: the code {code} (or its five characters) is already held by another record ({owner.verify_code}); "
+                                     "nothing was written")
+                taken.add(code.rsplit("-", 1)[-1])
+            for entry in org:
+                name, code = (entry, None) if isinstance(entry, str) else entry
                 keys = {("org", _key(name))}
                 listed |= keys
-                if people.one(keys, ("ORG",), "valid", repr(name)):
+                held = people.one(keys, ("ORG",), "valid", repr(name))
+                if held:
+                    if code and held.verify_code != code:
+                        raise IssueError(f"{name!r} already holds {held.verify_code}; the list gives {code}. A code is permanent: withdraw the old one "
+                                         "first if the list is right. Nothing was written.")
                     report.kept["ORG"] += 1
+                elif code and any(c.verify_code == code for c in people.rows):
+                    raise IssueError(f"{name!r}: the code {code} exists but is not valid (withdrawn); a permanent code cannot be issued twice. "
+                                     "Nothing was written.")
                 elif not blocked_by_withdrawal(keys, ("ORG",)):
-                    put(store.Credential(verify_code=new_code("ORG"), category="ORG", issue_date=issue_date, source_ref="org:" + _key(name), name=name))
+                    put(store.Credential(verify_code=code or new_code("ORG"), category="ORG", issue_date=issue_date, source_ref="org:" + _key(name),
+                                         name=name))
             gone = [c for c in people.rows if c.category == "ORG" and c.status == "valid" and not (_keys_of(c) & listed)]
             if gone:
                 report.warnings.append(f"{len(gone)} organiser(s) have a code but are not in this list (not removed; use withdraw if meant)")

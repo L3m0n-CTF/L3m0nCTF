@@ -336,7 +336,7 @@ def build(db_path: Path, out: Path, *, sponsors_dir: Path | None = None, base_ur
     put("404.html", page(title="No signal · L3m0n CTF 2026", description="No L3m0n CTF 2026 certificate has this code.", body_class="st-missing",
                          screen=notice_screen(kicker="No signal", title="No certificate found",
                                               message="No L3m0n CTF 2026 certificate has this code. Check it against the certificate: it reads like "
-                                                      "<code>L3M0N26-PAR-BKXQT</code>, a category and five letters.",
+                                                      "<code>L3M0N26-PAR-BKXQT</code>, a category and five letters or digits.",
                                               stamp=("Not verified", "Not<br>verified"), lookup=True),
                          lcd="NO SIGNAL", print_button=False, assets=assets, index=False, crawl_html=crawl_html))
     put("429.html", page(title="Please wait · L3m0n CTF 2026", description="Too many checks from this address in a short time.", body_class="st-missing",

@@ -355,3 +355,71 @@ def test_list_prints_any_name_through_a_pipe_on_any_platform(tmp_path):
     assert res.returncode == 0, res.stderr.decode("utf-8", "replace")
     out = res.stdout.decode("utf-8")
     assert "Ŝtelo Ĉirkaŭ" in out and "名無し 太郎" in out
+
+
+# ------------------------------------------------------------------ permanent organiser codes (27 Nov 2026)
+# The organisers' codes were handed out before the tool existed: any five capitals or digits, kept exactly. Every name and code here is made up.
+
+def test_an_organiser_line_may_carry_its_own_code_which_is_kept_exactly(conn, tmp_path):
+    org = issue.read_org(write(tmp_path, "org.txt", "Jane Doe\tL3M0N26-ORG-A1O0E\nAlex  Example   l3m0n26-org-77z9q\nNo Code Person\n"))
+    assert org == [("Jane Doe", "L3M0N26-ORG-A1O0E"), ("Alex Example", "L3M0N26-ORG-77Z9Q"), "No Code Person"]
+    r = issue.issue(conn, issue_date="2026-11-30", org=org)
+    held = {c.name: c.verify_code for c in store.all_rows(conn)}
+    assert held["Jane Doe"] == "L3M0N26-ORG-A1O0E" and held["Alex Example"] == "L3M0N26-ORG-77Z9Q"
+    assert set(held["No Code Person"].rsplit("-", 1)[-1]) <= set(codes.ALPHABET), "a line without a code gets a drawn one"
+    assert r.issued["ORG"] == 3
+    again = issue.issue(conn, issue_date="2026-12-30", org=org)
+    assert again.kept["ORG"] == 3 and again.issued["ORG"] == 0
+    assert {c.name: (c.verify_code, c.issue_date) for c in store.all_rows(conn)} == {n: (c, "2026-11-30") for n, c in held.items()}
+
+
+def test_a_permanent_code_is_never_changed_by_a_later_list(conn, tmp_path):
+    issue.issue(conn, issue_date="2026-11-30", org=[("Jane Doe", "L3M0N26-ORG-A1O0E")])
+    with pytest.raises(issue.IssueError, match="already holds L3M0N26-ORG-A1O0E"):
+        issue.issue(conn, issue_date="2026-11-30", org=[("Jane Doe", "L3M0N26-ORG-B2B2B")])
+    assert [c.verify_code for c in store.all_rows(conn)] == ["L3M0N26-ORG-A1O0E"]
+
+
+def test_a_code_held_by_someone_else_or_listed_twice_stops_the_run(conn, tmp_path):
+    issue.issue(conn, issue_date="2026-11-30", org=[("Jane Doe", "L3M0N26-ORG-A1O0E")])
+    with pytest.raises(issue.IssueError, match="already held by another record"):
+        issue.issue(conn, issue_date="2026-11-30", org=[("Jane Doe", "L3M0N26-ORG-A1O0E"), ("Alex Example", "L3M0N26-ORG-A1O0E")])
+    with pytest.raises(issue.IssueError, match="also on line 1"):
+        issue.read_org(write(tmp_path, "org.txt", "Jane Doe\tL3M0N26-ORG-A1O0E\nAlex Example\tL3M0N26-ORG-A1O0E\n"))
+    assert len(store.all_rows(conn)) == 1
+
+
+@pytest.mark.parametrize("bad", ["L3M0N26-PAR-BCDFG", "L3M0N26-ORG-A1O0", "L3M0N26-ORG-A1-0E"])
+def test_a_line_ending_in_something_that_is_not_an_organiser_code_is_refused(tmp_path, bad):
+    with pytest.raises(issue.IssueError):
+        issue.read_org(write(tmp_path, "org.txt", f"Jane Doe\t{bad}\n"))
+
+
+def test_a_drawn_code_never_takes_the_five_characters_of_a_permanent_one(conn, tmp_path):
+    # a permanent code made only of consonants could be drawn for a qualifier: the drawing skips it
+    issue.issue(conn, issue_date="2026-11-30", org=[("Jane Doe", "L3M0N26-ORG-BBBBB")])
+    picks = iter("BBBBB" + "CCCCC" * 10)
+    issue.issue(conn, issue_date="2026-11-30", prelims=issue.read_prelims(write(tmp_path, "p.csv", "user_id,username,studio\n11,neo.sample,Test\n")),
+                rand=lambda alphabet: next(picks))
+    assert {c.verify_code for c in store.all_rows(conn)} == {"L3M0N26-ORG-BBBBB", "L3M0N26-PAR-CCCCC"}
+
+
+def test_a_permanent_code_whose_characters_a_drawn_code_already_holds_is_refused(conn, tmp_path):
+    issue.issue(conn, issue_date="2026-11-30", prelims=issue.read_prelims(write(tmp_path, "p.csv", "user_id,username,studio\n11,neo.sample,Test\n")),
+                rand=lambda alphabet: "C")
+    with pytest.raises(issue.IssueError, match="already held by another record"):
+        issue.issue(conn, issue_date="2026-11-30", org=[("Jane Doe", "L3M0N26-ORG-CCCCC")])
+
+
+def test_the_database_takes_any_capitals_or_digits_for_an_organiser_and_only_consonants_for_the_rest(conn):
+    store.insert(conn, store.Credential(verify_code="L3M0N26-ORG-A1O0E", category="ORG", issue_date="2026-11-30", source_ref="org:x", name="X"))
+    for code, cat in (("L3M0N26-PAR-A1O0E", "PAR"), ("L3M0N26-PAR-BCDFA", "PAR"), ("L3M0N26-ORG-a1o0e", "ORG")):
+        with pytest.raises(store.StoreError):
+            store.insert(conn, store.Credential(verify_code=code, category=cat, issue_date="2026-11-30", source_ref=f"t:{code}", name="Y" if cat == "ORG" else None,
+                                                username=None if cat == "ORG" else "y", studio_name=None if cat == "ORG" else "S"))
+
+
+def test_a_permanent_organiser_code_can_be_typed_loosely_and_still_found():
+    assert codes.normalize(" l3m0n26 org a1o0e ") == "L3M0N26-ORG-A1O0E"
+    assert codes.normalize("https://verify.l3m0nctf.xyz/L3M0N26-ORG-77777/") == "L3M0N26-ORG-77777"
+    assert codes.normalize("L3M0N26-PAR-A1O0E") is None, "only an organiser code may hold vowels or digits"

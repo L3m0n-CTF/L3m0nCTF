@@ -114,10 +114,13 @@ def test_the_block_answers_only_verify_hosts_and_never_proxies():
 
 def test_the_code_routes_accept_exactly_the_codes_the_tool_makes():
     conf = text(VERIFY_CONF)
-    patterns = re.findall(r'"\^/?\(?(L3M0N26-\(\?:[A-Z|]+\)-\[[A-Z]+\]\{5\})\)?\$"', conf)
-    assert len(patterns) == 2, patterns
-    for p in patterns:
-        assert p == f"{codes.PREFIX}-(?:{'|'.join(codes.CATEGORIES)})-[{codes.ALPHABET}]{{5}}"
+    patterns = re.findall(r'"\^/?\((L3M0N26-[^"]+)\)\$"', conf)
+    assert patterns == [codes.ROUTE, codes.ROUTE], patterns
+    route = re.compile(f"^{codes.ROUTE}$")
+    for code in ("L3M0N26-ORG-A1O0E", "L3M0N26-ORG-77777", "L3M0N26-PAR-BCDFG", "L3M0N26-APP-ZZZZZ"):
+        assert route.match(code) and codes.CODE_RE.match(code), code
+    for code in ("L3M0N26-PAR-A1O0E", "L3M0N26-ACH-BCDFA", "L3M0N26-ORG-a1o0e", "L3M0N26-ORG-A1O0", "L3M0N26-ORG-A1O0EX"):
+        assert not route.match(code) and not codes.CODE_RE.match(code), code
 
 
 def test_every_location_sets_the_portal_headers():
@@ -217,7 +220,8 @@ def served():
         db = tmp / "c.sqlite"
         conn = store.connect(db, create=True)
         (tmp / "p.csv").write_text("user_id,username,studio\n11,ctf.username,Test\n12,neo.sample,Test\n", encoding="utf-8")
-        issue.issue(conn, issue_date="2026-11-30", org=["Jane Doe", "Alex Example"], prelims=issue.read_prelims(tmp / "p.csv"))
+        issue.issue(conn, issue_date="2026-11-30", org=["Jane Doe", "Alex Example", ("Pat Organiser", "L3M0N26-ORG-A1O0E")],
+                    prelims=issue.read_prelims(tmp / "p.csv"))
         withdrawn = next(c for c in store.all_rows(conn) if c.name == "Alex Example").verify_code
         store.withdraw(conn, withdrawn, "test")
         valid = next(c for c in store.all_rows(conn) if c.category == "PAR").verify_code
@@ -247,7 +251,7 @@ def served():
             else:
                 logs = subprocess.run(["docker", "logs", name], capture_output=True, text=True).stderr
                 pytest.fail(f"nginx did not answer: {logs}")
-            yield {"port": port, "cert": cert, "valid": valid, "withdrawn": withdrawn}
+            yield {"port": port, "cert": cert, "valid": valid, "withdrawn": withdrawn, "fixed": "L3M0N26-ORG-A1O0E"}
         finally:
             subprocess.run(["docker", "rm", "-f", name], capture_output=True)
     finally:
@@ -276,6 +280,15 @@ def test_anything_else_is_no_signal_with_a_404(served, path):
     assert status in (400, 404), (path, status)
     if status == 404:
         assert b"No certificate found" in body and "content-security-policy" in h
+
+
+def test_a_permanent_organiser_code_with_vowels_and_digits_is_served_and_found_by_the_lookup(served):
+    status, _, body = request(served["port"], f"/{served['fixed']}", cert=served["cert"])
+    assert status == 200 and b"Pat Organiser" in body and b"Certificate of Recognition" in body
+    status, h, _ = request(served["port"], f"/check?code={served['fixed']}", cert=served["cert"])
+    assert status == 302 and h["location"] == f"/{served['fixed']}"
+    for wrong in ("/L3M0N26-ORG-A1OOE", "/L3M0N26-PAR-A1O0E"):  # a look-alike is not the code; a vowel or digit is never a qualifier code
+        assert request(served["port"], wrong, cert=served["cert"])[0] == 404, wrong
 
 
 def test_the_raw_files_are_not_reachable_by_their_folder_path(served):

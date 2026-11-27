@@ -19,7 +19,10 @@ from pathlib import Path
 
 from . import codes
 
-SCHEMA_VERSION = "1"
+SCHEMA_VERSION = "2"  # 2 (27 Nov 2026): organiser suffixes may hold any capital letter or digit
+
+_ORG_CLASS = f"[{codes.ORG_ALPHABET}]"
+_GEN_CLASS = f"[{codes.ALPHABET}]"
 
 EVENT = {"ORG": "L3m0n CTF 2026", "PAR": "L3m0n CTF 2026 Qualifiers", "ACH": "L3m0n CTF 2026 Finals", "APP": "L3m0n CTF 2026 Finals"}
 ROLE = {"ORG": "Organizer", "PAR": "Participant", "ACH": "Winner", "APP": "Participant"}
@@ -44,7 +47,10 @@ CREATE TABLE IF NOT EXISTS credentials (
   withdrawn_reason TEXT,
   replaced_by      TEXT REFERENCES credentials(verify_code),
   source_ref       TEXT NOT NULL,
-  CHECK (verify_code GLOB '{codes.PREFIX}-' || category || '-[{codes.ALPHABET}][{codes.ALPHABET}][{codes.ALPHABET}][{codes.ALPHABET}][{codes.ALPHABET}]'),
+  -- an organiser's suffix may be any five capitals or digits (permanent codes given before the tool existed); every other suffix is made by the tool
+  CHECK (CASE WHEN category = 'ORG'
+              THEN verify_code GLOB '{codes.PREFIX}-ORG-{_ORG_CLASS * codes.SUFFIX_LEN}'
+              ELSE verify_code GLOB '{codes.PREFIX}-' || category || '-{_GEN_CLASS * codes.SUFFIX_LEN}' END),
   CHECK ((status = 'replaced') = (replaced_by IS NOT NULL)),
   CHECK ((status = 'withdrawn') = (withdrawn_reason IS NOT NULL)),
   -- coalesce(..., 0): in SQL a test on a missing value is "unknown", and a CHECK lets "unknown" pass; here it counts as a failure
@@ -60,7 +66,7 @@ CREATE TABLE IF NOT EXISTS credentials (
     0)
   )
 );
--- the five letters are unique across every category
+-- the five characters are unique across every category
 -- one VALID code per person and category (a withdrawn code may be re-issued with --reissue)
 CREATE UNIQUE INDEX IF NOT EXISTS credentials_person ON credentials (category, source_ref) WHERE status = 'valid';
 CREATE UNIQUE INDEX IF NOT EXISTS credentials_suffix ON credentials (substr(verify_code, {len(codes.PREFIX) + 6}));

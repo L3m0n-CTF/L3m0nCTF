@@ -10,7 +10,10 @@ the code at **https://verify.l3m0nctf.xyz** or scan the QR code and see who the 
 | `L3M0N26-ACH-xxxxx` | a member of a **top-3** studio of the finals | Event Name "L3m0n CTF 2026 Finals", Role "Winner", Username, Studio Name, Studio Rank (1st-3rd), Issue Date |
 | `L3M0N26-APP-xxxxx` | a member of any other finals studio | Event Name "L3m0n CTF 2026 Finals", Role "Participant", Username, Studio Name, Studio Rank (4th and up), Issue Date |
 
-The five letters come from 21 consonants (no vowels: no I/O to mistake for 1/0, no accidental words) and are unique across all categories.
+The five characters of every code the tool makes come from 21 consonants (no vowels: no I/O to mistake for 1/0, no accidental words); they are
+unique across all categories. **Organiser codes are the exception:** the organisers' codes were handed out before this tool existed and are
+permanent, so an ORG code may hold any five capital letters or digits (section 2). PAR, ACH and APP codes are never written by hand: the tool
+draws them when the codes are issued, after the qualifiers (section 3) and after the finals (section 4).
 **One code per person:** a qualifier who reaches the finals ends with the finals code only (the qualifier code's page then says "replaced" and links to
 the new one). How codes reach people: qualifiers see theirs on the platform's studio page (a later platform release, switched on by the organiser);
 finalists get printed certificates.
@@ -49,6 +52,13 @@ python -m l3mon verify issue D:/l3m0nCTF/private-verify/credentials.sqlite --dat
 ```
 
 Re-running with a longer list issues codes only to the new names; a removed name is reported, never deleted (use `withdraw`).
+
+**Permanent organiser codes.** A line may end in the organiser's own code, after a tab or spaces: `Full Name<TAB>L3M0N26-ORG-XXXXX`. That code is
+stored exactly as written (any five capital letters or digits) and never changes; a line with only a name gets a code drawn by the tool. Load the
+organisers **before** the qualifier codes are issued, so that no drawn code can take a permanent code's five characters (the run would stop and
+name it). The run stops, and writes nothing, when the same code is on two lines, when a code is already held by someone else, or when a person
+already holds a different code (a code is permanent: withdraw the old one first if the list is right). Mind the look-alikes in these codes
+(`O` and `0`, `I` and `1`): the page matches the code exactly, so print them in a font that tells them apart.
 
 ## 3. Qualifier participants (after the qualifiers end, 28 Nov 22:00 IST, and after any Revoke/Restore)
 
