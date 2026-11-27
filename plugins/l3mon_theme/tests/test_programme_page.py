@@ -127,7 +127,8 @@ def test_hostile_hint_text_stays_text(play):
     with clock(T_LIVE):
         assert unlock(play.alice, first.id).status_code == 200
         page = article(text(play.alice.get(PAGE)))
-    assert "&lt;img src=x onerror=alert(1)&gt;" in page and "<img" not in page and "<script" not in page
+    # a hint is Markdown (27 Nov 2026): raw HTML in it is HTML, which the strict allowlist removes; the words stay, nothing becomes markup
+    assert "look" in page and "<img" not in page and "<script" not in page and "onerror" not in page and "alert(" not in page
 
 
 def test_the_tries_left_are_not_on_the_page_because_the_form_that_carried_them_is_not_there(play):

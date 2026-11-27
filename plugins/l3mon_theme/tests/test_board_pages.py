@@ -306,3 +306,28 @@ def test_the_crawl_carries_public_news_only_and_is_off_when_there_is_none(play):
         add_notification("Only studio B", "Private.", team_id=Teams.query.filter_by(name="studio-b").first().id)
         html = text(play.alice.get("/board"))
     assert 'data-crawl' in html and "Welcome: The broadcast is on." in html and "Only studio B" not in html
+
+
+def test_the_programme_page_shows_the_markdown_task_and_hint_as_plain_words_with_no_markdown_left(play):
+    """The page without script draws the task as plain paragraphs. The crew writes Markdown (27 Nov 2026): it is converted first, so the
+    asterisks of **bold** and the hashes of a heading never reach the page, and an unlocked hint reads the same way."""
+    from CTFd.models import Challenges, Hints
+
+    challenge = Challenges.query.get(play.ids.moth)
+    challenge.description = "The rack is **licensed** per *chassis*.\n\n## Calibration\n\n**Flag Format**: the usual one."
+    db.session.commit()
+    with clock(T_LIVE):
+        html = text(play.alice.get("/board/moth_cipher"))
+    task = re.search(r'aria-labelledby="pn-ns-task".*?</section>', html, re.S).group(0)
+    assert "The rack is licensed per chassis." in task and "Calibration" in task and "Flag Format: the usual one." in task
+    assert "**" not in task and "## " not in task and "*chassis*" not in task
+    lantern = Challenges.query.filter_by(name="Lantern Walk").first()
+    hint = Hints.query.filter_by(challenge_id=lantern.id).order_by(Hints.id).first()
+    hint.content = "Look **left**."
+    db.session.commit()
+    hint_id = hint.id  # the requests below end the session the row belongs to
+    with clock(T_LIVE):
+        assert play.alice.post("/api/v1/challenges/attempt", json={"challenge_id": lantern.id, "submission": "lantern-answer"}).status_code == 200
+        assert play.alice.post("/api/v1/unlocks", json={"target": hint_id, "type": "hints"}).status_code == 200
+        page_html = text(play.alice.get("/board/lantern_walk"))
+    assert "Look left." in page_html and "Look **left**" not in page_html

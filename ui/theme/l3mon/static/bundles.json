@@ -1,13 +1,13 @@
 {
-  "css.app": "app.c00a586cb0.css",
+  "css.app": "app.01bd582a44.css",
   "css.slate": "slate.796ba6895c.css",
-  "js.account": "account.457b7aaa41.js",
-  "js.board": "board.441952b00a.js",
+  "js.account": "account.bd8c0a8ab1.js",
+  "js.board": "board.45d394557d.js",
   "js.boot": "boot.171a1187fd.js",
-  "js.guide": "guide.a4a3916d03.js",
-  "js.login": "login.a3502b36c9.js",
-  "js.register": "register.0e23db5094.js",
-  "js.scoreboard": "scoreboard.5862cd7d9d.js",
-  "js.shell": "shell.e76af04611.js",
+  "js.guide": "guide.42476a9f93.js",
+  "js.login": "login.99a255541d.js",
+  "js.register": "register.564af3c1ff.js",
+  "js.scoreboard": "scoreboard.77f9f6488e.js",
+  "js.shell": "shell.87cf4d29d5.js",
   "js.slate": "slate.fa2ca3794b.js"
 }
