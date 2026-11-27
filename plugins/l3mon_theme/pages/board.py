@@ -349,6 +349,13 @@ def _instance_view(team, challenge_id):
     return {"state": state, "connection": connection, "expires_in": max(0, int((mine.expires_at - moment).total_seconds())), "quota": quota}
 
 
+def _hint_text(markdown_text):
+    """An unlocked hint as the page shows it: one plain line, from its Markdown converted (so `**` never shows); the raw text if that is empty."""
+    from CTFd.plugins.l3mon_board import panel
+
+    return " ".join(task_paragraphs(panel.rendered(markdown_text))) or (markdown_text or "")
+
+
 def programme_detail(programme, data, who):
     """The facts about one programme that only the database holds, for `programme_view`: what CTFd's own challenge answer carries (the task text, the files with
     this studio's links, the hints this studio has opened) and the plugin's `l3mon` block. Called only for the programme's own page, for a programme the
@@ -374,11 +381,12 @@ def programme_detail(programme, data, who):
         files.append({"name": os.path.basename(f.location), "url": url_for("views.files", path=f.location, token=token)})
     opened = {u.target for u in HintUnlocks.query.filter_by(type="hints", account_id=user.account_id)} if user is not None else set()
     hints = [
-        {"id": h.id, "cost": int(h.cost or 0), "content": h.content if (h.id in opened or ctf_ended()) else None}
+        {"id": h.id, "cost": int(h.cost or 0), "content": _hint_text(h.content) if (h.id in opened or ctf_ended()) else None}
         for h in Hints.query.filter_by(challenge_id=challenge.id).order_by(Hints.id).all()
     ]
+    # CTFd keeps the description as Markdown and programme_view reads HTML: it is converted first (27 Nov 2026)
     return {
-        "description": challenge.description, "author": block.get("author") or challenge.attribution, "story": block.get("story") or "", "sponsor": (block.get("sponsor") or {}).get("name"),
+        "description": panel.rendered(challenge.description), "author": block.get("author") or challenge.attribution, "story": block.get("story") or "", "sponsor": (block.get("sponsor") or {}).get("name"),
         "decay": bool(block.get("decay")), "start": block.get("start"), "floor": block.get("floor"), "first_blood_open": block.get("first_blood_open"),
         "tries_left": block.get("tries_left"), "phase": data["phase"], "score": block.get("score"), "files": files, "hints": hints,
         "instance": _instance_view(team, challenge.id) if team is not None and block.get("live") else None,

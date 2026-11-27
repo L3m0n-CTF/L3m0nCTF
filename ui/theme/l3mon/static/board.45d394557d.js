@@ -611,7 +611,7 @@ const files=Array.isArray(data.files)?data.files.filter((f)=>typeof f==='string'
 return{
 ...data,
 category:categoryId(data.category),
-description_html:data.description,
+description_html:l3.description_html??data.description,
 l3mon:{...l3,story:typeof l3.story==='string'?l3.story:'',files},
 };
 }
@@ -1370,7 +1370,8 @@ focusToggle(){if(toggle)toggle.focus();},
 setView(v){for(const r of radios('view'))r.checked=r.value===v;},
 };
 }
-const SH_KEEP=new Set(['p','br','strong','em','code','pre','ul','ol','li','blockquote','a']);
+const SH_KEEP=new Set(['p','br','strong','em','code','pre','ul','ol','li','blockquote','a','h4','h5','h6','del','hr','table','thead','tbody','tr','th','td']);
+const SH_AS={h1:'h4',h2:'h4',h3:'h5',h4:'h6',h5:'h6',b:'strong',i:'em',s:'del'};
 const SH_DROP=new Set(['script','style','template','noscript','iframe','object','embed','svg','math','head','title','link','meta']);
 const SH_MAX_NODES=4000;
 const SH_MAX_DEPTH=24;
@@ -1382,18 +1383,35 @@ const u=new URL(v);
 return u.protocol==='https:'&&!u.username&&!u.password?u.href:null;
 }catch{return null;}
 }
+function sitePath(raw){
+const v=String(raw||'').trim();
+return/^\/(?![/\\])[^\s\\]*$/.test(v)?v:null;
+}
 function cleanChildren(src,doc,depth=0,budget={n:0}){
 const out=doc.createDocumentFragment();
 for(const node of Array.from(src.childNodes||[])){
 if(++budget.n>SH_MAX_NODES)break;
 if(node.nodeType===3){out.append(doc.createTextNode(node.nodeValue));continue;}
 if(node.nodeType!==1)continue;
-const tag=String(node.nodeName).toLowerCase();
+let tag=String(node.nodeName).toLowerCase();
 if(SH_DROP.has(tag))continue;
+const attr=(name)=>node.getAttribute&&node.getAttribute(name);
+if(tag==='img'){
+const src=safeHref(attr('src'))||sitePath(attr('src'));
+if(src){
+const img=doc.createElement('img');
+img.setAttribute('src',src);
+img.setAttribute('alt',attr('alt')||'');
+img.setAttribute('referrerpolicy','no-referrer');
+out.append(img);
+}
+continue;
+}
+tag=SH_AS[tag]||tag;
 const kids=depth<SH_MAX_DEPTH?cleanChildren(node,doc,depth+1,budget):doc.createTextNode(node.textContent||'');
 if(!SH_KEEP.has(tag)){out.append(kids);continue;}
 if(tag==='a'){
-const href=safeHref(node.getAttribute&&node.getAttribute('href'));
+const href=safeHref(attr('href'))||sitePath(attr('href'));
 if(!href){out.append(kids);continue;}
 const a=doc.createElement('a');
 a.setAttribute('href',href);

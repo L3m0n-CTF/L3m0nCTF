@@ -4,12 +4,18 @@
 count, the value as it is now) and gains
 
     l3mon: {slug, number, channel, channel_name, sponsor, difficulty, author, live, decay, start, floor, first_blood_open,
-            tries_left, score, phase}
+            tries_left, score, phase, story, description_html}
 
 `author` is CTFd's own `attribution`. `decay`, `start` and `floor` describe a value that falls (the dynamic type, or any
 challenge CTFd gives a scoring function) and are null for a fixed one. `tries_left` is the studio's, by the rule CTFd uses to
 lock it out (lock-out, or timeout), and null when the challenge does not limit tries. `score` is the studio's own score, live
 (null for the crew). A challenge that is on no channel gets no block.
+
+`description_html` is the task text as HTML. CTFd keeps the description, and each hint's content, as the MARKDOWN the crew typed in the admin
+editor, and its own theme converts it; the panel used to take the Markdown for HTML, so players saw `**Flag Format**` with its asterisks and one
+run-on paragraph (27 Nov 2026). Now `rendered()` converts it with CTFd's own converter and sanitiser, CTFd's `description` key stays as it was,
+and every unlocked hint in the answer gains `html` beside CTFd's `content` (a locked hint carries neither). The page's own allowlist
+(safe-html.js in the UI repository) is the second line of defence.
 
 Before the start CTFd answers every challenge route with a 403 and a bare sentence; for a studio that is the contract's
 `phase_closed` (with `phase: before`), the same for a real id and a missing one.
@@ -51,6 +57,29 @@ def tries_left(challenge, team):
     return max(0, int(challenge.max_attempts) - fails.count())
 
 
+# What the panel can show of the crew's text, and nothing else: the elements the admin editor's toolbar and GitHub-style Markdown make (CTFd's own
+# sanitiser keeps far more, iframes and forms included). The page's allowlist (safe-html.js in the UI repository) is the same list, applied again.
+MARKDOWN_TAGS = {"p", "br", "strong", "em", "b", "i", "code", "pre", "ul", "ol", "li", "blockquote", "a", "h1", "h2", "h3", "h4", "h5", "h6",
+                 "del", "s", "hr", "table", "thead", "tbody", "tr", "th", "td", "img"}
+MARKDOWN_ATTRIBUTES = {"a": {"href", "title"}, "img": {"src", "alt", "title"}, "ol": {"start"}}
+MARKDOWN_SCHEMES = {"https", "http", "mailto"}  # and addresses on the platform itself (a path such as /files/...)
+
+
+def rendered(markdown_text) -> str:
+    """The crew's Markdown as HTML: CTFd's own converter (cmark-gfm: tables, strikethrough, autolinks; the `{ctf_name}`-style variables), then a
+    strict allowlist (nh3, the sanitiser CTFd itself uses) whatever the platform's `html_sanitization` setting says: raw HTML pasted into the text
+    (a script, an event attribute, a javascript: link, an iframe, a form) cannot reach a player."""
+    import nh3
+
+    from CTFd.utils.config.pages import build_markdown
+
+    if not isinstance(markdown_text, str) or not markdown_text.strip():
+        return ""
+    html = str(build_markdown(markdown_text, sanitize=True))
+    return nh3.clean(html, tags=MARKDOWN_TAGS, attributes=MARKDOWN_ATTRIBUTES, url_schemes=MARKDOWN_SCHEMES, link_rel="noopener noreferrer nofollow",
+                     clean_content_tags={"script", "style"})
+
+
 def block(challenge, solves, team, phase) -> dict:
     """The `l3mon` block for a challenge that has a programme, or None."""
     row = (
@@ -73,6 +102,7 @@ def block(challenge, solves, team, phase) -> dict:
         "score": int(team.get_score(admin=True) or 0) if team is not None else None,
         "phase": {"state": phase.state, "frozen": phase.frozen},
         "story": programme.story or "",
+        "description_html": rendered(challenge.description),
     }
 
 
@@ -141,6 +171,9 @@ def decorate(response):
     extra = block(challenge, solves, team, current_phase())
     if extra is not None:
         inner["l3mon"] = extra
+        for hint in inner.get("hints") or []:
+            if isinstance(hint, dict) and isinstance(hint.get("content"), str):  # CTFd sends `content` only for a hint the studio unlocked
+                hint["html"] = rendered(hint["content"])
         if solves is not None:
             inner["solves"] = solves
         if team is not None:
