@@ -36,6 +36,10 @@ Files: `tools/l3mon/verify/` (codes, database, issue rules, QR encoder, site bui
 
 Suggested place on the laptop: a folder outside every repository, e.g. `D:\l3m0nCTF\private-verify\` (and its backup).
 
+**The Issue Dates (the organisers' decision of 27 Nov 2026):** organisers (ORG) **2026-12-12**, finals winners (ACH) and finals participants (APP)
+**2026-12-12**, qualifier participants (PAR) **2026-11-28**. Every `--date` below uses them. The organisers' codes were issued with their date on
+27 Nov 2026; a code keeps the date it was issued with, whatever a later run says.
+
 ## 1. Make the database (once)
 
 ```bash
@@ -48,7 +52,7 @@ Names may hold any character; the tool writes UTF-8 when its output goes to a fi
 ## 2. Organisers
 
 ```bash
-python -m l3mon verify issue D:/l3m0nCTF/private-verify/credentials.sqlite --date 2026-11-30 --org D:/path/to/org.txt
+python -m l3mon verify issue D:/l3m0nCTF/private-verify/credentials.sqlite --date 2026-12-12 --org D:/path/to/org.txt
 ```
 
 Re-running with a longer list issues codes only to the new names; a removed name is reported, never deleted (use `withdraw`).
@@ -78,7 +82,7 @@ It lists every member of every studio the public scoreboard ranks (above 0 TRP; 
 accounts are left out), between two marker lines. Then:
 
 ```bash
-python -m l3mon verify issue D:/l3m0nCTF/private-verify/credentials.sqlite --date 2026-11-30 --prelims D:/path/to/prelims-export.txt
+python -m l3mon verify issue D:/l3m0nCTF/private-verify/credentials.sqlite --date 2026-11-28 --prelims D:/path/to/prelims-export.txt
 python -m l3mon verify list  D:/l3m0nCTF/private-verify/credentials.sqlite     # look before publishing
 ```
 
