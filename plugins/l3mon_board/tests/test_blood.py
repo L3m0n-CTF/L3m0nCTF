@@ -110,8 +110,14 @@ def test_a_failed_post_never_writes_the_address_to_the_log(caplog):
 
 def test_ordinal():
     for n, word in [(1, "1st"), (2, "2nd"), (3, "3rd"), (4, "4th"), (11, "11th"), (12, "12th"), (13, "13th"), (21, "21st"), (22, "22nd"),
-                    (23, "23rd"), (101, "101st"), ("1st", "1st"), ("35th", "35th"), ("1stth", "1st"), (None, "1st")]:
+                    (23, "23rd"), (101, "101st"), ("1st", "1st"), ("35th", "35th"), ("1stth", "1st"), (None, ""), ("?", ""), (0, "")]:
         assert blood.ordinal(n) == word
+
+
+def test_an_unknown_place_is_left_out_rather_than_posted_as_first():
+    """The place is unknown when the studio is not on the cached standings yet (stale cache, or only 0-TRP programmes): before, that read
+    "in 1st place" (the review of 27 Nov)."""
+    assert blood.create_blood_embed(0, "Hydra", "Echoes", None, 300)["description"] == "Hydra got first blood on Echoes and now has 300 TRP!"
 
 
 def test_the_embeds_say_trp_and_carry_no_emoji():
@@ -135,8 +141,10 @@ def test_a_name_cannot_carry_markdown_a_link_or_a_second_line():
 # ---- through a real flag ------------------------------------------------------------------------------------------------------
 
 def test_the_first_three_solves_post_first_second_and_third_blood_and_the_fourth_nothing(play, hook_file, posts):
-    for client in (play.alice, play.bob, play.carol, play.dave):
-        assert send(client, play.ids.lantern, "lantern-answer").get_json()["data"]["status"] == "correct"
+    with patch.object(blood, "get_team_rank_and_score", wraps=blood.get_team_rank_and_score) as place:
+        for client in (play.alice, play.bob, play.carol, play.dave):
+            assert send(client, play.ids.lantern, "lantern-answer").get_json()["data"]["status"] == "correct"
+    assert place.call_count == 3, "the fourth solve posts nothing, so it must not pay for a scoreboard rebuild in its reply (review of 27 Nov)"
     assert [p["embeds"][0]["title"] for _, p in posts] == ["First Blood!", "Second Blood!", "Third Blood!"]
     assert all(url == HOOK for url, _ in posts)
     assert descriptions(posts)[0].startswith("studio\\-a got first blood on Lantern Walk and is now in 1st place with ")
@@ -172,6 +180,21 @@ def test_a_hidden_studio_neither_posts_nor_takes_the_blood(play, hook_file, post
     assert [p["embeds"][0]["title"] for _, p in posts] == ["First Blood!"]
 
 
+def test_the_place_and_trp_are_the_public_scoreboards(play, hook_file, posts):
+    """A hidden studio (the crew's, a test studio) ahead on points does not push a real studio down: with the crew's view (admin=True)
+    this post would say "2nd place"."""
+    ghost = team_client(play.app, "ghost", "studio-ghost")
+    Teams.query.filter_by(name="studio-ghost").first().hidden = True
+    db.session.commit()
+    for challenge, flag in ((play.ids.moth, "moth-answer"), (play.ids.noodle, "noodle-answer"), (play.ids.coffee, "coffee-answer")):
+        send(ghost, challenge, flag)
+    assert posts == []
+    send(play.alice, play.ids.lantern, "lantern-answer")
+    public = Teams.query.filter_by(name="studio-a").first().get_score(admin=False)
+    assert public > 0
+    assert descriptions(posts) == [f"studio\\-a got first blood on Lantern Walk and is now in 1st place with {public} TRP!"]
+
+
 def test_nothing_is_posted_for_a_solve_after_the_freeze(play, hook_file, posts):
     """CTFd dates a solve with the real clock, so the freeze is set just before the real now: every solve here is after it. Before the
     fix every studio after the freeze was posted as "First Blood" with its live place (the review of 26 Nov)."""
@@ -183,10 +206,14 @@ def test_nothing_is_posted_for_a_solve_after_the_freeze(play, hook_file, posts):
     assert posts == []
 
 
-def test_a_solve_before_a_freeze_still_counts_for_the_next_blood(play, hook_file, posts):
+def test_with_a_freeze_still_ahead_the_posts_go_on(play, hook_file, posts):
+    """A freeze that is set but not reached yet stops nothing: solves before it are on the public board."""
+    from freezegun.api import real_datetime
+
+    set_config("freeze", calendar.timegm(real_datetime.utcnow().timetuple()) + 3600)
     send(play.alice, play.ids.lantern, "lantern-answer")
     send(play.bob, play.ids.lantern, "lantern-answer")
-    assert [p["embeds"][0]["title"] for _, p in posts] == ["First Blood!", "Second Blood!"], "the post counts every earlier solve"
+    assert [p["embeds"][0]["title"] for _, p in posts] == ["First Blood!", "Second Blood!"]
 
 
 def test_a_studio_name_is_posted_as_plain_text(play, hook_file, posts):

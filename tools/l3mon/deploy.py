@@ -37,6 +37,11 @@ class Item:
         return f"{self.status:8} {self.name}" + (f": {self.detail}" if self.detail else "")
 
 
+# The address the blood posts accept: the same pattern as _ALLOWED in plugins/l3mon_board/blood.py (a test keeps the two equal), so
+# `deploy check` never says "on" for an address ctfd will ignore.
+BLOOD_WEBHOOK = re.compile(r"^https://(?:discord\.com|discordapp\.com|ptb\.discord\.com|canary\.discord\.com)/api/webhooks/\d+/[A-Za-z0-9_-]+$")
+
+
 def _read(path: Path) -> str:
     return path.read_text(encoding="utf-8", errors="replace").strip()
 
@@ -99,8 +104,10 @@ def check_secrets(directory: Path, data: dict | None, items: list[Item], env: di
     blood = directory / "DISCORD_BLOOD_WEBHOOK"
     if not blood.is_file():
         items.append(Item(BLOCKED, "blood posts to Discord", f"{blood} does not exist: compose needs the file, and an empty one is fine (`: > {blood}`; then paste the webhook address into it to switch the posts on)"))
+    elif _read(blood) and not BLOOD_WEBHOOK.match(_read(blood)):
+        items.append(Item(TODO, "blood posts to Discord", "off: .secrets/DISCORD_BLOOD_WEBHOOK does not hold a plain Discord webhook address (https://discord.com/api/webhooks/<id>/<token>, nothing after the token: no ?wait or ?thread_id, no quotes): ctfd ignores it and posts nothing"))
     elif _read(blood):
-        items.append(Item(OK, "blood posts to Discord", "on: .secrets/DISCORD_BLOOD_WEBHOOK holds the address"))
+        items.append(Item(OK, "blood posts to Discord", "on: .secrets/DISCORD_BLOOD_WEBHOOK holds a Discord webhook address"))
     else:
         items.append(Item(TODO, "blood posts to Discord", "off: .secrets/DISCORD_BLOOD_WEBHOOK is empty (paste the blood channel's webhook address into it, then recreate ctfd)"))
 

@@ -44,7 +44,11 @@ def get_webhook_url() -> str:
     try:
         with open(path, encoding="utf-8") as f:
             url = f.read().strip()
-    except OSError:
+    except FileNotFoundError:
+        return ""
+    except OSError as exc:
+        # there but unreadable (its mode, say): say so, or the posts stop with no trace while `deploy check` reads the file fine
+        log.warning("The blood webhook file cannot be read (%s): no blood posts", type(exc).__name__)
         return ""
     if not url:
         return ""
@@ -55,15 +59,16 @@ def get_webhook_url() -> str:
 
 
 def ordinal(n) -> str:
+    """1 -> "1st", 22 -> "22nd"; "" when there is no place (unknown rank): the post then names none rather than a wrong "1st"."""
     if n is None:
-        return "1st"
+        return ""
     s = str(n).strip()
     # If it's already an ordinal like '1st', '2nd', '3rd', '35th'
     if re.search(r"^\d+(?:st|nd|rd|th)$", s, re.IGNORECASE):
         return s.lower()
     m = re.search(r"\d+", s)
-    if not m:
-        return "1st"
+    if not m or int(m.group()) < 1:
+        return ""
     val = int(m.group())
     if 11 <= (val % 100) <= 13:
         suffix = "th"
@@ -105,9 +110,11 @@ def create_blood_embed(blood_index: int, team_name: str, challenge_name: str, ra
     """The Discord embed (BloodSeeker style). blood_index: 0 first, 1 second, 2 third blood; anything else gives {}."""
     if blood_index not in (0, 1, 2):
         return {}
+    place, trp = ordinal(rank), int(score or 0)
+    standing = f"is now in {place} place with {trp} TRP!" if place else f"now has {trp} TRP!"
     return {
         "title": _TITLES[blood_index],
-        "description": f"{escape(team_name)} got {_WORDS[blood_index]} blood on {escape(challenge_name)} and is now in {ordinal(rank)} place with {int(score or 0)} TRP!",
+        "description": f"{escape(team_name)} got {_WORDS[blood_index]} blood on {escape(challenge_name)} and {standing}",
         "color": _COLORS[blood_index],
     }
 
@@ -179,7 +186,12 @@ def notify(challenge, team, solve):
                 return
             _NOTIFIED_SOLVES.add(solve_id)
 
-    embed = create_blood_embed(_earlier_count(challenge, solve), team.name, challenge.name, *get_team_rank_and_score(team))
+    # The count first: from the fourth solve on nothing is posted, and the place below costs a scoreboard rebuild (CTFd has just cleared
+    # the standings cache for this solve), which must not be paid inside every flag reply.
+    blood_index = _earlier_count(challenge, solve)
+    if blood_index > 2:
+        return
+    embed = create_blood_embed(blood_index, team.name, challenge.name, *get_team_rank_and_score(team))
     if not embed:
         return
     payload_data = {"embeds": [embed], "allowed_mentions": {"parse": []}}

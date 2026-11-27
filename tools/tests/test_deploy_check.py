@@ -151,6 +151,22 @@ def test_the_blood_posts_are_off_with_an_empty_file_and_on_with_an_address(tmp_p
     assert "abc" not in next(i.detail for i in items if i.name == "blood posts to Discord"), "the check never prints the address"
 
 
+@pytest.mark.parametrize("content", ["https://discord.com/api/webhooks/1/abc?wait=true", "https://discord.com/api/webhooks/1/abc/",
+                                     "\"https://discord.com/api/webhooks/1/abc\"", "https://discord.com/api/v10/webhooks/1/abc",
+                                     "https://evil.example/api/webhooks/1/abc"])
+def test_an_address_ctfd_would_ignore_is_not_reported_as_on(tmp_path, content):
+    world = make_deployment(tmp_path)
+    (world["secrets_dir"] / "DISCORD_BLOOD_WEBHOOK").write_text(content + "\n", encoding="utf-8")
+    items = run(world)
+    assert statuses(items)["blood posts to Discord"] == deploy.TODO
+    assert "abc" not in next(i.detail for i in items if i.name == "blood posts to Discord"), "the check never prints the address"
+
+
+def test_the_check_accepts_exactly_the_addresses_the_blood_posts_accept():
+    plugin = (Path(__file__).resolve().parents[2] / "plugins" / "l3mon_board" / "blood.py").read_text(encoding="utf-8")
+    assert f're.compile(r"{deploy.BLOOD_WEBHOOK.pattern}")' in plugin, "tools/l3mon/deploy.py BLOOD_WEBHOOK must equal blood.py _ALLOWED"
+
+
 def test_a_mail_login_without_its_password_is_blocked_and_no_mail_section_is_a_todo_that_says_why(tmp_path):
     world = make_deployment(tmp_path)
     (world["secrets_dir"] / "MAIL_PASSWORD").write_text("", encoding="utf-8")
