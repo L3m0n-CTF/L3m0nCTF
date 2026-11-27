@@ -55,3 +55,15 @@ CVE-2026-123633
 CVE-2026-113425
 CVE-2026-118899
 CVE-2026-123634
+#
+# libxml2 2.13.9-r2 in the pinned nginx image (Alpine 3.24.2), six more HIGH advisories found by the scan of 2026-11-27: CVE-2026-11979 (fixed in 2.13.9-r5) and
+# CVE-2026-86138, CVE-2026-86139, CVE-2026-86140, CVE-2026-86142, CVE-2026-86143 (fixed in 2.13.9-r4). Checked again on the pinned image on 2026-11-27, same result as
+# for CVE-2026-86144: `apk info -r libxml2` says only nginx-module-xslt, libxslt and nginx-module-njs need it; `ldd /usr/sbin/nginx` lists no xml library; there is no
+# load_module line anywhere in /etc/nginx, so the dynamic modules on disk are never loaded. Accepted until the image is updated: review again after the qualifiers and
+# before the finals (2026-12-05); then change the digest in compose.base.yml, run the scan, the integration tests and the restore drill, and REMOVE these identifiers.
+CVE-2026-11979
+CVE-2026-86138
+CVE-2026-86139
+CVE-2026-86140
+CVE-2026-86142
+CVE-2026-86143

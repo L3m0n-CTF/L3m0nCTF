@@ -62,6 +62,8 @@ check "libssl3 is at or above 3.0.22-1~deb12u2" run "$image" sh -c 'dpkg --compa
 check "openssl is at or above 3.0.22-1~deb12u2" run "$image" sh -c 'dpkg --compare-versions "$(dpkg-query -W -f="\${Version}" openssl)" ge 3.0.22-1~deb12u2'
 check "apt is at or above 2.6.2" run "$image" sh -c 'dpkg --compare-versions "$(dpkg-query -W -f="\${Version}" apt)" ge 2.6.2'
 check "libapt-pkg6.0 is at or above 2.6.2" run "$image" sh -c 'dpkg --compare-versions "$(dpkg-query -W -f="\${Version}" libapt-pkg6.0)" ge 2.6.2'
+check "libpam0g is at or above 1.5.2-6+deb12u3" run "$image" sh -c 'dpkg --compare-versions "$(dpkg-query -W -f="\${Version}" libpam0g)" ge 1.5.2-6+deb12u3'
+check "libpam-modules is at or above 1.5.2-6+deb12u3" run "$image" sh -c 'dpkg --compare-versions "$(dpkg-query -W -f="\${Version}" libpam-modules)" ge 1.5.2-6+deb12u3'
 check "no package lists left behind" run "$image" sh -c '[ -z "$(ls /var/lib/apt/lists 2>/dev/null | grep -v "^partial$")" ]'
 
 # no build tools, no package manager caches left behind
