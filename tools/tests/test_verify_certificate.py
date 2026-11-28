@@ -269,3 +269,39 @@ def test_the_fit_script_waits_for_the_designs_own_fonts_before_it_measures(tmp_p
     assert "document.fonts" in script, "the print page never waits for the fonts"
     assert script.index("document.fonts") < script.index("getBBox"), "the fonts are awaited before the first measurement"
     assert ".load()" in script and ".then(" in script
+
+
+# ------------------------------------------------------------------ the colours of the QR code (28 Nov 2026: the supervisor's design wants black on white)
+
+QR_RECT = '<rect id="qr" x="900" y="600" width="120" height="120"/>'
+
+
+def test_the_qr_rectangle_can_name_the_colours_of_the_code(tmp_path):
+    text = DESIGN.replace(QR_RECT, '<rect id="qr" x="900" y="600" width="120" height="120" data-dark="#000000" data-light="#ffffff"/>')
+    out = certificate.fill(certificate.load(design(tmp_path, text)), values())
+    assert 'fill="#ffffff"' in out and 'fill="#000000"' in out
+    assert "#070b1e" not in out and "#f4ead4" not in out
+
+
+def test_without_colours_the_qr_keeps_the_portals_own(tmp_path):
+    out = certificate.fill(certificate.load(design(tmp_path)), values())
+    assert 'fill="#f4ead4"' in out and 'fill="#070b1e"' in out
+
+
+@pytest.mark.parametrize("bad", ["red", "#fff", "#12345g", "#00000000", "rgb(0,0,0)", "url(https://evil.example/x)"])
+def test_a_qr_colour_that_is_not_six_digit_hex_is_refused(tmp_path, bad):
+    text = DESIGN.replace(QR_RECT, f'<rect id="qr" x="900" y="600" width="120" height="120" data-dark="{bad}"/>')
+    with pytest.raises(certificate.CertificateError, match="data-dark|loads something from outside"):
+        certificate.load(design(tmp_path, text))
+
+
+def test_a_qr_with_chosen_colours_still_reads_back_as_the_codes_address(tmp_path):
+    text = DESIGN.replace(QR_RECT, '<rect id="qr" x="900" y="600" width="120" height="120" data-dark="#000000" data-light="#ffffff"/>')
+    out = certificate.fill(certificate.load(design(tmp_path, text)), values())
+    m = re.search(r'<svg x="900" y="600" width="120" height="120" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 (\d+) \1"[^>]*>.*?<path d="([^"]+)"', out)
+    n = int(m.group(1)) - 8
+    grid = [["0"] * n for _ in range(n)]
+    for x, y in re.findall(r"M(\d+) (\d+)h1v1h-1z", m.group(2)):
+        grid[int(y) - 4][int(x) - 4] = "1"
+    res = qr_read(["".join(r) for r in grid])
+    assert res["format_ok"] and res["rs_ok"] and res["text"] == f"{BASE}/L3M0N26-PAR-BCDFG"

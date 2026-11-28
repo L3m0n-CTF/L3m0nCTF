@@ -8,7 +8,8 @@ The design is an ordinary SVG (Figma with "Outline text" OFF, Inkscape, Illustra
     {{NAME}}      the holder: the organiser's full name, or the player's username
     {{USERNAME}}  {{STUDIO}}  {{RANK}} (1st, 2nd...)  {{CODE}}  {{DATE}} (28 November 2026)  {{EVENT}}  {{ROLE}}  {{URL}} (the code's address)
 
-and one element whose id is `qr` (a rectangle with x, y, width and height) marks where the QR code goes. The code and the holder are required:
+and one element whose id is `qr` (a rectangle with x, y, width and height) marks where the QR code goes; it may carry data-dark="#000000" and
+data-light="#ffffff" (six-digit hex) to choose the code's two colours, otherwise the portal's navy on cream is used. The code and the holder are required:
 a certificate nobody can check is not one. The design may hold pictures and fonts only as data: addresses (the build is offline), and no script.
 
 Text that holds a placeholder is shrunk to fit when the value is long (to the page's margins, or to its own data-max-width in the design's
@@ -114,6 +115,9 @@ def load(path: Path) -> Template:
                 raise CertificateError(f"{name}: the element with id 'qr' must be a rectangle with plain x, y, width and height")
             if qr_box is not None:
                 raise CertificateError(f"{name}: two elements have the id 'qr'")
+            for colour in ("data-dark", "data-light"):
+                if el.get(colour) is not None and not _HEX_COLOUR.fullmatch(el.get(colour)):
+                    raise CertificateError(f"{name}: the qr rectangle's {colour}= must be a six-digit hex colour such as #000000")
             qr_box = box
     if qr_box is None:
         raise CertificateError(f"{name}: no element with the id 'qr' (name a rectangle 'qr' where the QR code goes)")
@@ -155,6 +159,8 @@ def key(t: Template, values: dict) -> str:
 
 _TEXT = re.compile(r"(<text\b)([^>]*)>(.*?)</text>", re.S)
 _QR = re.compile(r"<rect\b[^>]*\bid\s*=\s*[\"']qr[\"'][^>]*?(?:/>|>.*?</rect>)", re.S)
+# the QR rectangle may name its own colours (data-dark, data-light); the portal's navy on cream is used when it does not
+_HEX_COLOUR = re.compile(r"#[0-9a-fA-F]{6}")
 
 
 def _align(attrs: str) -> str:
@@ -188,8 +194,9 @@ def fill(t: Template, values: dict) -> str:
     svg_text = "".join(parts) + sub(src[pos:])
 
     def qr_el(m: re.Match) -> str:
-        attrs = dict(re.findall(r'\b(x|y|width|height)\s*=\s*"([^"]*)"', m.group(0)))
-        sym = qr.svg(values["URL"])
+        attrs = dict(re.findall(r'(?<![\w-])(x|y|width|height|data-dark|data-light)\s*=\s*"([^"]*)"', m.group(0)))
+        colours = {k: attrs[f"data-{k}"] for k in ("dark", "light") if f"data-{k}" in attrs}
+        sym = qr.svg(values["URL"], **colours)
         return sym.replace("<svg ", f'<svg x="{attrs["x"]}" y="{attrs["y"]}" width="{attrs["width"]}" height="{attrs["height"]}" ', 1)
     return _QR.sub(qr_el, svg_text, count=1)
 
