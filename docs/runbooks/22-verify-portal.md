@@ -137,7 +137,11 @@ design or details changed; the others are reused. The same input gives the same 
 1. Make it in Figma, Inkscape or Illustrator at the paper size (A4 landscape: 297 x 210 mm; in Figma a 1123 x 794 frame).
 2. Where a value goes, type its placeholder as text: `{{USERNAME}}`, `{{STUDIO}}`, `{{CODE}}`, `{{DATE}}` (28 November 2026), and if wanted
    `{{EVENT}}`, `{{ROLE}}`, `{{RANK}}`, `{{NAME}}` (an organiser's full name, else the username), `{{URL}}`. `{{CODE}}` and the holder are required.
-3. Draw a rectangle where the QR code goes and name it **`qr`** (its fill does not matter; the QR code replaces it).
+3. Draw a rectangle where the QR code goes and name it **`qr`** (its fill does not matter; the QR code replaces it). The code fills the whole
+   rectangle, including its own quiet margin, so make it the size of the white square the code should sit in. The code is navy on cream unless
+   the rectangle says otherwise: add the attributes `data-dark="#000000" data-light="#ffffff"` (six-digit hex colours, nothing else is accepted) for black on white.
+   A Canva design wraps every logo in a luminosity mask; some PDF viewers (Windows' own renderer) draw those as black boxes, so fold each mask into
+   its picture as a transparent channel before building (the qualifiers' design was prepared that way).
 4. **Alignment** of a value of another length: SVG's own `text-anchor` is followed. Figma fixes positions instead, so name the text layer with
    **center** (or centre, middle) to keep it centred, or **right** to keep its right edge; otherwise it keeps its left edge. A long value shrinks to
    fit the page (or the layer's `data-max-width`, in the design's units, when it has one).
