@@ -13,6 +13,11 @@ from typing import Optional
 _log = logging.getLogger("l3mon.instancer.router")
 
 
+# The status line of a good answer from an agent. The real agent (a BaseHTTPRequestHandler) answers "HTTP/1.0 200 OK"; a first version of this check demanded
+# "HTTP/1.1 200" and would have refused every real answer (caught before it did harm, 28 Nov 2026).
+_OK_STATUS = re.compile(rb"^HTTP/1\.[01] 200( |$)")
+
+
 def without_access_credentials(name: str, value: str):
     """(name, value) with Cloudflare Access's credentials taken out, or None if nothing is left of the header.
 
@@ -729,7 +734,7 @@ class InstanceRouter:
                 if len(parts) == 2:
                     # Only an answer that IS a route list replaces the route table. An error answer (a refused token, a failing agent) has no "routes":
                     # reading it as an empty list used to wipe every route, and every instance address then answered "Instance not found".
-                    if not parts[0].startswith(b"HTTP/1.1 200"):
+                    if not _OK_STATUS.match(parts[0]):
                         raise RuntimeError("the agent answered " + parts[0].split(b"\r\n", 1)[0].decode("ascii", "replace")[:40])
                     body = json.loads(parts[1].decode("utf-8"))
                     if not isinstance(body, dict) or "routes" not in body:
@@ -795,7 +800,7 @@ class InstanceRouter:
                     parts = resp_data.split(b"\r\n\r\n", 1)
                     if len(parts) == 2:
                         # only a real route list replaces the host's routes (an error answer used to be read as "no routes" and wiped them all)
-                        if not parts[0].startswith(b"HTTP/1.1 200"):
+                        if not _OK_STATUS.match(parts[0]):
                             raise RuntimeError("the host answered " + parts[0].split(b"\r\n", 1)[0].decode("ascii", "replace")[:40])
                         body = json.loads(parts[1].decode("utf-8"))
                         if not isinstance(body, dict) or "routes" not in body:

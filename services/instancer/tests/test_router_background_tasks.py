@@ -147,3 +147,78 @@ async def test_every_poll_attempt_counts_as_activity_even_when_it_fails():
     task.cancel()
     await asyncio.gather(task, return_exceptions=True)
     assert router.seconds_since_poll_activity() < 5.0
+
+
+# ---------------------------------------------------------------------------
+# The polling loops against the REAL agent handler (found on 28 Nov 2026 during the fix itself: a first version of the "only a 200 answer counts" check
+# demanded "HTTP/1.1 200", but the real agent, a BaseHTTPRequestHandler, answers "HTTP/1.0 200 OK". The fakes in the older tests all spoke HTTP/1.1.)
+# ---------------------------------------------------------------------------
+import threading
+
+from services.instancer.server import InstancerAPIHandler, ThreadedHTTPServer
+
+ROUTE_ID = "c" * 32
+
+
+class _StubManager:
+    def get_routes(self):
+        return [{"id": ROUTE_ID, "protocol": "http", "target_ip": "10.200.0.2", "target_port": 8000}]
+
+
+def _real_agent(router_token="rt"):
+    server = ThreadedHTTPServer(("127.0.0.1", 0), InstancerAPIHandler)
+    server.manager = _StubManager()
+    server.instancer_token = "it"
+    server.router_token = router_token
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server
+
+
+@pytest.mark.asyncio
+async def test_the_host_router_learns_its_routes_from_the_real_agent_handler():
+    agent = _real_agent()
+    router = InstanceRouter(instance_domain="example.com", instancer_url=f"http://127.0.0.1:{agent.server_address[1]}", router_token="rt", poll_interval=0.05)
+    task = asyncio.create_task(router.poll_routes_loop())
+    try:
+        await asyncio.sleep(0.5)
+        assert router.get_route(ROUTE_ID) is not None, "the real agent answers HTTP/1.0 200 and that must be accepted"
+    finally:
+        task.cancel()
+        agent.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_a_refused_poll_does_not_wipe_the_routes_the_router_already_knows(caplog):
+    agent = _real_agent()
+    router = InstanceRouter(instance_domain="example.com", instancer_url=f"http://127.0.0.1:{agent.server_address[1]}", router_token="rt", poll_interval=0.05)
+    caplog.set_level(logging.WARNING, logger="l3mon.instancer.router")
+    task = asyncio.create_task(router.poll_routes_loop())
+    try:
+        await asyncio.sleep(0.4)
+        assert router.get_route(ROUTE_ID) is not None
+        agent.router_token = "rotated"  # from now on the agent answers 401 with a JSON error that has no "routes"
+        await asyncio.sleep(0.4)
+        assert router.get_route(ROUTE_ID) is not None, "an error answer must not be read as 'no routes'"
+        assert any("poll of the agent failed" in r.getMessage() for r in caplog.records), "and the failure is no longer silent"
+    finally:
+        task.cancel()
+        agent.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_the_central_router_learns_routes_from_the_real_agent_handler_and_keeps_them_through_a_refusal(monkeypatch):
+    monkeypatch.setenv("ROUTER_TOKEN_H1", "rt")
+    monkeypatch.setenv("L3MON_HOST_SECRETS_DIR", "/nonexistent-host-secrets")
+    agent = _real_agent()
+    hosts = [{"name": "h1", "url": f"http://127.0.0.1:{agent.server_address[1]}", "router_url": "http://127.0.0.1:9"}]
+    router = InstanceRouter(hosts=hosts, instance_domain="inst.test", poll_interval=0.2)
+    task = asyncio.create_task(router.poll_central_routes_loop())
+    try:
+        await asyncio.sleep(0.8)
+        assert ROUTE_ID in router._routes, "the real agent answers HTTP/1.0 200 and that must be accepted"
+        agent.router_token = "rotated"
+        await asyncio.sleep(0.8)
+        assert ROUTE_ID in router._routes, "a refusal is a failed poll, not an empty route list"
+    finally:
+        task.cancel()
+        agent.shutdown()
