@@ -65,6 +65,7 @@ check "apt is at or above 2.6.2" run "$image" sh -c 'dpkg --compare-versions "$(
 check "libapt-pkg6.0 is at or above 2.6.2" run "$image" sh -c 'dpkg --compare-versions "$(dpkg-query -W -f="\${Version}" libapt-pkg6.0)" ge 2.6.2'
 check "libpam0g is at or above 1.5.2-6+deb12u3" run "$image" sh -c 'dpkg --compare-versions "$(dpkg-query -W -f="\${Version}" libpam0g)" ge 1.5.2-6+deb12u3'
 check "libpam-modules is at or above 1.5.2-6+deb12u3" run "$image" sh -c 'dpkg --compare-versions "$(dpkg-query -W -f="\${Version}" libpam-modules)" ge 1.5.2-6+deb12u3'
+check "libzstd1 is at or above 1.5.4+dfsg2-5+deb12u1" run "$image" sh -c 'dpkg --compare-versions "$(dpkg-query -W -f="\${Version}" libzstd1)" ge 1.5.4+dfsg2-5+deb12u1'
 check "no package lists left behind" run "$image" sh -c '[ -z "$(ls /var/lib/apt/lists 2>/dev/null | grep -v "^partial$")" ]'
 
 # no build tools, no package manager caches left behind
