@@ -5,7 +5,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from . import certificate, codes, issue, site, store
+from . import certificate, codes, issue, platform, site, store
 
 
 def add_parser(sub) -> None:
@@ -40,6 +40,11 @@ def add_parser(sub) -> None:
     b.add_argument("--certificate", action="append", default=[], metavar="CAT[=DESIGN.svg]",
                    help="also print a PDF certificate for every valid code of CAT from an SVG design with placeholders; PAR alone uses the "
                         "bundled qualifier design (needs Chrome, Chromium or Edge; L3MON_CHROME names one). May be given once per category.")
+
+    e = vs.add_parser("export-platform", help="write the platform's list (player id -> qualifier code) for the studio-page certificates; PRIVATE")
+    e.add_argument("db")
+    e.add_argument("out", help="the JSON file to write (it holds usernames and codes: keep it private)")
+    e.add_argument("--base-url", default=site.BASE_URL, help=f"the portal's address (default {site.BASE_URL})")
 
 
 def _safe_output() -> None:
@@ -126,7 +131,11 @@ def run(args: argparse.Namespace) -> int:
                   + f", {summary['counts']['withdrawn']} withdrawn, {summary['counts']['replaced']} replaced"
                   + (f", {summary['counts']['pdf']} PDF certificate(s)." if summary["counts"].get("pdf") else "."))
             return 0
-    except (store.StoreError, issue.IssueError, site.SiteError, certificate.CertificateError, OSError) as exc:
+        if args.verify_cmd == "export-platform":
+            n = platform.write(Path(args.db), Path(args.out), args.base_url)
+            print(f"Wrote {n} qualifier codes to {args.out} for the platform. It is private: import it on the server (runbook 22, step 7), then delete every copy but yours.")
+            return 0
+    except (store.StoreError, issue.IssueError, site.SiteError, certificate.CertificateError, platform.PlatformError, OSError) as exc:
         print(f"error: {exc}")
         return 1
     return 2
