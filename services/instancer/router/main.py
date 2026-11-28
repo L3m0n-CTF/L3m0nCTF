@@ -7,6 +7,7 @@ import os
 import sys
 
 from services.instancer.ports import read_tcp_port_range
+from services.instancer.router import background
 from services.instancer.router.access_gate import AccessGate
 from services.instancer.router.router import MAX_BODY_BYTES, InstanceRouter, extract_instance_id, local_address_towards
 
@@ -468,11 +469,14 @@ async def main():
         hosts=hosts,
     )
 
-    # Start route poller task in background
+    # Start route poller task in background. background.spawn keeps a reference to the task: a bare asyncio.create_task lets Python's garbage collector destroy
+    # the running loop ("Task was destroyed but it is pending!"), which froze the route table of the real host router on 28 Nov 2026 (14:31 IST).
     if router.is_central:
-        asyncio.create_task(router.poll_central_routes_loop())
+        background.spawn(router.poll_central_routes_loop(), name="poll-central-routes")
     else:
-        asyncio.create_task(router.poll_routes_loop())
+        background.spawn(router.poll_routes_loop(), name="poll-routes")
+    # and a watchdog: if the loop ever shows no sign of life, the process ends and Docker restarts the router
+    background.spawn(background.watch_polling(router), name="poll-watchdog")
 
     server = await start_http_listener(router, listen_addr, cfg["port"])
     _log.info("Instance Router listening for HTTP on %s:%d (domain: %s)", listen_addr, cfg["port"], cfg["instance_domain"])
