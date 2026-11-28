@@ -226,12 +226,19 @@ FIT_JS = r"""
 """
 
 
+# The fit script must not measure before the design's own fonts (embedded as data: addresses, as the runbook tells designers to) have loaded: until then the
+# browser measures with a stand-in font of other widths, a long value looks as if it fits, and it is printed too wide. Found on 28 Nov 2026 with the
+# supervisor's design: a long username ran into the QR code. Every declared font is loaded first; a design with no embedded font runs the script at once.
+FIT_AFTER_FONTS_JS = ("Promise.all(Array.from(document.fonts || []).map(function (f) { return f.load().catch(function () {}); }))"
+                      ".then(function () {" + FIT_JS + "});")
+
+
 def print_page(t: Template, svg_text: str, title: str = "L3m0n CTF 2026 certificate") -> str:
     """The page the browser prints; its title becomes the PDF's title."""
     size = f"{t.width} {t.height}"
     return (f"<!doctype html><html><head><meta charset=\"utf-8\"><title>{html.escape(title)}</title><style>"
             f"@page{{size:{size};margin:0}}html,body{{margin:0;padding:0;width:{t.width};height:{t.height};overflow:hidden}}"
-            f"body>svg{{display:block;width:{t.width};height:{t.height}}}</style></head><body>{svg_text}<script>{FIT_JS}</script></body></html>")
+            f"body>svg{{display:block;width:{t.width};height:{t.height}}}</style></head><body>{svg_text}<script>{FIT_AFTER_FONTS_JS}</script></body></html>")
 
 
 # ------------------------------------------------------------------ printing

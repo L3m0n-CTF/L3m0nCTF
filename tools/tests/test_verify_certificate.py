@@ -259,3 +259,13 @@ def test_a_real_browser_prints_one_page_with_the_same_bytes_every_time(tmp_path)
         assert pdf.startswith(b"%PDF") and re.search(rb"/Count 1\b", pdf), "one page, however long the name"
         assert b"(D:20261128000000+00'00')" in pdf
     assert again["a"] == first["a"], "the same input gives the same bytes"
+
+
+def test_the_fit_script_waits_for_the_designs_own_fonts_before_it_measures(tmp_path):
+    """Found on 28 Nov 2026 with the supervisor's design (fonts embedded as data: addresses, as the runbook tells designers to): the script measured at once, with a
+    stand-in font of other widths, so a long name looked as if it fitted and was printed at full size into the QR code. It must load every font first."""
+    t = certificate.load(certificate.BUNDLED["PAR"])
+    script = certificate.print_page(t, certificate.fill(t, values())).split("<script>")[-1]
+    assert "document.fonts" in script, "the print page never waits for the fonts"
+    assert script.index("document.fonts") < script.index("getBBox"), "the fonts are awaited before the first measurement"
+    assert ".load()" in script and ".then(" in script
