@@ -113,16 +113,23 @@ def test_the_alignment_hint(name, align):
     assert certificate._align(f' id="{name}"') == align
 
 
+def grid_of(path, n):
+    """The module grid a QR path draws: one rectangle per run of dark modules (`M4,4h7v1h-7z`, a run of 1 being one module), or, in the older
+    drawing, one rectangle per module (`M4 4h1v1h-1z`). The quiet zone is 4 modules wide."""
+    grid = [["0"] * n for _ in range(n)]
+    for x, y, w in re.findall(r"M(\d+)[ ,](\d+)h(\d+)v1h-\3z", path):
+        for i in range(int(w)):
+            grid[int(y) - 4][int(x) - 4 + i] = "1"
+    return ["".join(r) for r in grid]
+
+
 def test_the_qr_code_takes_the_rectangles_place_and_reads_back_as_the_codes_address(tmp_path):
     out = certificate.fill(certificate.load(design(tmp_path)), values())
     assert 'id="qr"' not in out
     m = re.search(r'<svg x="900" y="600" width="120" height="120" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 (\d+) \1"[^>]*>.*?<path d="([^"]+)"', out)
     assert m
     n = int(m.group(1)) - 8
-    grid = [["0"] * n for _ in range(n)]
-    for x, y in re.findall(r"M(\d+) (\d+)h1v1h-1z", m.group(2)):
-        grid[int(y) - 4][int(x) - 4] = "1"
-    res = qr_read(["".join(r) for r in grid])
+    res = qr_read(grid_of(m.group(2), n))
     assert res["format_ok"] and res["rs_ok"] and res["text"] == f"{BASE}/L3M0N26-PAR-BCDFG"
 
 
@@ -300,8 +307,5 @@ def test_a_qr_with_chosen_colours_still_reads_back_as_the_codes_address(tmp_path
     out = certificate.fill(certificate.load(design(tmp_path, text)), values())
     m = re.search(r'<svg x="900" y="600" width="120" height="120" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 (\d+) \1"[^>]*>.*?<path d="([^"]+)"', out)
     n = int(m.group(1)) - 8
-    grid = [["0"] * n for _ in range(n)]
-    for x, y in re.findall(r"M(\d+) (\d+)h1v1h-1z", m.group(2)):
-        grid[int(y) - 4][int(x) - 4] = "1"
-    res = qr_read(["".join(r) for r in grid])
+    res = qr_read(grid_of(m.group(2), n))
     assert res["format_ok"] and res["rs_ok"] and res["text"] == f"{BASE}/L3M0N26-PAR-BCDFG"
