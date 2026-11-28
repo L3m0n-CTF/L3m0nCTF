@@ -13,6 +13,11 @@ from typing import Optional
 _log = logging.getLogger("l3mon.instancer.router")
 
 
+# The status line of a good answer from an agent. The real agent (a BaseHTTPRequestHandler) answers "HTTP/1.0 200 OK"; a first version of this check demanded
+# "HTTP/1.1 200" and would have refused every real answer (caught before it did harm, 28 Nov 2026).
+_OK_STATUS = re.compile(rb"^HTTP/1\.[01] 200( |$)")
+
+
 def without_access_credentials(name: str, value: str):
     """(name, value) with Cloudflare Access's credentials taken out, or None if nothing is left of the header.
 
@@ -457,6 +462,12 @@ class InstanceRouter:
         self.is_central = bool(hosts)
         self._host_last_poll: dict[str, float] = {}
         self._poll_failing: set[str] = set()  # hosts whose last poll failed (logged once per run of failures)
+        self._poll_failing_local = False  # the single-host poll loop's last attempt failed (logged once per run of failures)
+
+        # Sign of life of the polling loop, for the watchdog in background.py: every ATTEMPT counts, a failed one too (a down agent is not a stuck loop).
+        self.last_poll_activity: float = time.monotonic()
+        # How long the TCP sync waits for relays that were cancelled to finish. A relay stuck in its cleanup must not hold the polling loop for ever.
+        self.tcp_cancel_wait_seconds: float = 5.0
 
         self._routes: dict[str, dict] = {}  # instance_id -> route dict
         self._lock = asyncio.Lock()
@@ -484,6 +495,13 @@ class InstanceRouter:
         self._tcp_metrics_bytes_relayed: int = 0
         self._tcp_metrics_refusals: dict[str, int] = collections.defaultdict(int)
         self._tcp_metrics_connect_failures: int = 0
+
+    def note_poll_activity(self) -> None:
+        """The polling loop is alive (called at every step of it). See background.watch_polling."""
+        self.last_poll_activity = time.monotonic()
+
+    def seconds_since_poll_activity(self) -> float:
+        return time.monotonic() - self.last_poll_activity
 
     def get_route(self, inst_id: str) -> dict | None:
         """Lookup route dictionary for a given instance ID."""
@@ -695,8 +713,9 @@ class InstanceRouter:
         port = parsed.port or 8300
 
         while True:
+            self.note_poll_activity()
             try:
-                reader, writer = await asyncio.open_connection(host, port)
+                reader, writer = await asyncio.wait_for(asyncio.open_connection(host, port), timeout=10.0)
                 req = (
                     f"GET /v1/routes HTTP/1.1\r\n"
                     f"Host: {host}:{port}\r\n"
@@ -707,26 +726,41 @@ class InstanceRouter:
                 writer.write(req.encode("utf-8"))
                 await writer.drain()
 
-                response_data = await reader.read()
+                response_data = await asyncio.wait_for(reader.read(), timeout=10.0)
                 writer.close()
                 await writer.wait_closed()
 
                 parts = response_data.split(b"\r\n\r\n", 1)
                 if len(parts) == 2:
+                    # Only an answer that IS a route list replaces the route table. An error answer (a refused token, a failing agent) has no "routes":
+                    # reading it as an empty list used to wipe every route, and every instance address then answered "Instance not found".
+                    if not _OK_STATUS.match(parts[0]):
+                        raise RuntimeError("the agent answered " + parts[0].split(b"\r\n", 1)[0].decode("ascii", "replace")[:40])
                     body = json.loads(parts[1].decode("utf-8"))
-                    routes = body.get("routes", [])
+                    if not isinstance(body, dict) or "routes" not in body:
+                        raise RuntimeError("the agent's answer holds no route list")
+                    routes = body["routes"]
                     async with self._lock:
                         self.update_routes(routes)
+                    self.note_poll_activity()
                     await self.sync_tcp_routes(routes)
+                    if self._poll_failing_local:
+                        _log.info("Router polls the agent again")
+                        self._poll_failing_local = False
             except Exception as e:
-                _log.debug("Error polling routes from %s: %s", self.instancer_url, e)
+                if not self._poll_failing_local:  # the first failure of a run of failures is a warning (it used to be a debug line nobody saw)
+                    _log.warning("Router poll of the agent failed: %s: %s", type(e).__name__, e)
+                    self._poll_failing_local = True
 
+            self.note_poll_activity()
             await asyncio.sleep(self.poll_interval)
 
     async def poll_central_routes_loop(self):
         """Poll /v1/routes across all configured challenge hosts in central multi-host mode (SP4 / F3)."""
         while True:
+            self.note_poll_activity()
             for host in self.hosts:
+                self.note_poll_activity()
                 hname = host["name"]
                 hurl = host["url"]
                 rurl = host["router_url"]
@@ -765,8 +799,13 @@ class InstanceRouter:
 
                     parts = resp_data.split(b"\r\n\r\n", 1)
                     if len(parts) == 2:
+                        # only a real route list replaces the host's routes (an error answer used to be read as "no routes" and wiped them all)
+                        if not _OK_STATUS.match(parts[0]):
+                            raise RuntimeError("the host answered " + parts[0].split(b"\r\n", 1)[0].decode("ascii", "replace")[:40])
                         body = json.loads(parts[1].decode("utf-8"))
-                        routes = body.get("routes", [])
+                        if not isinstance(body, dict) or "routes" not in body:
+                            raise RuntimeError("the host's answer holds no route list")
+                        routes = body["routes"]
                         async with self._lock:
                             self.update_host_routes(hname, rurl, routes, now_ts=time.time())
                         if hname in self._poll_failing:
@@ -841,7 +880,11 @@ class InstanceRouter:
                 for t in tasks:
                     t.cancel()
                 if tasks:
-                    await asyncio.gather(*tasks, return_exceptions=True)
+                    # A bounded wait: a relay stuck in its cleanup (a client that does not read) must not hold the polling loop, and with it every new route, for ever.
+                    _done, pending = await asyncio.wait(tasks, timeout=self.tcp_cancel_wait_seconds)
+                    if pending:
+                        _log.warning("%d relay(s) on port %d did not finish %.0f s after being cancelled; carrying on without them", len(pending), p, self.tcp_cancel_wait_seconds)
+                self.note_poll_activity()
 
                 if server:
                     try:
@@ -866,6 +909,7 @@ class InstanceRouter:
                     )
                     self._tcp_listeners[p] = server
                     self._tcp_routes[p] = route
+                    self.note_poll_activity()  # a first pass over many listeners can take a while: it is progress, not a stall
                     _log.info(
                         "Started TCP relay listener on %s:%d -> %s:%s (instance: %s)",
                         self.listen_addr,
